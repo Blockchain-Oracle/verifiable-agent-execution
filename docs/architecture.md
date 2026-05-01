@@ -1,0 +1,240 @@
+# Architecture — Verifiable Agent Execution
+**Project:** Verifiable Agent Execution  
+**Stack locked:** 2026-05-01  
+**Updated:** 2026-05-01
+
+---
+
+## Stack
+
+| Layer | Choice | Version |
+|---|---|---|
+| Language | TypeScript | Node 20 LTS |
+| Package manager | pnpm workspaces | pnpm 9.x |
+| Smart contracts | Solidity | 0.8.24 |
+| Contract toolchain | Hardhat | 2.22.x |
+| UI framework | Next.js (App Router) | 14.2.x |
+| CSS | Tailwind CSS + shadcn/ui | 3.4.x |
+| Testing | Vitest | 1.6.x |
+| EVM client | ethers.js | v6 |
+| 0G Storage | `@0gfoundation/0g-ts-sdk` | latest |
+| 0G Compute | `@0glabs/0g-serving-broker` | latest |
+| TEE inference | 0G Private Computer (pc.0g.ai) | OpenAI-compatible API |
+| Deployment (UI) | Vercel | — |
+| Dev chain | 0G Galileo Testnet | Chain ID 16602, RPC `https://evmrpc-testnet.0g.ai` |
+| Submission chain | 0G Mainnet Aristotle | Chain ID 16661, RPC `https://evmrpc.0g.ai` |
+
+---
+
+## Pre-deployed contracts (DO NOT redeploy)
+
+| Contract | Address | Chain |
+|---|---|---|
+| AgenticID (ERC-7857) | `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` | Galileo (16602) |
+| Default TEE Oracle | `0x04581d192d22510ced643eaced12ef169644811a` | Galileo (signing address, not a contract) |
+
+---
+
+## Contracts to deploy
+
+| Contract | Purpose |
+|---|---|
+| `MockTEEVerifier.sol` | Accepts any valid ECDSA signature for dev/test. Swap to real oracle at demo time. |
+
+---
+
+## Key libraries
+
+| Library | Purpose | Source |
+|---|---|---|
+| `@0gfoundation/0g-ts-sdk` | 0G Storage upload (ZgFile → Indexer.upload) | npm |
+| `ethers` v6 | Wallet, contract calls, event scanning | npm |
+| `openai` | 0G Private Computer (OpenAI-compatible) | npm |
+| `@0glabs/0g-serving-broker` | 0G Compute Router integration | npm |
+| `hardhat` | Contract compile + deploy | npm |
+| `@nomicfoundation/hardhat-ethers` | Hardhat × ethers bridge | npm |
+| `vitest` | Unit testing | npm |
+| `@testing-library/react` | Dashboard component tests | npm |
+| `zod` | Runtime schema validation for log entries | npm |
+
+---
+
+## ADRs
+
+**ADR-01: TypeScript over Go**  
+0G TypeScript SDK (`@0gfoundation/0g-ts-sdk`) has richer bindings for Storage and the serving broker. Coding agents build faster in TS. Go is used by agent-wrapper (upstream) which we must not modify.
+
+**ADR-02: Sidecar approach — zero agent-wrapper modification**  
+Execution logger is an OpenClaw skill, not a fork of agent-wrapper. The skill reads `X-Agent-Id`, `X-Seal-Id`, `X-Signature`, `X-Timestamp` headers that agent-wrapper already adds to every proxied response. Entirely additive — upstream repo stays clean.
+
+**ADR-03: Pre-deployed AgenticID contract**  
+Official 0G deployment at `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo. No need to redeploy ERC-7857. Our only deploy is MockTEEVerifier for dev.
+
+**ADR-04: One iNFT per session**  
+Each completed OpenClaw session gets one `iMint()` call producing one token. The token's single `IntelligentData` entry points to the session log blob in 0G Storage. No state accumulation, no update() call — each session is self-contained.
+
+**ADR-05: Session-flush storage model**  
+Log is accumulated in-process during the session and flushed as a single JSON blob to 0G Storage at session end. Crash mitigation: write a minimal `{sessionId, startedAt}` checkpoint blob at session start.
+
+**ADR-06: MockTEEVerifier for dev, real TEE for demo**  
+Official 0G docs recommend MockOracle for testnet dev. MockTEEVerifier accepts any valid ECDSA sig. For the demo: use 0G Private Computer (`pc.0g.ai`), which signs every inference response via the real TEE oracle (`0x04581d...`).
+
+**ADR-07: 0G Private Computer for TEE inference**  
+OpenAI-compatible API endpoint where every response includes a `ZG-Res-Key` HTTP header containing `{text, signature (ECDSA hex), signing_address, signing_algo: "ecdsa"}`. This is the real TEE proof source. The adapter layer: `keccak256(text)` → `dataHash`, extract `signature` → submit both to `TEEVerifier.verifyTEESignature(bytes32, bytes)`.
+
+---
+
+## Repo structure
+
+```
+verifiable-agent-execution/
+├── contracts/
+│   ├── MockTEEVerifier.sol          # Dev verifier — accepts any valid sig
+│   └── interfaces/
+│       └── ITEEVerifier.sol          # Shared interface
+├── scripts/
+│   └── deploy-mock.ts               # Hardhat deploy: MockTEEVerifier
+├── hardhat.config.ts
+├── packages/
+│   ├── logger/                      # Core log capture library
+│   │   ├── src/
+│   │   │   ├── types.ts             # ExecutionLogEntry, SessionLog, LogFlushResult
+│   │   │   ├── SessionLogger.ts     # Accumulate entries, flush to 0G Storage
+│   │   │   ├── StorageClient.ts     # 0G Storage upload wrapper → bytes32 root hash
+│   │   │   └── index.ts
+│   │   ├── tests/
+│   │   │   └── session-logger.test.ts
+│   │   └── package.json
+│   ├── tee-adapter/                 # TEE proof extraction + verification
+│   │   ├── src/
+│   │   │   ├── HeaderParser.ts      # Parse ZG-Res-Key header
+│   │   │   ├── TEEProofAdapter.ts   # keccak256(text) + verify via TEEVerifier contract
+│   │   │   └── index.ts
+│   │   ├── tests/
+│   │   │   └── tee-adapter.test.ts
+│   │   └── package.json
+│   ├── chain-client/                # On-chain interactions
+│   │   ├── src/
+│   │   │   ├── AgenticIDClient.ts   # iMint, getIntelligentDatas wrappers
+│   │   │   ├── SessionAnchor.ts     # Orchestrates flush → mint → return verifyUrl
+│   │   │   └── index.ts
+│   │   ├── tests/
+│   │   │   └── chain-client.test.ts
+│   │   └── package.json
+│   └── openclaw-skill/              # OpenClaw skill entrypoint
+│       ├── SKILL.md
+│       ├── src/
+│       │   ├── hooks.ts             # onSessionStart, onToolCall, onSessionEnd
+│       │   ├── SessionManager.ts    # Singleton: manages active logger per session
+│       │   └── index.ts
+│       ├── tests/
+│       │   └── skill.test.ts
+│       └── package.json
+├── apps/
+│   └── dashboard/                   # Next.js verification UI
+│       ├── src/
+│       │   ├── app/
+│       │   │   ├── layout.tsx
+│       │   │   ├── page.tsx         # Landing: explain the primitive, link to verify
+│       │   │   ├── verify/
+│       │   │   │   └── [tokenId]/
+│       │   │   │       └── page.tsx # Proof chain view
+│       │   │   └── api/
+│       │   │       └── verify/
+│       │   │           └── [tokenId]/
+│       │   │               └── route.ts  # REST: resolve chain → storage → log
+│       │   └── components/
+│       │       ├── ProofChain.tsx   # Full proof chain renderer
+│       │       ├── LogEntry.tsx     # Individual tool call card
+│       │       └── StatusBadge.tsx  # "TEE Verified" / "Mock" / "Unverified"
+│       ├── tailwind.config.ts
+│       ├── package.json
+│       └── next.config.ts
+├── CLAUDE.md                        # Coding agent instructions (filled by orchestrator)
+├── README.md
+├── pnpm-workspace.yaml
+└── package.json
+```
+
+---
+
+## Execution log JSON schema
+
+```typescript
+// packages/logger/src/types.ts
+
+interface ExecutionLogEntry {
+  seq: number;               // 0-indexed, monotonically increasing
+  ts: number;                // Unix timestamp ms
+  type: 'tool_call' | 'inference' | 'session_start' | 'session_end';
+  tool?: string;             // tool name for type=tool_call
+  modelId?: string;          // e.g. "claude-sonnet-4-6"
+  inputHash: string;         // sha256(input) hex
+  outputHash: string;        // sha256(output) hex
+  teeSignature?: string;     // ZG-Res-Key ECDSA sig (from 0G Private Computer)
+  teeSigningAddress?: string; // signing_address from ZG-Res-Key
+  agentId?: string;           // X-Agent-Id header
+  sealId?: string;            // X-Seal-Id header
+}
+
+interface SessionLog {
+  sessionId: string;
+  startedAt: number;          // Unix timestamp ms
+  endedAt: number;
+  agentId: string;
+  containerHash: string;      // IMAGE_HASH env var (TEE container identity)
+  modelId: string;
+  entries: ExecutionLogEntry[];
+  entryCount: number;
+}
+
+interface LogFlushResult {
+  rootHash: string;           // bytes32 hex — 0G Storage Merkle root
+  entryCount: number;
+  sessionId: string;
+}
+```
+
+---
+
+## Proof verification flow
+
+```
+Verifier query: tokenId
+      │
+      ▼
+AgenticIDClient.getIntelligentDatas(tokenId)
+      │ returns [{dataDescription: "exec-log:<sessionId>:<modelId>", dataHash: bytes32}]
+      ▼
+StorageClient.download(dataHash)
+      │ returns SessionLog JSON blob
+      ▼
+TEEProofAdapter.verify(entry.teeSignature, entry.teeSigningAddress, logHash)
+      │ computes keccak256(text), calls MockTEEVerifier.verifyTEESignature(hash, sig)
+      ▼
+{verified: boolean, entries: ExecutionLogEntry[], tokenId, txHash, storageHash}
+```
+
+---
+
+## Context7 library research rule (mandatory)
+
+Before implementing any SDK call, resolve library docs first:
+```
+mcp__context7__resolve-library-id → mcp__context7__query-docs
+```
+
+Apply to: `@0gfoundation/0g-ts-sdk`, `ethers` v6, Next.js App Router, shadcn/ui, Vitest.  
+Never implement from training-data memory — 0G SDK APIs change frequently.
+
+---
+
+## Banned patterns
+
+- No `from-purple-500 to-pink-500` or any default AI gradient on the dashboard
+- No mock/stub in the hot path (§14): 0G Storage upload, iMint, TEEVerifier must call real testnet
+- No `shadcn-admin`, TailAdmin, or generic admin scaffolds as starting points
+- No `iTransferFrom` or ERC-7857 ownership transfer mechanics (out of scope)
+- No credentials hardcoded in source — env vars only (`.env.local` for local, Vercel env for prod)
+- No `console.log` in library packages — structured logging only
+- No `any` type casts without an inline justification comment
