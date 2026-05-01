@@ -8,8 +8,13 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "tsc --noEmit",
     "dev": "pnpm --filter web dev"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.2",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
   },
   "engines": {
     "node": ">=20",
