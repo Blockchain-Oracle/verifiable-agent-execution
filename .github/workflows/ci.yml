@@ -1,0 +1,56 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "pnpm" }
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Reject placeholder tests
+        run: |
+          if grep -q '"test":.*placeholder' package.json; then
+            echo "❌ package.json has placeholder test script — replace with real test runner"
+            exit 1
+          fi
+          if ! find . -path ./node_modules -prune -o \
+              \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \
+                 -o -name '*.test.js' -o -name '*.spec.js' -o -path '*/__tests__/*' \) -print | grep -q .; then
+            echo "❌ no test files found — story PRs must include tests"
+            exit 1
+          fi
+
+      - name: Type-check
+        run: |
+          if [ -f tsconfig.json ]; then
+            pnpm exec tsc --noEmit
+          else
+            echo "❌ tsconfig.json missing — TypeScript project required"
+            exit 1
+          fi
+
+      - name: Lint
+        run: |
+          if pnpm run | grep -q '^  lint$'; then
+            pnpm run lint
+          else
+            echo "❌ no 'lint' script in package.json — required for CI"
+            exit 1
+          fi
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: |
+          if pnpm run | grep -q '^  build$'; then
+            pnpm run build
+          else
+            echo "❌ no 'build' script in package.json — required for CI"
+            exit 1
+          fi
