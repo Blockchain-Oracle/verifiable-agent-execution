@@ -102,7 +102,8 @@ The Compute Router is simpler than Direct. One API key, OpenAI-compatible, autom
 
 ### Install
 ```bash
-npm install @0glabs/0g-serving-broker
+npm install @0gfoundation/0g-compute-ts-sdk
+# (Old name @0glabs/0g-serving-broker is deprecated — re-export shim only.)
 ```
 
 ### Quickstart pattern
@@ -124,13 +125,13 @@ npm install @0glabs/0g-serving-broker
 
 ---
 
-## 0G Compute (Serving Broker) SDK
+## 0G Compute SDK (renamed Apr 2026)
 
 ### Installation
 ```bash
-pnpm add @0glabs/0g-serving-broker -g
-# or
-npm install @0glabs/0g-serving-broker
+npm install @0gfoundation/0g-compute-ts-sdk
+# The npm registry marks @0glabs/0g-serving-broker as deprecated:
+# "DEPRECATED — renamed to @0gfoundation/0g-compute-ts-sdk. This package is a thin re-export shim for backward compatibility."
 ```
 
 ### Quick test (CLI)
