@@ -16,7 +16,11 @@ This is agent accountability infrastructure. The first provable audit trail for 
 
 ## One-line pitch
 
-"Prove your AI agent ran exactly what it claimed — cryptographic receipts for every session."
+**"Etherscan for AI agents — share a URL, verify any agent run cold."**
+
+Sub-headline (longer form): *"Prove your AI agent ran exactly what it claimed — cryptographic receipts for every session, anchored on 0G."*
+
+The Etherscan analogy is load-bearing for the pitch: every web3 dev already understands "open a URL → see what happened on chain → verify cryptographically with no wallet." We extend that mental model from transactions to agent runs. Familiarity is the wedge.
 
 ---
 
@@ -26,38 +30,37 @@ Track 1 (Agentic Infrastructure & OpenClaw Lab). Uses OpenClaw as the orchestrat
 
 ---
 
-## Demo moment (judge walkthrough — 5 steps)
+## Demo moment (judge walkthrough — REVERSE ARC, ~45 seconds total)
 
-> Assume judges have 20 seconds per step and no prior 0G context.
+> The demo deliberately starts from the **verifier's seat**, not the agent's seat. Judges receive a proof URL cold — no setup, no context — and verify a stranger's agent run before we reveal what happened. This subverts the typical "look at our cool agent" arc; the wedge is *how easy it is to NOT trust an agent and still know exactly what it did.*
 
-**Step 1 — Run an OpenClaw agent**
-Open terminal. Run an OpenClaw session with the `verifiable-execution` skill active: "Research the top AI agent frameworks from the last 6 months." Agent runs normally — calls web search, Tavily, summarizes.
+**Step 1 — Cold open: judge gets a URL** (5s)
+Hand the judge a single link: `https://verifiable.0g.ai/verify/<tokenId>`. No explanation. They open it.
 
-**Step 2 — Skill fires automatically at session end**
-No extra command. The skill captures every tool call during the session, flushes a signed JSON log to 0G Storage, and calls `iMint()` on the AgenticID contract.
+**Step 2 — Page renders the proof chain** (10s)
+Two stacked panels:
+- **What the agent did** — a 4-row timeline of tool calls (e.g., `quote`, `liquidity`, `simulate-swap`, `final-approval`) with input/output hashes and timestamps.
+- **One button:** `Verify on chain`.
 
-Terminal output:
-```
-✓ Session captured: 4 tool calls logged
-✓ Log anchored: 0G Storage root 0xabc...def
-✓ iNFT minted: token #42 on 0G Galileo
-✓ Verify at: https://verifiable.0g.ai/verify/42
-```
+**Step 3 — Click "Verify on chain"** (10s)
+Dashboard makes three live reads:
+1. `AgenticID.getIntelligentDatas(tokenId)` → returns `IntelligentData{exec-log, dataHash}`.
+2. 0G Storage download by `dataHash` → fetches the JSON log.
+3. `TEEVerifier.verifyTEESignature(keccak256(content), sig)` for each entry → boolean per row.
 
-**Step 3 — Open the verification dashboard**
-Navigate to the URL. Dashboard loads — shows the proof chain: session metadata → 4 log entries (tool name, input hash, output hash, TEE signature) → on-chain token info → 0G Storage hash.
+The four row badges flip from grey to **TEE Verified ✓** in sequence.
 
-**Step 4 — Verify the TEE signature**
-Click "Verify Proof". Dashboard calls `TEEVerifier.verifyTEESignature(logHash, teeSignature)` → returns `true`. Status badge changes to "TEE Verified."
+**Step 4 — Reveal what the agent actually did** (15s)
+Now we tell the story behind the run: *"This was an autonomous DeFi agent simulating a USDC→ETH swap on a hypothetical lending market. It quoted, checked liquidity, simulated, and asked for human approval before executing — and you just verified all four steps cryptographically without a wallet."* The stakes-loaded task is what makes the verification matter.
 
-**Step 5 — Share the proof link**
-Copy the URL. Share it with anyone. They open it, see the same proof chain — without needing a wallet, without trusting the operator. The proof is on 0G Chain and 0G Storage permanently.
+**Step 5 — "Anyone can do this"** (5s)
+Send the same URL to your phone. Open it on a different device. Same proof, same green checkmarks, no wallet, no login. The proof outlives us.
 
 ---
 
 ## The wow moment
 
-"You can prove, cryptographically, that this AI agent actually used these tools in this order — the proof is on-chain forever, and anyone can verify it without trusting us."
+"You verified a stranger's AI agent run in 30 seconds, without trusting us, without trusting them — just by clicking a link. **Etherscan for AI agents.**"
 
 ---
 

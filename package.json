@@ -1,0 +1,26 @@
+{
+  "name": "verifiable-agent-execution",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "description": "Cryptographic receipts for every AI agent session. 0G APAC Hackathon 2026.",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "tsc --noEmit",
+    "dev": "pnpm --filter web dev"
+  },
+  "devDependencies": {
+    "@0gfoundation/0g-compute-ts-sdk": "^0.8.0",
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
+    "@playwright/test": "^1.48.2",
+    "@types/node": "^20.14.10",
+    "ethers": "~6.13.1",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}
