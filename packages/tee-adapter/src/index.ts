@@ -16,6 +16,7 @@ export type {
 } from "./TEEProofAdapter.js";
 
 export {
+  AgentWrapperHeaderFormatError,
   AgentWrapperHeaderMissingError,
   AgentWrapperSignatureLengthError,
   AgentWrapperTimestampFormatError,

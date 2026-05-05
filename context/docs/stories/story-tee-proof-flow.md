@@ -74,8 +74,10 @@ unreachable verifier, signature length != 65, message-reconstruction edge cases
 export ZG_TESTNET_RPC="https://evmrpc-testnet.0g.ai"
 export TEE_VERIFIER_ADDRESS="<deployed MockTEEVerifier on Galileo>"
 
-pnpm --filter=tee-adapter vitest run tee-proof-flow.test.ts
+pnpm --filter=@verifiable-agent-execution/tee-adapter exec vitest run tee-proof-flow.test.ts
 # Must exit 0
+# (Note: must use the scoped name; bare `--filter=tee-adapter` does NOT match
+# the workspace package — it's published as @verifiable-agent-execution/tee-adapter.)
 ```
 
 ---

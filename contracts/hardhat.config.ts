@@ -8,9 +8,25 @@
 // Networks named per the patterns doc convention (0g-testnet / 0g-mainnet)
 // so deploy invocations match: `hardhat run scripts/... --network 0g-testnet`.
 
+import * as path from "node:path";
+
 import "@nomicfoundation/hardhat-toolbox";
-import "dotenv/config";
+import { config as dotenvConfig } from "dotenv";
 import type { HardhatUserConfig } from "hardhat/config";
+
+// Load .env from the repo ROOT (one level above this contracts/ workspace)
+// before falling back to ./contracts/.env. Per repo convention the
+// canonical .env lives at the repo root and is gitignored. The previous
+// `import "dotenv/config"` only looked at process.cwd() (typically
+// `contracts/`), which left PRIVATE_KEY empty under
+// `pnpm --filter ... deploy:testnet` and silently configured `accounts: []`.
+// (Closes Codex P2 from pre-push review on epic/02 — would have failed
+// deploy at runtime with no signer.)
+const REPO_ROOT_ENV = path.resolve(__dirname, "..", ".env");
+dotenvConfig({ path: REPO_ROOT_ENV });
+// Local override (contracts/.env) takes precedence if present — useful
+// for deploy-specific keys without touching the root file.
+dotenvConfig({ override: true });
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY ?? "";
 

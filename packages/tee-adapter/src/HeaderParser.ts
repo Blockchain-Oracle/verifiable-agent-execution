@@ -34,6 +34,7 @@
 import { z } from "zod";
 
 import {
+  AgentWrapperHeaderFormatError,
   AgentWrapperHeaderMissingError,
   AgentWrapperSignatureLengthError,
   AgentWrapperTimestampFormatError,
@@ -86,14 +87,38 @@ function require_(headers: Headers, name: string): string {
   return value;
 }
 
+/**
+ * Normalize + validate the agent identifier. Throws AgentWrapperHeaderFormatError
+ * (NOT HeaderMissingError) when the header was present but malformed —
+ * Codex P2 on PR #18 flagged that the prior code conflated these two
+ * distinct failure modes.
+ */
 function normalizeAgentId(raw: string): string {
-  // Some upstream paths emit the address without the 0x prefix; tolerate
-  // both at parse time (the schema enforces 0x-prefixed downstream).
-  return raw.startsWith("0x") || raw.startsWith("0X") ? raw : `0x${raw}`;
+  const candidate =
+    raw.startsWith("0x") || raw.startsWith("0X") ? raw : `0x${raw}`;
+  if (!HEX_PREFIX_40.test(candidate)) {
+    throw new AgentWrapperHeaderFormatError(
+      "X-Agent-Id",
+      `expected 0x-prefixed 40-char hex (20 bytes); got ${raw.length} chars: ${truncateForError(raw)}`,
+    );
+  }
+  return candidate;
 }
 
 function normalizeSealId(raw: string): string {
-  return raw.startsWith("0x") || raw.startsWith("0X") ? raw : `0x${raw}`;
+  const candidate =
+    raw.startsWith("0x") || raw.startsWith("0X") ? raw : `0x${raw}`;
+  if (!HEX_PREFIX_64.test(candidate)) {
+    throw new AgentWrapperHeaderFormatError(
+      "X-Seal-Id",
+      `expected 0x-prefixed 64-char hex (32 bytes); got ${raw.length} chars: ${truncateForError(raw)}`,
+    );
+  }
+  return candidate;
+}
+
+function truncateForError(value: string): string {
+  return value.length <= 18 ? value : `${value.slice(0, 8)}…${value.slice(-8)}`;
 }
 
 function normalizeSignature(raw: string): string {
@@ -131,6 +156,8 @@ export const HeaderParser = {
    *
    * Throws (subclasses of TEEAdapterError):
    *   - AgentWrapperHeaderMissingError(headerName) if any of the four is absent
+   *   - AgentWrapperHeaderFormatError(headerName, reason) if agentId/sealId
+   *     is present but malformed
    *   - AgentWrapperSignatureLengthError(actualBytes) if signature ≠ 65 bytes
    *   - AgentWrapperTimestampFormatError(raw) if timestamp is not base-10 uint
    *
@@ -150,17 +177,24 @@ export const HeaderParser = {
       timestamp: parseTimestamp(timestampRaw),
     };
 
-    // Final shape check — guarantees downstream `ethers` decoding works.
+    // Final shape check — defense in depth. With the per-field validators
+    // above (which throw the correct typed errors), this branch should
+    // be unreachable. If it ever fires (e.g. someone bypasses the
+    // helpers), surface as a FORMAT error (not MISSING) so caller
+    // diagnostics stay accurate. Closes Codex P2 on PR #18.
     const result = attestationSchema.safeParse(attestation);
     if (!result.success) {
-      // This branch is only reachable if the agentId/sealId regex guards
-      // above accepted something the final schema rejects (e.g. a 19-byte
-      // agentId hex that has the right prefix but wrong length). Surface
-      // it as a header-missing-equivalent rather than a generic Zod blob
-      // so callers see a structured code.
       const issue = result.error.issues[0];
-      throw new AgentWrapperHeaderMissingError(
-        issue?.path.join(".") ?? "unknown",
+      const fieldToHeader: Record<string, string> = {
+        agentId: "X-Agent-Id",
+        sealId: "X-Seal-Id",
+        signature: "X-Signature",
+        timestamp: "X-Timestamp",
+      };
+      const fieldKey = issue?.path[0]?.toString() ?? "unknown";
+      throw new AgentWrapperHeaderFormatError(
+        fieldToHeader[fieldKey] ?? fieldKey,
+        issue?.message ?? "schema validation failed",
       );
     }
     return result.data;

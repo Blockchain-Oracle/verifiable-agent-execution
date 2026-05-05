@@ -18,6 +18,7 @@ import { getBytes } from "ethers";
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentWrapperHeaderFormatError,
   AgentWrapperHeaderMissingError,
   AgentWrapperSignatureLengthError,
   AgentWrapperTimestampFormatError,
@@ -138,6 +139,49 @@ describe("HeaderParser.parse — wrong signature length", () => {
       .toThrowError(expect.objectContaining({
         name: "AgentWrapperSignatureLengthError",
         actualByteLength: 0,
+      }) as unknown as Error);
+  });
+});
+
+describe("HeaderParser.parse — malformed-but-present headers (closes Codex P2 on PR #18)", () => {
+  // P2 finding: when a header is PRESENT but malformed (wrong length,
+  // wrong charset), the parser should throw AgentWrapperHeaderFormatError
+  // — NOT AgentWrapperHeaderMissingError. The two error classes signal
+  // distinct deployment scenarios (missing = config bug; malformed =
+  // tampering / version mismatch) and callers branch on them.
+
+  it("throws AgentWrapperHeaderFormatError (NOT MissingError) on too-short X-Agent-Id", () => {
+    const tooShort = `0x${"1".repeat(38)}`; // 19 bytes — present but wrong length
+    expect(() => HeaderParser.parse(buildHeaders({ "X-Agent-Id": tooShort })))
+      .toThrow(AgentWrapperHeaderFormatError);
+    // Crucially: must NOT throw the missing variant.
+    expect(() => HeaderParser.parse(buildHeaders({ "X-Agent-Id": tooShort })))
+      .not.toThrow(AgentWrapperHeaderMissingError);
+  });
+
+  it("includes header name + reason in the format error for X-Agent-Id", () => {
+    const malformed = `0x${"z".repeat(40)}`; // wrong charset
+    expect(() => HeaderParser.parse(buildHeaders({ "X-Agent-Id": malformed })))
+      .toThrowError(expect.objectContaining({
+        name: "AgentWrapperHeaderFormatError",
+        headerName: "X-Agent-Id",
+      }) as unknown as Error);
+  });
+
+  it("throws AgentWrapperHeaderFormatError on too-short X-Seal-Id", () => {
+    const tooShort = `0x${"2".repeat(60)}`; // 30 bytes
+    expect(() => HeaderParser.parse(buildHeaders({ "X-Seal-Id": tooShort })))
+      .toThrow(AgentWrapperHeaderFormatError);
+    expect(() => HeaderParser.parse(buildHeaders({ "X-Seal-Id": tooShort })))
+      .not.toThrow(AgentWrapperHeaderMissingError);
+  });
+
+  it("includes header name + reason in the format error for X-Seal-Id", () => {
+    const malformed = `0x${"q".repeat(64)}`;
+    expect(() => HeaderParser.parse(buildHeaders({ "X-Seal-Id": malformed })))
+      .toThrowError(expect.objectContaining({
+        name: "AgentWrapperHeaderFormatError",
+        headerName: "X-Seal-Id",
       }) as unknown as Error);
   });
 });

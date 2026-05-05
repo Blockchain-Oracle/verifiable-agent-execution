@@ -28,6 +28,33 @@ export class AgentWrapperHeaderMissingError extends TEEAdapterError {
 }
 
 /**
+ * A required X-* header was present but malformed (wrong length, wrong
+ * character set, etc.). Distinct from `AgentWrapperHeaderMissingError`
+ * so callers can branch retry/diagnostic behavior — a missing header
+ * may be a deployment misconfig (caller should fail loudly), while a
+ * malformed value is more likely a tampering attempt or a version
+ * mismatch (caller may want to mark the entry as 'verifier_unreachable'
+ * and continue).
+ *
+ * Closes Codex P2 on PR #18 — the prior implementation reused
+ * AgentWrapperHeaderMissingError for both cases, which broke caller
+ * logic that distinguishes them.
+ */
+export class AgentWrapperHeaderFormatError extends TEEAdapterError {
+  readonly headerName: string;
+  readonly reason: string;
+  constructor(headerName: string, reason: string) {
+    super(
+      "AGENT_WRAPPER_HEADER_FORMAT",
+      `agent-wrapper header ${headerName} is malformed: ${reason}`,
+    );
+    this.name = "AgentWrapperHeaderFormatError";
+    this.headerName = headerName;
+    this.reason = reason;
+  }
+}
+
+/**
  * X-Signature was present but did not hex-decode to exactly 65 bytes
  * (the size TEEVerifier.verifyTEESignature requires).
  */

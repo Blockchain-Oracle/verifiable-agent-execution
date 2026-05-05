@@ -18,7 +18,7 @@
  */
 
 import { Contract, getBytes, JsonRpcProvider, recoverAddress } from "ethers";
-import type { ContractRunner, Provider } from "ethers";
+import type { BytesLike, ContractRunner, Provider } from "ethers";
 
 import { VerifierCallError } from "./errors.js";
 import type { AgentWrapperAttestation } from "./HeaderParser.js";
@@ -71,10 +71,17 @@ export interface TEEVerifyResult {
 /**
  * Subset of the TEEVerifier surface this adapter calls. Tests substitute
  * a test double matching this shape (no Hardhat/contract deploy needed
- * for unit tests).
+ * for unit tests). Signature parameter is `BytesLike` so the production
+ * call can pass `getBytes(attestation.signature)` per the BDD spec
+ * (story-tee-proof-flow §"calls verifier.verifyTEESignature(dataHash,
+ * getBytes(attestation.signature))"); test doubles that accept the hex
+ * string also work because `BytesLike` includes string.
  */
 export interface VerifierLike {
-  verifyTEESignature(dataHash: string, signature: string): Promise<boolean>;
+  verifyTEESignature(
+    dataHash: string,
+    signature: BytesLike,
+  ): Promise<boolean>;
 }
 
 const VERIFIER_ABI = [
@@ -107,9 +114,9 @@ export class TEEProofAdapter {
       })());
     const contract = new Contract(config.verifierAddress, VERIFIER_ABI, provider);
     this.verifier = {
-      verifyTEESignature: async (dataHash: string, signature: string) => {
+      verifyTEESignature: async (dataHash: string, signature: BytesLike) => {
         const result = await (contract as unknown as {
-          verifyTEESignature: (h: string, s: string) => Promise<boolean>;
+          verifyTEESignature: (h: string, s: BytesLike) => Promise<boolean>;
         }).verifyTEESignature(dataHash, signature);
         return Boolean(result);
       },
@@ -138,27 +145,64 @@ export class TEEProofAdapter {
     });
     const dataHash = signingMessageDigestFromString(message);
 
-    // Local recovery — never throws on a properly-shaped 65-byte sig.
-    // If it does throw (e.g. malformed bytes that slipped past the
-    // HeaderParser), surface as VerifierCallError so the caller sees
-    // a typed error rather than a raw ethers stack.
+    // Length pre-check. HeaderParser SHOULD have already enforced
+    // 65-byte signatures, but if a caller bypasses it and feeds a
+    // malformed-length sig directly to verify(), we mirror what the
+    // contract would do: surface as VerifierCallError so the
+    // SessionLogger marks the entry 'verifier_unreachable' instead of
+    // confusing it with a real `valid:false` verdict. Closes Codex P1
+    // round 3 — short-circuiting wrong-length sigs as graceful false
+    // hid the contract's `signature.length == 65` revert path.
+    let sigBytes: Uint8Array;
+    try {
+      sigBytes = getBytes(attestation.signature);
+    } catch (cause) {
+      throw new VerifierCallError(
+        `Signature is not valid hex: ${(cause as Error).message ?? String(cause)}`,
+        cause,
+      );
+    }
+    if (sigBytes.length !== SIGNATURE_BYTE_LENGTH) {
+      throw new VerifierCallError(
+        `Signature length must be ${SIGNATURE_BYTE_LENGTH} bytes (R||S||V); got ${sigBytes.length}`,
+      );
+    }
+
+    // Local recovery — best-effort. The story BDD says a TAMPERED
+    // signature must produce `valid: false` GRACEFULLY, not throw.
+    // ethers.recoverAddress can throw on a structurally-broken sig
+    // (e.g. v byte flipped from 0x1b to 0x1a → "invalid v"). When
+    // that happens we SHORT-CIRCUIT: skip the on-chain verifier (which
+    // would also revert via OZ ECDSA.recover) and return valid:false
+    // with the ZeroAddress sentinel. This is the BDD-required graceful
+    // tampered-proof verdict, distinct from verifier-unreachable.
+    //
+    // Closes Codex P1 from pre-push review round 2 on epic/02 — round 1
+    // only fixed the local-throw path; the on-chain verifier still
+    // reverted in production for the same class of broken sig.
     let recoveredSigner: string;
     try {
       recoveredSigner = recoverAddress(dataHash, attestation.signature);
-    } catch (cause) {
-      throw new VerifierCallError(
-        `Failed to recover signer from signature: ${(cause as Error).message ?? String(cause)}`,
-        cause,
-      );
+    } catch {
+      // Local recovery failed → contract verifier would also revert on
+      // the same sig (OZ ECDSA.recover semantics). Short-circuit.
+      return { valid: false, dataHash, recoveredSigner: ZERO_ADDRESS };
     }
 
     let valid: boolean;
     try {
-      valid = await this.verifier.verifyTEESignature(
-        dataHash,
-        attestation.signature,
-      );
+      // BDD spec literal: pass `getBytes(attestation.signature)` (not
+      // the hex string) so the contract surface receives the byte array
+      // matching `bytes calldata signature` in the Solidity ABI. Already
+      // computed `sigBytes` above for the length check.
+      valid = await this.verifier.verifyTEESignature(dataHash, sigBytes);
     } catch (cause) {
+      // VerifierCallError is reserved for ACTUAL transport failures
+      // (RPC down, contract reverts because the address points at the
+      // wrong contract, length-check revert because the sig length
+      // wasn't validated upstream by HeaderParser). Reaching this
+      // catch implies the local recovery succeeded but the contract
+      // call still failed — which is genuinely a transport problem.
       throw new VerifierCallError(
         `TEEVerifier.verifyTEESignature reverted or RPC failed: ${(cause as Error).message ?? String(cause)}`,
         cause,
@@ -169,7 +213,6 @@ export class TEEProofAdapter {
   }
 }
 
-// Used only to keep `getBytes` referenced — it's the canonical way for
-// callers to convert attestation.signature to bytes if they want to do
-// their own recovery; we keep it exported via the public surface.
-void getBytes;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const SIGNATURE_BYTE_LENGTH = 65;
+
