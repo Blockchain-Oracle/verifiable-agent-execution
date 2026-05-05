@@ -108,6 +108,18 @@ For the hackathon scope this is fine. Production migration to `0gfoundation/0g-a
 
 Per `0gfoundation/0g-agent-skills/patterns/CHAIN.md`, all 0G Chain Solidity must be compiled with `evmVersion: "cancun"`. Skipping this produces a contract that deploys cleanly and reverts at runtime with "invalid opcode" because OpenZeppelin's `ECDSA.recover` uses opcodes that need cancun. Story `story-tee-verifier-contract` carries this requirement in its `hardhat.config.ts` template; do not strip it.
 
+**ADR-10: Trust boundary — TEE-rooted, not trustless**
+
+The verification chain only proves attribution and integrity, not correctness. Every receipt is rooted in trust that 0G's TEE oracle (`0x04581d192d22510ced643eaced12ef169644811a`) was generated inside a real, attested Trusted Execution Environment and that its private key has not been compromised. We pitch this as **"TEE-rooted verification"** rather than "trustless verification" — the precision is a feature, not a weakness, because a competent judge can tell the difference. Pitching trustlessness when the trust root is a single oracle key would mislead the audience and lose more points than it would win.
+
+**ADR-11: Demo arc — REVERSE order (verifier first, agent second)**
+
+The judge walkthrough starts from the verifier's seat, not the agent's seat. Judges receive a proof URL cold (no setup, no narration) and verify a stranger's agent run before we reveal what the agent actually did. This is the opposite of the typical "look at our cool agent → here's its log" arc. The wedge being demoed is *how easy it is to **not** trust an agent and still know exactly what happened* — and the only way to demo that wedge faithfully is to put the judge in the verifier's chair from second one. PRD §"Demo moment" carries the 45-second script that codifies this; do not flatten it back into a forward-arc walkthrough.
+
+**ADR-12: Demo task — opinionated, stakes-loaded (DeFi swap simulation)**
+
+The agent's demo task must be *something where verification matters.* A web-search agent demos the proof but not the **need** for the proof — judges intuitively grade higher when the audited action carries weight. We use a multi-step DeFi swap simulation (`quote → liquidity → simulate-swap → final-approval`). Same code as a web-search task; sharper question ("did the agent really execute this?") and clearer market story (autonomous DeFi compliance is a near-future vertical with concrete pull). The agent does NOT submit a real swap — simulation only, so we don't need a funded mainnet vault for the demo.
+
 ---
 
 ## Repo structure

@@ -3,6 +3,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Env / secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
 screenshots/current/
 .claude/visual-check.log
 .claude/last-review.json
