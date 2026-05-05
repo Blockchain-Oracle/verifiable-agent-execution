@@ -17,6 +17,7 @@
   "include": [
     "playwright.config.ts",
     "scripts/**/*.ts",
+    "scripts/smoke/**/*.ts",
     "tests/**/*.ts"
   ],
   "exclude": [
