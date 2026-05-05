@@ -93,9 +93,16 @@ function require_(headers: Headers, name: string): string {
  * Codex P2 on PR #18 flagged that the prior code conflated these two
  * distinct failure modes.
  */
+function stripHexPrefix(raw: string): string {
+  // Hex prefixes are case-insensitive per the spec; some clients emit
+  // uppercase `0X` (notably some Java/Go bindings). Strip whichever
+  // variant is present so the lowercase-`0x` validator regex still
+  // matches the rebuilt candidate. (Closes Codex P2 round 3 on PR #18.)
+  return raw.startsWith("0x") || raw.startsWith("0X") ? raw.slice(2) : raw;
+}
+
 function normalizeAgentId(raw: string): string {
-  const candidate =
-    raw.startsWith("0x") || raw.startsWith("0X") ? raw : `0x${raw}`;
+  const candidate = `0x${stripHexPrefix(raw)}`;
   if (!HEX_PREFIX_40.test(candidate)) {
     throw new AgentWrapperHeaderFormatError(
       "X-Agent-Id",
@@ -106,8 +113,7 @@ function normalizeAgentId(raw: string): string {
 }
 
 function normalizeSealId(raw: string): string {
-  const candidate =
-    raw.startsWith("0x") || raw.startsWith("0X") ? raw : `0x${raw}`;
+  const candidate = `0x${stripHexPrefix(raw)}`;
   if (!HEX_PREFIX_64.test(candidate)) {
     throw new AgentWrapperHeaderFormatError(
       "X-Seal-Id",
@@ -123,9 +129,9 @@ function truncateForError(value: string): string {
 
 function normalizeSignature(raw: string): string {
   // agent-wrapper writes hex without 0x prefix per the upstream Go code
-  // (sealed/state.go:420). Some clients prepend 0x defensively. Accept
-  // both, normalize to 0x-prefixed.
-  const stripped = raw.startsWith("0x") || raw.startsWith("0X") ? raw.slice(2) : raw;
+  // (sealed/state.go:420). Some clients prepend 0x (or uppercase 0X)
+  // defensively. Accept all variants, normalize to lowercase 0x-prefixed.
+  const stripped = stripHexPrefix(raw);
   if (!HEX_NO_PREFIX_130.test(stripped)) {
     // Compute byte length from raw hex chars for the error message; if
     // the string is non-hex, byteLength is reported as 0 (so the caller

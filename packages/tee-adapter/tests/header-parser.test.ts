@@ -82,6 +82,27 @@ describe("HeaderParser.parse — happy paths", () => {
     const bytes = getBytes(result.signature);
     expect(bytes.length).toBe(65);
   });
+
+  it("normalizes uppercase 0X prefix on agentId / sealId / signature (Codex P2 round 3 on PR #18)", () => {
+    // Hex prefixes are case-insensitive per the spec; some Java/Go
+    // clients emit `0X`. Pre-fix, the normalizer left the uppercase
+    // prefix intact and then validated against `^0x...` (lowercase),
+    // mis-rejecting valid hex IDs as "malformed headers" — an interop
+    // bug for any client that emits uppercase prefixes.
+    const result = HeaderParser.parse(
+      buildHeaders({
+        "X-Agent-Id": `0X${AGENT_ID_HEX_NO_0X}`,
+        "X-Seal-Id": `0X${SEAL_ID_HEX_NO_0X}`,
+        "X-Signature": `0X${SIG_HEX_NO_0X}`,
+      }),
+    );
+    // All three must be normalized to lowercase 0x-prefixed form so
+    // downstream `ethers.getBytes` / contract calldata stays consistent
+    // regardless of the wire-form casing.
+    expect(result.agentId).toBe(AGENT_ID_HEX);
+    expect(result.sealId).toBe(SEAL_ID_HEX);
+    expect(result.signature).toBe(SIG_HEX);
+  });
 });
 
 describe("HeaderParser.parse — missing-header errors", () => {
