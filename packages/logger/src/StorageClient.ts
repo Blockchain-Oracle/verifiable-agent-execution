@@ -23,7 +23,7 @@
  *      `indexer.downloadToBlob` so the Merkle proof is checked.
  */
 
-import { Indexer, MemData } from "@0gfoundation/0g-storage-ts-sdk";
+import { Indexer, MemData, ZgFile } from "@0gfoundation/0g-storage-ts-sdk";
 import type { Signer } from "ethers";
 
 import {
@@ -31,6 +31,14 @@ import {
   StorageRootHashError,
   StorageUploadError,
 } from "./errors.js";
+
+// ZgFile is re-exported through the package barrel so callers needing
+// filesystem-path uploads (post-hackathon scope) can use it without an
+// extra import. Internal upload() always uses MemData (canonical buffer
+// path per agent-skills/patterns/STORAGE.md). The unused-symbol guard:
+void ZgFile;
+const BYTES32_HEX_RE = /^0x[0-9a-fA-F]{64}$/u;
+const DEFAULT_UPLOAD_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -49,6 +57,13 @@ export interface StorageClientConfig {
    * builds `new Indexer(indexerUrl)`.
    */
   indexer?: IndexerLike;
+  /**
+   * Maximum time (ms) to wait for `indexer.upload(...)` before throwing
+   * StorageUploadError. Defaults to 30_000 (30s) per BDD acceptance
+   * "within 30 seconds it returns {...}". Override only for tests that
+   * deliberately exercise the timeout path or for slow CI environments.
+   */
+  uploadTimeoutMs?: number;
 }
 
 export interface UploadResult {
@@ -77,11 +92,13 @@ export class StorageClient {
   private readonly rpcUrl: string;
   private readonly signer: Signer;
   private readonly indexer: IndexerLike;
+  private readonly uploadTimeoutMs: number;
 
   constructor(config: StorageClientConfig) {
     this.rpcUrl = config.rpcUrl;
     this.signer = config.signer;
     this.indexer = config.indexer ?? new Indexer(config.indexerUrl);
+    this.uploadTimeoutMs = config.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
   }
 
   /**
@@ -96,24 +113,52 @@ export class StorageClient {
     // The SDK's signer parameter typing has known ESM/CJS drift between
     // ethers and the SDK; runtime-compatible. The starter kit at
     // `0g-storage-ts-starter-kit/src/storage.ts:121` uses the same cast.
-    const [result, err] = await this.indexer.upload(
+    //
+    // Wrap with Promise.race against a deadline timer so a stalled
+    // indexer doesn't tie up the caller indefinitely (BDD: "within 30
+    // seconds it returns {...}" → throw StorageUploadError on overrun).
+    const uploadPromise = this.indexer.upload(
       memData,
       this.rpcUrl,
       this.signer as Parameters<IndexerLike["upload"]>[2],
     );
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(
+          new StorageUploadError(
+            `Upload exceeded ${this.uploadTimeoutMs}ms deadline (BDD bound).`,
+          ),
+        );
+      }, this.uploadTimeoutMs);
+    });
+    let result: Awaited<ReturnType<IndexerLike["upload"]>>[0];
+    let err: Awaited<ReturnType<IndexerLike["upload"]>>[1];
+    try {
+      [result, err] = await Promise.race([uploadPromise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    }
 
     if (err !== null) {
       throw new StorageUploadError(`Upload failed: ${err.message}`, err);
     }
 
     // Single-tx response: { txHash, rootHash, txSeq }.
-    // Fragmented response: { txHashes[], rootHashes[], txSeqs[] }. We
-    // return the first chunk's identifiers; the full set isn't needed
-    // for downstream consumers (the rootHash anchors the entire log).
+    // Fragmented response: { txHashes[], rootHashes[], txSeqs[] }.
     if ("rootHash" in result) {
       if (result.rootHash === null) {
         throw new StorageRootHashError(
           "Upload succeeded but rootHash was null — SDK returned a degenerate result",
+        );
+      }
+      // Validate the SDK's contract: rootHash must be a 0x-prefixed
+      // bytes32 hex string. The downstream iNFT mint expects exactly
+      // this shape; surface drift here so it doesn't corrupt the
+      // anchor at chain-call time.
+      if (!BYTES32_HEX_RE.test(result.rootHash)) {
+        throw new StorageRootHashError(
+          `Upload succeeded but rootHash is not a valid bytes32 hex: ${result.rootHash}`,
         );
       }
       return {
@@ -123,20 +168,31 @@ export class StorageClient {
       };
     }
 
-    if (result.rootHashes.length === 0) {
-      throw new StorageRootHashError(
-        "Fragmented upload succeeded but rootHashes array was empty",
-      );
-    }
-    const rootHash = result.rootHashes[0];
-    const txHash = result.txHashes[0];
-    const txSeq = result.txSeqs[0];
-    if (rootHash === null || rootHash === undefined) {
-      throw new StorageRootHashError(
-        "Fragmented upload's first rootHash was null",
-      );
-    }
-    return { rootHash, txHash: txHash ?? "", txSeq: txSeq ?? 0 };
+    // Fragmented uploads — REJECT (Codex P1 on PR #17 round 2 +
+    // story-storage-client BDD updated alongside this commit).
+    //
+    // Earlier we silently returned the first chunk's identifiers and
+    // substituted empty values for any missing tx metadata. Both were
+    // wrong:
+    //   (a) `download(rootHash)` only accepts a single root, so chunks
+    //       1..N would be unrecoverable — the on-chain anchor would
+    //       point at an unverifiable partial blob.
+    //   (b) Substituting txHash="" / txSeq=0 hid an upstream data-
+    //       integrity failure behind a "successful" return value,
+    //       violating AGENTS.md "no swallowed errors / fail fast".
+    //
+    // Hackathon scope: session-log JSON blobs are well under the 0G
+    // Storage segment size (~256KB), so fragmentation should never
+    // happen in practice. If it does, the cleanest behavior is to
+    // throw loudly so the caller can split the session OR raise the
+    // segment budget. Multi-fragment download/anchor is a post-
+    // hackathon scope change.
+    const fragmentCount = result.rootHashes.length;
+    throw new StorageUploadError(
+      `Fragmented uploads are not supported (got ${fragmentCount} fragments). ` +
+        "Session log payload is too large for a single 0G Storage segment; " +
+        "split the session or raise the segment budget before retrying.",
+    );
   }
 
   /**

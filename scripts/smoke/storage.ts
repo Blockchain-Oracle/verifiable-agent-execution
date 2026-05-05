@@ -66,11 +66,22 @@ async function uploadBufferViaMemData(
   }
 
   // tx is either { rootHash, txHash } or { rootHashes[], txHashes[] }
-  // — fragmented uploads use the plural form.
+  // — fragmented uploads use the plural form. We REJECT fragmentation
+  // (matches packages/logger/src/StorageClient.ts and the updated
+  // story-storage-client BDD): chunks 1..N would be unrecoverable
+  // through download(rootHash) which only accepts a single root, so
+  // returning rootHashes[0] would silently drop data. Hackathon scope:
+  // session-log JSON is well under the ~256KB segment size, so
+  // fragmentation should never happen in practice. (Post-hackathon
+  // scope to support multi-fragment download/anchor.)
   if ("rootHash" in tx) {
     return { rootHash: tx.rootHash, txHash: tx.txHash };
   } else {
-    return { rootHash: tx.rootHashes[0], txHash: tx.txHashes[0] };
+    throw new Error(
+      `Fragmented uploads are not supported (got ${tx.rootHashes.length} fragments). ` +
+        "Session log payload is too large for a single 0G Storage segment; " +
+        "split the session or raise the segment budget before retrying.",
+    );
   }
 }
 
