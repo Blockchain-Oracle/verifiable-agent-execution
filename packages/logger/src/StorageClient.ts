@@ -136,6 +136,22 @@ export class StorageClient {
     let err: Awaited<ReturnType<IndexerLike["upload"]>>[1];
     try {
       [result, err] = await Promise.race([uploadPromise, timeoutPromise]);
+    } catch (cause) {
+      // The SDK's documented contract is `[result, err]` tuples, but
+      // defense in depth: if `indexer.upload(...)` REJECTS (throws)
+      // instead of returning the tuple, wrap as StorageUploadError so
+      // callers branching on `instanceof StorageUploadError` see a
+      // consistent type regardless of how the SDK reports failure.
+      // (Closes Codex P1 round 3 on PR #17.) Note: the timeout-deadline
+      // promise also rejects with StorageUploadError; rethrow that
+      // unchanged so the deadline message is preserved.
+      if (cause instanceof StorageUploadError) {
+        throw cause;
+      }
+      throw new StorageUploadError(
+        `Upload threw instead of returning [result, err]: ${(cause as Error).message ?? String(cause)}`,
+        cause,
+      );
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     }

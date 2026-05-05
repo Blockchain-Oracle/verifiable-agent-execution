@@ -221,6 +221,35 @@ describe("StorageClient.upload (mocked indexer)", () => {
     );
   });
 
+  it("wraps a thrown SDK rejection as StorageUploadError (Codex P1 round 3, defense in depth)", async () => {
+    // The SDK's documented contract is [result, err] tuples — it should
+    // NOT throw. But if it does (transport blip, type mismatch, etc.),
+    // the rejection must be wrapped as StorageUploadError so callers
+    // branching on `instanceof StorageUploadError` see a consistent
+    // type. Pre-fix, the raw error escaped Promise.race and bypassed
+    // the [result, err] handling.
+    const indexer = makeMockIndexer({
+      upload: (async () => {
+        throw new Error("transport blip: ECONNRESET");
+      }) as unknown as IndexerLike["upload"],
+    });
+    const client = new StorageClient({
+      rpcUrl: RPC,
+      indexerUrl: INDEXER_URL,
+      signer: makeSigner(),
+      indexer,
+    });
+
+    await expect(client.upload(new Uint8Array([1, 2, 3]))).rejects.toBeInstanceOf(
+      StorageUploadError,
+    );
+    // Wrapping must preserve the underlying message so operators can
+    // diagnose the actual transport failure.
+    await expect(client.upload(new Uint8Array([1, 2, 3]))).rejects.toThrow(
+      /transport blip: ECONNRESET/,
+    );
+  });
+
   it("throws StorageUploadError when upload exceeds the configured deadline (BDD: within 30s)", async () => {
     // BDD: "within 30 seconds it returns {...}". The default deadline
     // is 30_000ms; test uses a tiny override so the test completes
