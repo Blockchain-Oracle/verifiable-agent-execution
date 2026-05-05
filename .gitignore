@@ -11,3 +11,4 @@ dist/
 screenshots/current/
 .claude/visual-check.log
 .claude/last-review.json
+coverage/
