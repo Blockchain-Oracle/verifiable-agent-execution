@@ -11,7 +11,7 @@
 
 | Component | What it does | Primary SDK/Interface |
 |---|---|---|
-| **0G Storage** | Decentralized file storage for AI datasets, model weights, agent state, embeddings. Dual-layer: Log (permanent archival) + KV (millisecond query) | Go SDK, TypeScript SDK (`@0gfoundation/0g-ts-sdk`), Python SDK (`0g-storage-sdk`) |
+| **0G Storage** | Decentralized file storage for AI datasets, model weights, agent state, embeddings. Dual-layer: Log (permanent archival) + KV (millisecond query) | Go SDK, TypeScript SDK (`@0gfoundation/0g-storage-ts-sdk` — formerly `@0gfoundation/0g-ts-sdk`, all versions of which are now npm-deprecated and redirect to the new name), Python SDK (`0g-storage-sdk`) |
 | **0G Compute** | Decentralized AI inference marketplace. Providers run models inside TEE hardware. TeeML (model in TEE) + TeeTLS (proxied through TEE to centralized provider). Supports LLM, text-to-image, speech-to-text | `@0gfoundation/0g-compute-ts-sdk` npm (formerly `@0glabs/0g-serving-broker` — npm-marked **deprecated** as of Apr 2026, re-export shim only), `0g-compute-cli`, OpenAI-compatible endpoints |
 | **0G DA** | Infinitely scalable data availability layer for rollups, AI rollups, gaming chains | For rollup operators — not directly relevant to Track 1 |
 | **0G Chain** | Fastest modular EVM L1. Chain ID 16661 (Aristotle Mainnet). Separates consensus from execution. Gas in $0G token | Standard Solidity / Hardhat / Foundry workflows |

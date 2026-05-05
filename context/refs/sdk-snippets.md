@@ -9,12 +9,12 @@
 
 ### Installation
 ```bash
-npm install @0gfoundation/0g-ts-sdk ethers
+npm install @0gfoundation/0g-storage-ts-sdk ethers
 ```
 
 ### Basic upload (TypeScript)
 ```typescript
-import { ZgFile, Indexer, MemData } from '@0gfoundation/0g-ts-sdk';
+import { ZgFile, Indexer, MemData } from '@0gfoundation/0g-storage-ts-sdk';
 import { ethers } from 'ethers';
 
 // Network endpoints — see docs.0g.ai for current values
