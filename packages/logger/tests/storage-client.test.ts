@@ -250,6 +250,37 @@ describe("StorageClient.upload (mocked indexer)", () => {
     );
   });
 
+  it("wraps a nullish SDK rejection as StorageUploadError without crashing on .message access (Codex P2 round 4)", async () => {
+    // JS allows `Promise.reject(null)` and `throw undefined`. Our wrapper
+    // must not crash when reading `.message` on a non-Error cause —
+    // otherwise the synthetic TypeError masks the real failure and the
+    // promised StorageUploadError contract is broken.
+    for (const nullish of [null, undefined] as const) {
+      const indexer = makeMockIndexer({
+        upload: (async () => {
+          // eslint-disable-next-line @typescript-eslint/no-throw-literal
+          throw nullish;
+        }) as unknown as IndexerLike["upload"],
+      });
+      const client = new StorageClient({
+        rpcUrl: RPC,
+        indexerUrl: INDEXER_URL,
+        signer: makeSigner(),
+        indexer,
+      });
+
+      await expect(client.upload(new Uint8Array([1, 2, 3]))).rejects.toBeInstanceOf(
+        StorageUploadError,
+      );
+      // String(null) → "null", String(undefined) → "undefined"; both
+      // must appear in the wrapped message so operators see what was
+      // thrown rather than a swallowed nullish.
+      await expect(client.upload(new Uint8Array([1, 2, 3]))).rejects.toThrow(
+        new RegExp(`Upload threw.*${String(nullish)}`),
+      );
+    }
+  });
+
   it("throws StorageUploadError when upload exceeds the configured deadline (BDD: within 30s)", async () => {
     // BDD: "within 30 seconds it returns {...}". The default deadline
     // is 30_000ms; test uses a tiny override so the test completes

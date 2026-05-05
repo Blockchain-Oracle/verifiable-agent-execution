@@ -148,8 +148,17 @@ export class StorageClient {
       if (cause instanceof StorageUploadError) {
         throw cause;
       }
+      // `cause` can legitimately be ANYTHING in JS — `Promise.reject(null)`
+      // and `throw undefined` are both valid. A bare `(cause as Error).message`
+      // would throw TypeError on null/undefined causes, masking the original
+      // failure with a synthetic crash and breaking the StorageUploadError
+      // contract. `instanceof Error` is a runtime guard (unlike `as Error`
+      // which is compile-time only), so we read `.message` only when it's
+      // actually safe. (Closes Codex P2 round 4 on PR #17.)
+      const causeMessage =
+        cause instanceof Error ? cause.message : String(cause);
       throw new StorageUploadError(
-        `Upload threw instead of returning [result, err]: ${(cause as Error).message ?? String(cause)}`,
+        `Upload threw instead of returning [result, err]: ${causeMessage}`,
         cause,
       );
     } finally {
