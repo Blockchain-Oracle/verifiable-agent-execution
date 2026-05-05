@@ -55,3 +55,16 @@ export class AgentWrapperTimestampFormatError extends TEEAdapterError {
     this.raw = raw;
   }
 }
+
+/**
+ * Wraps a transport-level failure of TEEVerifier.verifyTEESignature so the
+ * SessionLogger can mark the entry as 'verifier_unreachable' rather than
+ * conflating it with a legitimate `valid: false` verdict. Distinct from
+ * the contract returning false (a normal verification result).
+ */
+export class VerifierCallError extends TEEAdapterError {
+  constructor(message: string, cause?: unknown) {
+    super("VERIFIER_CALL_FAILED", message, cause);
+    this.name = "VerifierCallError";
+  }
+}
