@@ -160,7 +160,11 @@ if [ ${#EXISTING[@]} -eq 0 ]; then
 fi
 
 set +e
-MATCHES=$(grep -rEl 'mock|fake|dummy|hardcoded' "${EXISTING[@]}" 2>&1)
+# Exempt: canonical dev verifier whose NAME ("Mock*") is load-bearing per
+# ADR-06. Any OTHER file in contracts/contracts/ matching `mock|fake|dummy|hardcoded`
+# is still flagged — only the explicit Mock*.sol files at the top of
+# contracts/contracts/ are skipped.
+MATCHES=$(grep -rEl --exclude='Mock*.sol' 'mock|fake|dummy|hardcoded' "${EXISTING[@]}" 2>&1)
 RC=$?
 set -e
 

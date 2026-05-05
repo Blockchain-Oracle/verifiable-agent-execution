@@ -3,6 +3,13 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Hardhat
+artifacts/
+cache/
+typechain-types/
+deployments/*/
+!deployments/.gitkeep
+
 # Env / secrets — NEVER commit
 .env
 .env.*

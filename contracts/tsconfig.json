@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "mocha", "chai"],
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "module": "commonjs"
+  },
+  "include": ["hardhat.config.ts", "scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "artifacts", "cache", "typechain-types"]
+}
