@@ -59,6 +59,15 @@ export class SessionLogger {
   private readonly entries: ExecutionLogEntry[] = [];
   private readonly startedAt: number;
   private metadata: Partial<SessionMetadata>;
+  /**
+   * `flushing` is set BEFORE the upload await so concurrent flush() calls
+   * can't both pass the guard and double-anchor the session. `flushed` is
+   * set only on a successful upload — if the upload throws, `flushing`
+   * resets so the caller can retry. This keeps the exactly-once invariant
+   * while preserving the public "retry on transport failure" contract.
+   * (Codex P1 on PR #17.)
+   */
+  private flushing = false;
   private flushed = false;
 
   constructor(
@@ -90,10 +99,13 @@ export class SessionLogger {
    * throws if the session has already been flushed.
    */
   appendEntry(entry: ExecutionLogEntry): void {
-    if (this.flushed) {
+    // Block appends both during AND after flush. Allowing appends during
+    // flush would desynchronize the uploaded blob from the returned
+    // entryCount (Codex P1 on PR #17 — second-half of the same race).
+    if (this.flushed || this.flushing) {
       throw new SessionLoggerError(
         "ALREADY_FLUSHED",
-        `Cannot append to session ${this.sessionId}: already flushed`,
+        `Cannot append to session ${this.sessionId}: ${this.flushed ? "already flushed" : "flush in progress"}`,
       );
     }
 
@@ -113,7 +125,12 @@ export class SessionLogger {
       );
     }
 
-    this.entries.push(result.data);
+    // Freeze the entry on append so the read-only contract on
+    // getEntries() actually holds — callers cannot mutate the inner
+    // object reference and corrupt later flush behavior (Codex P2 on
+    // PR #17). The frozen object still satisfies ExecutionLogEntry
+    // because Object.freeze does not change the type.
+    this.entries.push(Object.freeze(result.data) as ExecutionLogEntry);
   }
 
   /**
@@ -122,21 +139,24 @@ export class SessionLogger {
    * available before session end (the typical OpenClaw lifecycle).
    */
   setMetadata(metadata: SessionMetadata): void {
-    if (this.flushed) {
+    if (this.flushed || this.flushing) {
       throw new SessionLoggerError(
         "ALREADY_FLUSHED",
-        "Cannot setMetadata after flush",
+        `Cannot setMetadata: ${this.flushed ? "already flushed" : "flush in progress"}`,
       );
     }
     this.metadata = { ...metadata };
   }
 
   /**
-   * Read-only view of the accumulated entries. The returned array is a
-   * shallow clone; callers cannot mutate internal state.
+   * Read-only view of the accumulated entries. Returns a shallow clone of
+   * the array; the entry objects themselves are frozen at append time so
+   * callers can neither push to the array NOR mutate fields on individual
+   * entries. (Closes Codex P2 on PR #17 — array-clone alone left field-
+   * level mutation possible: `getEntries()[i].seq = 999` was a footgun.)
    */
-  getEntries(): ReadonlyArray<ExecutionLogEntry> {
-    return [...this.entries];
+  getEntries(): ReadonlyArray<Readonly<ExecutionLogEntry>> {
+    return [...this.entries] as ReadonlyArray<Readonly<ExecutionLogEntry>>;
   }
 
   getStatus(): SessionLoggerStatus {
@@ -152,14 +172,19 @@ export class SessionLogger {
    * Assemble the SessionLog, validate structurally, serialize as JSON,
    * upload to 0G Storage, and return the LogFlushResult.
    *
-   * Exactly-once: a second flush throws SessionLoggerError("ALREADY_FLUSHED").
-   * Metadata must be set first or this throws SessionLoggerError("METADATA_MISSING").
+   * Exactly-once under concurrent callers: `flushing` is set BEFORE the
+   * upload await so a second concurrent flush() throws immediately. On
+   * success `flushed` is set; on upload failure `flushing` resets so
+   * the caller can retry. (Codex P1 on PR #17.)
+   *
+   * Metadata must be set first or this throws SessionLoggerError(
+   * "METADATA_MISSING").
    */
   async flush(): Promise<LogFlushResult> {
-    if (this.flushed) {
+    if (this.flushed || this.flushing) {
       throw new SessionLoggerError(
         "ALREADY_FLUSHED",
-        `Session ${this.sessionId} already flushed`,
+        `Session ${this.sessionId}: ${this.flushed ? "already flushed" : "flush already in progress"}`,
       );
     }
 
@@ -185,6 +210,8 @@ export class SessionLogger {
 
     // Validate the assembled log against the schema (catches refinements
     // like entryCount/length mismatch, endedAt < startedAt, seq drift).
+    // Validation happens BEFORE we set `flushing`, so a programmer error
+    // here doesn't poison the session state — caller can fix and retry.
     const parseResult = sessionLogSchema.safeParse(sessionLog);
     if (!parseResult.success) {
       throw new SessionLoggerError(
@@ -197,14 +224,23 @@ export class SessionLogger {
       JSON.stringify(parseResult.data),
     );
 
-    const upload = await this.storageClient.upload(buffer);
-
-    this.flushed = true;
-
-    return {
-      rootHash: upload.rootHash,
-      entryCount: this.entries.length,
-      sessionId: this.sessionId,
-    };
+    // Lock-before-await: any concurrent flush() will see flushing=true
+    // and throw before reaching the upload, and any concurrent
+    // appendEntry() likewise blocks while the snapshot is in flight.
+    this.flushing = true;
+    try {
+      const upload = await this.storageClient.upload(buffer);
+      this.flushed = true;
+      return {
+        rootHash: upload.rootHash,
+        entryCount: this.entries.length,
+        sessionId: this.sessionId,
+      };
+    } catch (err) {
+      // Reset the lock so the caller can retry on transport failure.
+      // The session is NOT marked flushed; entries remain available.
+      this.flushing = false;
+      throw err;
+    }
   }
 }

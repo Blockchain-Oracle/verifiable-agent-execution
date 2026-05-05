@@ -146,13 +146,27 @@ describe("SessionLogger — appendEntry", () => {
     expect(() => logger.appendEntry(bad)).toThrow(SessionLoggerError);
   });
 
-  it("returned getEntries array is a clone; mutating it does not affect internal state", () => {
+  it("returned getEntries array is a clone; mutating the array does not affect internal state", () => {
     const { client } = makeStorageClient();
     const logger = new SessionLogger("ses_14", client);
     logger.appendEntry(makeEntry(0));
     const view = logger.getEntries() as ExecutionLogEntry[];
     view.push(makeEntry(99));
     expect(logger.getStatus().entryCount).toBe(1);
+  });
+
+  it("frozen entries reject field-level mutation (closes Codex P2 on PR #17)", () => {
+    const { client } = makeStorageClient();
+    const logger = new SessionLogger("ses_15", client);
+    logger.appendEntry(makeEntry(0));
+    const entry = logger.getEntries()[0]!;
+    // Strict mode (vitest runs ESM in strict by default) throws on writes
+    // to a frozen object's own properties.
+    expect(() => {
+      // @ts-expect-error — Readonly<ExecutionLogEntry> rejects assignment.
+      entry.seq = 999;
+    }).toThrow(TypeError);
+    expect(logger.getEntries()[0]?.seq).toBe(0);
   });
 });
 
@@ -293,6 +307,53 @@ describe("SessionLogger — flush", () => {
     logger.appendEntry(makeEntry(0));
     await expect(logger.flush()).rejects.toThrow();
     expect(logger.getStatus().flushed).toBe(false);
+  });
+
+  it("rejects a concurrent flush() while one is in-flight (closes Codex P1 on PR #17)", async () => {
+    // Build an indexer whose upload waits on a deferred promise so we
+    // can hold the first flush mid-flight while we issue a second.
+    let releaseFirst!: () => void;
+    const firstUploadGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const indexer: IndexerLike = {
+      upload: (async () => {
+        await firstUploadGate;
+        return [
+          { rootHash: VALID_ROOT_HASH, txHash: VALID_TX_HASH, txSeq: 7 },
+          null,
+        ];
+      }) as unknown as IndexerLike["upload"],
+      downloadToBlob: (async () => [new Blob([]), null]) as IndexerLike["downloadToBlob"],
+    };
+    const client = new StorageClient({
+      rpcUrl: "https://evmrpc-testnet.0g.ai",
+      indexerUrl: "https://indexer-storage-testnet-turbo.0g.ai",
+      signer: new Wallet(`0x${"1".repeat(64)}`),
+      indexer,
+    });
+    const logger = new SessionLogger("ses_42", client, META);
+    logger.appendEntry(makeEntry(0));
+
+    // Kick the first flush; it parks at the upload gate.
+    const inFlight = logger.flush();
+
+    // While the first is in-flight, a second flush MUST throw with
+    // ALREADY_FLUSHED (the "flush in progress" branch).
+    await expect(logger.flush()).rejects.toMatchObject({
+      code: "ALREADY_FLUSHED",
+    });
+
+    // Concurrent appendEntry MUST also throw — desyncing the uploaded
+    // blob from the eventual entryCount is exactly what the lock
+    // prevents.
+    expect(() => logger.appendEntry(makeEntry(1))).toThrow(SessionLoggerError);
+
+    // Release the first upload; it completes successfully.
+    releaseFirst();
+    const result = await inFlight;
+    expect(result.entryCount).toBe(1);
+    expect(logger.getStatus().flushed).toBe(true);
   });
 });
 
