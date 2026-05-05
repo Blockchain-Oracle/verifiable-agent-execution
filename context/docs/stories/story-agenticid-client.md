@@ -53,7 +53,14 @@ export ZG_TESTNET_RPC="https://evmrpc-testnet.0g.ai"
 export PRIVATE_KEY="<testnet-funded-wallet-key>"
 export AGENTICID_ADDRESS="0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F"
 
-# Run test:
-pnpm --filter=chain-client vitest run agenticid-client.test.ts
+# Run test (use the SCOPED package name — bare `--filter=chain-client`
+# does NOT match the workspace package id, which is
+# `@verifiable-agent-execution/chain-client`):
+pnpm --filter @verifiable-agent-execution/chain-client exec vitest run agenticid-client.test.ts
 # Must exit 0
+#
+# Without PRIVATE_KEY set, the live-mint integration test is skipped
+# and the suite passes via unit + read-only paths. With a funded
+# Galileo wallet (faucet at https://faucet.0g.ai), the gated test
+# exercises the real iMint round-trip + read-back.
 ```

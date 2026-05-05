@@ -11,3 +11,14 @@ dist/
 screenshots/current/
 .claude/visual-check.log
 .claude/last-review.json
+
+# Coverage outputs — contain absolute paths, regenerated per machine
+coverage/
+
+# Hardhat / typechain (will sync from Epic 2's gitignore on main merge,
+# but added here too so Epic 3 doesn't accidentally commit them).
+artifacts/
+cache/
+typechain-types/
+**/deployments/*/
+!**/deployments/.gitkeep
