@@ -406,33 +406,49 @@ async function computeVerificationStatus(
     try {
       ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
     } catch (cause) {
-      // Distinguish contract REVERT (legitimate verification
-      // failure: bad sig length, bad shape, wrong signer) from
-      // INFRASTRUCTURE failure (RPC down, provider disconnect,
-      // timeout). The former IS the verifier saying "no" and maps
-      // to "unverified"; the latter is "we couldn't ask" and must
-      // surface to the caller as a 502 — silently mapping infra
-      // failures to "unverified" misreports outages as proof
-      // failures + violates the repo's no-swallowed-errors rule.
-      // (Codex web R1 P1 #2 on PR #21.)
+      // Discriminate verifier-said-no from infrastructure-failure.
+      //
+      // ethers v6 throws CALL_EXCEPTION for BOTH:
+      //   (a) the verifier contract reverted with a require() — e.g.
+      //       MockTEEVerifier.sol's `require(signature.length == 65,
+      //       "Invalid signature length")`. This IS the verifier
+      //       saying "no" and maps to verified="unverified".
+      //   (b) wrong contract address (calling a non-contract or a
+      //       contract without our ABI shape), wrong network, ABI
+      //       decoding failure, etc. These are MISCONFIG / infra and
+      //       must surface as 502, not silently masquerade as
+      //       failed-verification.
+      //
+      // Discriminator: `error.reason` is set IFF the contract actually
+      // executed and called revert() with a string. ethers populates
+      // it from the decoded revert data. Wrong-address calls, no-bytecode
+      // calls, and gas/network failures all leave `reason` null/undefined.
+      // (Codex web R3 P1 on PR #21.)
       const code = (cause as { code?: string } | null)?.code;
+      const reason = (cause as { reason?: string | null } | null)?.reason;
       const message = cause instanceof Error ? cause.message : String(cause);
-      if (code === "CALL_EXCEPTION") {
-        // Verifier reverted — legitimate "no" answer. Log the reason
-        // so operators can correlate dashboards-saying-unverified
-        // with the underlying revert string.
+      const isContractRevertWithReason =
+        code === "CALL_EXCEPTION" && typeof reason === "string" && reason.length > 0;
+      if (isContractRevertWithReason) {
+        // Verifier ran + returned revert with a reason — legitimate
+        // "no" answer. Log the reason so operators can correlate
+        // dashboards-saying-unverified with the underlying contract
+        // revert string.
         console.error(
           "[verify-proof] verifier reverted on entry %d: %s",
           entry.seq,
-          message,
+          reason,
         );
         return "unverified";
       }
-      // Anything else — re-throw as a 502 so the route handler
-      // surfaces the infrastructure failure to the caller. Verifier
-      // is `view`-only so this should be rare; when it happens it
-      // means the dashboard env is misconfigured (wrong rpcUrl,
-      // wrong verifier address, RPC outage).
+      // Anything else (CALL_EXCEPTION without reason, NETWORK_ERROR,
+      // TIMEOUT, INVALID_ARGUMENT, etc.) — re-throw as a 502 so the
+      // route handler surfaces the infrastructure failure. The
+      // verifier is `view`-only so true RPC failures are rare; when
+      // they happen it means the dashboard env is misconfigured
+      // (wrong rpcUrl, wrong verifier address pointing at a non-
+      // contract, RPC outage). Judges seeing 502 know "we couldn't
+      // verify" instead of being misled into "this proof failed."
       throw new ProofResolutionError({
         status: 502,
         code: "VERIFIER_CALL_FAILED",

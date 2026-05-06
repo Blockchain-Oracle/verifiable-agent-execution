@@ -297,7 +297,9 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
     expect(body.error?.message).toMatch(/NETWORK_ERROR|provider disconnected/);
   });
 
-  it("contract revert (CALL_EXCEPTION) on verifier maps to verified='unverified', NOT 502", async () => {
+  // Helper for the two CALL_EXCEPTION variants — reduces duplication
+  // between the with-reason and without-reason tests.
+  function installVerifierThatThrows(thrown: unknown): void {
     const blob = makeSessionLogBlob({
       entries: [
         {
@@ -314,10 +316,6 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
         },
       ],
     });
-    const { __setCachedClientsForTests } = await import("@/lib/verify-proof");
-    const revertErr = Object.assign(new Error("execution reverted: bad signature length"), {
-      code: "CALL_EXCEPTION",
-    });
     __setCachedClientsForTests({
       provider: { getNetwork: async () => ({ chainId: 16602n }) } as never,
       agenticIdClient: {
@@ -331,7 +329,7 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
       } as never,
       verifier: {
         verifyTEESignature: vi.fn(async () => {
-          throw revertErr;
+          throw thrown;
         }),
       } as never,
       env: {
@@ -342,6 +340,17 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
         TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
       },
     });
+  }
+
+  it("CALL_EXCEPTION WITH reason (contract require revert) → verified='unverified'", async () => {
+    // ethers populates `error.reason` from the decoded revert string
+    // when the contract executes a `require(false, "...")`. This IS
+    // the verifier saying "no" — maps to unverified.
+    const revertErr = Object.assign(new Error("execution reverted: Invalid signature length"), {
+      code: "CALL_EXCEPTION",
+      reason: "Invalid signature length",
+    });
+    installVerifierThatThrows(revertErr);
     const response = await GET(
       new Request("http://localhost:3000/api/verify/1"),
       { params: Promise.resolve({ tokenId: "1" }) },
@@ -349,5 +358,27 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.verified).toBe("unverified");
+  });
+
+  it("CALL_EXCEPTION WITHOUT reason (wrong address / no bytecode) → HTTP 502 (Codex web R3 P1)", async () => {
+    // ethers also throws CALL_EXCEPTION when the call target has no
+    // contract bytecode OR the ABI doesn't match — these are
+    // INFRASTRUCTURE / misconfig failures, NOT verifier rejections.
+    // Pre-fix, ALL CALL_EXCEPTION mapped to "unverified", which would
+    // misreport "wrong TEE_VERIFIER_ADDRESS" as "this proof failed."
+    // Discriminator: typeof error.reason === "string". Without reason,
+    // the contract didn't actually execute → re-throw as 502.
+    const misconfigErr = Object.assign(new Error("missing revert data; calling a non-contract"), {
+      code: "CALL_EXCEPTION",
+      // intentionally no `reason` — that's the failure signature
+    });
+    installVerifierThatThrows(misconfigErr);
+    const response = await GET(
+      new Request("http://localhost:3000/api/verify/1"),
+      { params: Promise.resolve({ tokenId: "1" }) },
+    );
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error?.code).toBe("VERIFIER_CALL_FAILED");
   });
 });
