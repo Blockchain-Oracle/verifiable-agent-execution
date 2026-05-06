@@ -204,14 +204,22 @@ export function handleAfterToolCall(
   // {error} envelope so downstream verifiers see SOMETHING captured
   // for the failure (vs the entry being absent and the proof chain
   // having an inferred gap).
-  const inputHash = sha256Hex(event.params);
-  const outputPayload =
-    event.error !== undefined
-      ? { error: serializeError(event.error) }
-      : event.result;
-  const outputHash = sha256Hex(outputPayload);
-
+  //
+  // sha256Hex never throws (it catches JSON.stringify failures and
+  // falls back to a `<<unserializable:T>>` sentinel internally), but
+  // we wrap the entire compose+append block in try/catch as a
+  // defense-in-depth so any unexpected throw on the path still gets
+  // structured-logged instead of crashing the OpenClaw host. (Codex
+  // Epic 4 round-1 P1: invalid input must not prevent the log entry
+  // from being created.)
   try {
+    const inputHash = sha256Hex(event.params);
+    const outputPayload =
+      event.error !== undefined
+        ? { error: serializeError(event.error) }
+        : event.result;
+    const outputHash = sha256Hex(outputPayload);
+
     logger.appendEntry({
       seq: logger.getEntries().length,
       ts: Date.now(),
@@ -221,10 +229,10 @@ export function handleAfterToolCall(
       outputHash,
     });
   } catch (cause) {
-    // appendEntry can throw on schema-mismatch or post-flush. Both
-    // are OPERATOR errors (we built the wrong entry / fired after
-    // session_end). Log + swallow — never crash the host.
-    structuredLog("ERROR", "after_tool_call", "appendEntry failed", {
+    // appendEntry can throw on schema-mismatch or post-flush; sha256Hex
+    // is now hardened so the only realistic causes are the former.
+    // Log + swallow — never crash the host.
+    structuredLog("ERROR", "after_tool_call", "Failed to append log entry", {
       sessionKey,
       tool: toolName,
       cause: cause instanceof Error ? cause.message : String(cause),

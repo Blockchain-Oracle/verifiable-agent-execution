@@ -102,7 +102,7 @@ types directly + the canonical reference plugin `0g-memory/openclaw-skills/everm
 **Create:**
 - `openclaw-skills/verifiable-execution/openclaw.plugin.json` — plugin manifest with `id` + `configSchema`.
 - `openclaw-skills/verifiable-execution/package.json` — declares the plugin module and its deps.
-- `openclaw-skills/verifiable-execution/src/index.ts` — plugin entrypoint exporting `activate(api)` (default export).
+- `openclaw-skills/verifiable-execution/src/index.ts` — plugin entrypoint exporting a default OBJECT `{id, name, description, register(api)}` (NOT `activate(api)` — see "Spec evolution" above).
 - `openclaw-skills/verifiable-execution/src/SessionManager.ts` — singleton mapping `sessionId → SessionLogger`.
 - `openclaw-skills/verifiable-execution/tests/skill.test.ts` — vitest harness with a fake OpenClawPluginApi.
 

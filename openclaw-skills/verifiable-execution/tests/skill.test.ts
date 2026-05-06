@@ -17,6 +17,8 @@
  * OpenClaw runtime (which is the entire 74MB openclaw npm package).
  */
 
+import { createHash } from "node:crypto";
+
 import { Wallet } from "ethers";
 import { describe, expect, it, vi } from "vitest";
 
@@ -445,6 +447,89 @@ describe("handleAfterToolCall — story-skill-intercept", () => {
     handleAfterToolCall(state, { params: {}, result: {} }, { sessionKey: "ses_noname" });
     const entries = state.sessions.getOrCreate("ses_noname").getEntries();
     expect(entries[0].tool).toBe("<unknown>");
+  });
+
+  it("hashes inputs as sha256(JSON.stringify(value)) — independently computed (Codex R1 on Epic 4)", () => {
+    // Pin the BDD: the helper must be a strict alias for
+    // sha256(JSON.stringify(value)). A tautological assertion against
+    // sha256Hex itself wouldn't catch the prior string-fast-path bug
+    // ("abc" hashed as 3 bytes instead of "\"abc\"" 5 bytes). This
+    // test computes the expected hash via node:crypto directly, with
+    // no shared code path with the implementation.
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_hash_vector";
+    const params = { q: "0G chain", n: 5 };
+    const result = "abc";
+
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params, result },
+      { sessionKey },
+    );
+    const entry = state.sessions.getOrCreate(sessionKey).getEntries()[0];
+
+    const expectedInputHash = createHash("sha256")
+      .update(JSON.stringify(params), "utf8")
+      .digest("hex");
+    const expectedOutputHash = createHash("sha256")
+      .update(JSON.stringify(result), "utf8") // for "abc" this yields sha256("\"abc\"")
+      .digest("hex");
+    expect(entry.inputHash).toBe(expectedInputHash);
+    expect(entry.outputHash).toBe(expectedOutputHash);
+    // Sanity: the BUG-FIX path — string "abc" must NOT hash as 3 bytes.
+    const naiveStringHash = createHash("sha256").update("abc", "utf8").digest("hex");
+    expect(entry.outputHash).not.toBe(naiveStringHash);
+  });
+
+  it("creates a log entry even for unserializable input (BigInt) without crashing (Codex R1 on Epic 4)", () => {
+    // BigInt throws on JSON.stringify. Pre-fix, this would crash the
+    // handler before any entry was created — leaving a gap in the
+    // session log + violating the BDD "error does not crash the
+    // session". Post-fix: sha256Hex catches the failure and uses a
+    // deterministic <<unserializable:bigint>> fallback. The entry is
+    // appended normally; verifiers see SOMETHING for the call.
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_bigint";
+    expect(() =>
+      handleAfterToolCall(
+        state,
+        { toolName: "balanceOf", params: { wei: 1234567890123456789n }, result: 999n },
+        { sessionKey },
+      ),
+    ).not.toThrow();
+    const entry = state.sessions.getOrCreate(sessionKey).getEntries()[0];
+    expect(entry.tool).toBe("balanceOf");
+    // Both hashes must be the deterministic fallback for the typed
+    // sentinel (object for params, bigint for result), independently
+    // computable so the test isn't tautological.
+    const expectedInputHash = createHash("sha256")
+      .update("<<unserializable:object>>", "utf8")
+      .digest("hex");
+    const expectedOutputHash = createHash("sha256")
+      .update("<<unserializable:bigint>>", "utf8")
+      .digest("hex");
+    expect(entry.inputHash).toBe(expectedInputHash);
+    expect(entry.outputHash).toBe(expectedOutputHash);
+  });
+
+  it("creates a log entry even for circular references without crashing", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_circular";
+    type Node = { name: string; self?: Node };
+    const circular: Node = { name: "loop" };
+    circular.self = circular;
+    expect(() =>
+      handleAfterToolCall(
+        state,
+        { toolName: "graph_walk", params: circular, result: circular },
+        { sessionKey },
+      ),
+    ).not.toThrow();
+    const entry = state.sessions.getOrCreate(sessionKey).getEntries()[0];
+    expect(entry.tool).toBe("graph_walk");
+    expect(entry.inputHash).toBe(
+      createHash("sha256").update("<<unserializable:object>>", "utf8").digest("hex"),
+    );
   });
 });
 

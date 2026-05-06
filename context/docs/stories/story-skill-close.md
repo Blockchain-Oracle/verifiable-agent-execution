@@ -15,12 +15,12 @@ As an OpenClaw integration developer, I need onSessionEnd to flush the active se
 ## Acceptance criteria
 
 ```gherkin
-Given `packages/openclaw-skill/src/hooks.ts` exports onSessionEnd(context)
-And SessionManager has an active SessionLogger with at least 1 entry
-When onSessionEnd(context) is called
-Then it calls SessionLogger.flush() exactly once
+Given `openclaw-skills/verifiable-execution/src/index.ts` exports `handleSessionEnd(state, event, ctx)` (registered against the typed `api.on("session_end", ...)` lifecycle hook — NOT a top-level `onSessionEnd(context)` method per the original BDD; see "Spec evolution" below)
+And SessionManager has an active SessionLogger with at least 1 entry for the session's sessionKey
+When OpenClaw fires the `session_end` hook for the session
+Then handleSessionEnd calls SessionLogger.flush() exactly once
 And it calls SessionAnchor.anchor() exactly once
-And it returns { verifyUrl: string, tokenId: bigint, txHash: string }
+And it INFO-logs `{ verifyUrl, tokenId, txHash, rootHash, entryCount }` to stderr (the OpenClaw hook contract returns void; the verifyUrl + tokenId + txHash surface in the structured log line where dashboards / verifier UIs / log shippers pick them up)
 
 Given onSessionEnd() resolves successfully
 When the session state is inspected afterward
