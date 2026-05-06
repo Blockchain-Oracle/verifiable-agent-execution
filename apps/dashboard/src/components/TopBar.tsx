@@ -16,7 +16,7 @@ import { SearchBar } from "./SearchBar";
 export function TopBar() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-bg/95 backdrop-blur-sm">
-      <div className="mx-auto flex max-w-7xl items-center gap-8 px-6 py-4">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-8 sm:px-6 sm:py-4">
         <Link
           href="/"
           className="group flex flex-col leading-none transition-opacity hover:opacity-80"

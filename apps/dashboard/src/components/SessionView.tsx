@@ -125,7 +125,7 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
   return (
     <>
       <VerificationTicker entries={tickerEntries} />
-      <div className="relative mx-auto mt-8 max-w-5xl space-y-10 px-6 pb-16">
+      <div className="relative mx-auto mt-6 max-w-5xl space-y-8 px-4 pb-16 sm:mt-8 sm:space-y-10 sm:px-6">
         <NumericHero
           proof={proof}
           running={running}
@@ -165,7 +165,7 @@ function NumericHero({
       {/* Massive numeric tokenId — the brand mark of the proof. */}
       <div className="relative">
         <div
-          className="token-stamp font-mono text-[120px] leading-none text-text-primary md:text-[160px]"
+          className="token-stamp font-mono text-[80px] leading-none text-text-primary sm:text-[120px] md:text-[160px]"
           aria-label={`Token ${proof.tokenId}`}
         >
           <span className="text-text-secondary/40">#</span>
@@ -284,7 +284,14 @@ function SessionRecord({ proof }: { proof: ProofResponse }) {
           label="On-chain"
           value={
             <Link
-              href={proof.meta.explorer.token}
+              // Defensive: older API shapes (before the explorer-meta
+              // refactor) may not include `meta.explorer` — fall back to
+              // a hardcoded chainscan URL with the AgenticID address that's
+              // public + immutable per ADR-08.
+              href={
+                proof.meta.explorer?.token ??
+                `https://chainscan-galileo.0g.ai/token/0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F?a=${proof.tokenId}`
+              }
               className="text-link hover:underline"
               target="_blank"
               rel="noreferrer"

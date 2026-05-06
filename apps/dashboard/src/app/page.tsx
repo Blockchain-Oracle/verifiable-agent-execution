@@ -26,7 +26,7 @@ export default async function HomePage() {
   return (
     <div className="min-h-screen bg-bg text-text-primary">
       <TopBar />
-      <main className="mx-auto max-w-7xl px-6 py-12">
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
         <Hero />
         <div className="mt-12">
           <FeedTable initialRows={initialRows} />
