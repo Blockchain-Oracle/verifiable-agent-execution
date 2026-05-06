@@ -94,8 +94,11 @@ export PRIVATE_KEY="<testnet-funded-wallet-key>"  # 0.1 0G/day from https://fauc
 # script in package.json, so vitest must be invoked via `exec`):
 pnpm --filter @verifiable-agent-execution/chain-client exec vitest run session-anchor.test.ts
 # Must exit 0
-# Expect: 15 passed (1 skipped if env is missing → test gating intentional;
-# 15 passed (0 skipped) when ALL four env vars are set → live anchor exercised)
+# Expect: 16 tests total. Without env vars set: 15 passed | 1 skipped
+#         (the gated live anchor suite skips intentionally — see "How
+#          the env maps to the test" table below).
+#         With ALL four env vars set: 16 passed | 0 skipped (the live
+#         anchor test is exercised end-to-end against Galileo).
 ```
 
 ### How the env maps to the test
