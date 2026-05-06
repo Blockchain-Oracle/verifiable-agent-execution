@@ -55,6 +55,33 @@ And at least one entry includes tool, ts, inputHash, and outputHash fields
 ## Shell verification
 
 ```bash
-pnpm --filter=dashboard vitest run verifier-api.test.ts
-# Must exit 0
+# Use the SCOPED package name + `exec vitest` (bare `--filter=dashboard`
+# does NOT match the workspace package id, which is
+# `@verifiable-agent-execution/dashboard`):
+pnpm --filter @verifiable-agent-execution/dashboard exec vitest run verifier-api.test.ts verifier-route.test.ts
+# Must exit 0. Library tests live in verifier-api.test.ts; HTTP route
+# integration tests live in verifier-route.test.ts (covers GET status
+# codes + response body shape per BDD).
 ```
+
+### Spec evolution — verified is a 3-state, not a boolean; HTTP route tests live in a separate file
+
+Original BDD said `verified: boolean`. The implementation uses
+`"verified" | "preview" | "unverified"` because the UX spec badge has
+three colors (green/amber/red) — "preview" is the additional state
+for dev sessions (no signatures present) and pre-verifier-deploy
+environments (TEE_VERIFIER_ADDRESS unset). The boolean reading maps
+to "verified" | "unverified".
+
+Original BDD's "When a valid GET request is sent to /api/verify/42 then
+HTTP 200" was caught by tests/verifier-api.test.ts which targets
+`resolveProof` directly — those tests don't exercise the HTTP boundary.
+Codex caught the gap; tests/verifier-route.test.ts now imports the
+route's `GET` export and invokes it with a synthetic Request, asserting
+HTTP status + response body shape per the BDD.
+
+The dashboard library uses `Indexer.downloadToBlob(rootHash, {proof:true})`
+directly rather than the StorageClient from `packages/logger`, because
+StorageClient's constructor requires a Signer for the upload path —
+the dashboard is read-only and constructing a placeholder Wallet
+violates the §14 hot-path no-hardcoded-secrets rule (Codex web R1 P2).

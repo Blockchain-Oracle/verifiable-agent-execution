@@ -12,7 +12,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "vitest": "vitest"
   },
   "dependencies": {
     "@verifiable-agent-execution/chain-client": "workspace:*",

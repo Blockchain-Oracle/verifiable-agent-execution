@@ -12,37 +12,65 @@
  *          metadata (agent name, capabilities) per the agenticID-examples
  *          example minted token 0.
  *
- *   2. StorageClient.download(rootHash)
+ *   2. Indexer.downloadToBlob(rootHash, { proof: true })
  *        → fetches the SessionLog JSON blob from 0G Storage. Verified
- *          download (proof: true is wired inside StorageClient).
+ *          download (proof: true). We use the Indexer SDK directly
+ *          rather than packages/logger StorageClient because the
+ *          dashboard only does READ access — StorageClient's
+ *          constructor requires a Signer for the upload path, and
+ *          constructing a placeholder Wallet violates the §14
+ *          hot-path no-hardcoded-secrets rule (Codex web R1 P2 on
+ *          PR #20). Direct Indexer access has no signer surface.
  *
- *   3. (Optional) TEEVerifier.verifyTEESignature(...) per entry
- *        → only when TEE_VERIFIER_ADDRESS is set. For the hackathon
- *          MVP we use a presence-check heuristic: verified=true iff
- *          ALL entries that have `teeSignature` recover to a non-zero
- *          address (true ECDSA recover via ethers — the contract call
- *          is the same shape, just adds the on-chain verifyTEESignature
- *          gas-free `view` round-trip). This proves the agent-wrapper
- *          actually signed each step. When TEE_VERIFIER_ADDRESS is
- *          unset, verified=false (preview mode); the UI surfaces this as
- *          a "Mock" badge instead of the "Verified" green checkmark.
+ *   3. TEEVerifier.verifyTEESignature(digest, signature) per entry
+ *        → instantiates the deployed verifier contract via ethers
+ *          and calls the on-chain `view` function. The digest is
+ *          reconstructed with `tee-adapter/signing-message` per the
+ *          agent-wrapper convention:
+ *             keccak256(toUtf8Bytes(`${agentId}|${sealId}|${timestamp}|${bodyHashHex}`))
+ *          where bodyHashHex IS the entry's outputHash (already
+ *          sha256-hex-no-0x of the body — that's what agent-wrapper
+ *          sticks into the signing message). Aggregates per-entry
+ *          results into a single ProofResponse.verified status.
+ *
+ *          When TEE_VERIFIER_ADDRESS is unset, verified="preview"
+ *          (dashboard usable for storage-only proofs before the
+ *          verifier is deployed). When verifier is set but no entries
+ *          carry a teeSignature, verified="preview" too (dev session
+ *          that didn't go through agent-wrapper). Only when the
+ *          verifier IS configured AND all signed entries verify
+ *          on-chain do we return "verified".
  */
 
-import { JsonRpcProvider, Wallet, getBytes, recoverAddress, hashMessage } from "ethers";
+import {
+  Contract,
+  JsonRpcProvider,
+  type Provider,
+} from "ethers";
 
 import {
   AgenticIDClient,
   type IntelligentData,
 } from "@verifiable-agent-execution/chain-client";
 import {
-  StorageClient,
   sessionLogSchema,
   type SessionLog,
-  type IndexerLike,
 } from "@verifiable-agent-execution/logger";
+import { signingMessageDigestFromString } from "@verifiable-agent-execution/tee-adapter";
 import { Indexer } from "@0gfoundation/0g-storage-ts-sdk";
 
 import { loadEnv, type DashboardEnv } from "./env.js";
+
+// ---------------------------------------------------------------------------
+// TEE verifier ABI — exact match for the deployed MockTEEVerifier.sol
+// (see contracts/contracts/MockTEEVerifier.sol). The dashboard only needs
+// the read function; deploy-time helpers and the constructor are out of
+// scope here.
+// ---------------------------------------------------------------------------
+
+const TEE_VERIFIER_ABI = [
+  "function verifyTEESignature(bytes32 hash, bytes calldata signature) external view returns (bool)",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Public response shape — matches the BDD acceptance for /api/verify/[tokenId]
@@ -57,8 +85,10 @@ export interface ProofResponse {
    * "verified" | "preview" | "unverified" — three-state instead of the
    * BDD's boolean because the UI badge has three colors per the UX
    * spec palette (accent-verify / amber preview / accent-unverified).
-   * The BDD's `verified: true | false` maps to "verified" | "unverified";
-   * "preview" is the additional state for dev sessions / pre-verifier-deploy.
+   * The BDD's `verified: true | false` maps to "verified" |
+   * "unverified"; "preview" is the additional state for dev sessions
+   * (no signatures present) and pre-verifier-deploy environments
+   * (TEE_VERIFIER_ADDRESS unset).
    */
   verified: "verified" | "preview" | "unverified";
   /**
@@ -105,33 +135,44 @@ export class ProofResolutionError extends Error {
 // Cached clients — module-level so a single Next.js dev server keeps the
 // same provider/Indexer connection across requests. In production each
 // route handler invocation reuses the same module evaluation.
+//
+// No Signer/Wallet construction here: the dashboard is read-only, and
+// all three clients (AgenticIDClient, Indexer, verifier Contract) take
+// only a Provider. (Closes Codex web R1 P2 on PR #20: hot-path source
+// previously constructed a Wallet from a hardcoded private key.)
 // ---------------------------------------------------------------------------
 
-let cachedClients: {
+interface CachedClients {
+  provider: Provider;
   agenticIdClient: AgenticIDClient;
-  storageClient: StorageClient;
+  indexer: Indexer;
+  verifier: Contract | null;
   env: DashboardEnv;
-} | null = null;
+}
 
-function getClients() {
+let cachedClients: CachedClients | null = null;
+
+function getClients(): CachedClients {
   if (cachedClients !== null) return cachedClients;
   const env = loadEnv();
   const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
   const agenticIdClient = new AgenticIDClient(env.AGENTICID_ADDRESS, provider);
   const indexer = new Indexer(env.ZG_INDEXER_RPC);
-  const storageClient = new StorageClient({
-    rpcUrl: env.ZG_TESTNET_RPC,
-    indexerUrl: env.ZG_INDEXER_RPC,
-    // Storage downloads are read-only but StorageClient's contract
-    // requires a Signer for the upload path. We use a deterministic
-    // throwaway wallet — never holds funds, never broadcasts a tx
-    // (download() doesn't sign anything). Any 0x-prefixed 32-byte
-    // hex string works; using "0x01..." for stability.
-    signer: new Wallet(`0x${"01".repeat(32)}`),
-    indexer: indexer as unknown as IndexerLike,
-  });
-  cachedClients = { agenticIdClient, storageClient, env };
+  const verifier =
+    env.TEE_VERIFIER_ADDRESS !== undefined
+      ? new Contract(env.TEE_VERIFIER_ADDRESS, TEE_VERIFIER_ABI, provider)
+      : null;
+  cachedClients = { provider, agenticIdClient, indexer, verifier, env };
   return cachedClients;
+}
+
+/**
+ * Test-only seam: lets the verifier-route + verify-proof tests inject
+ * stubbed clients without going through env validation or instantiating
+ * real ethers / Indexer objects. Production code never calls this.
+ */
+export function __setCachedClientsForTests(clients: CachedClients | null): void {
+  cachedClients = clients;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,14 +186,12 @@ function getClients() {
  */
 export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
   const tokenId = parseTokenId(tokenIdRaw);
-  const { agenticIdClient, storageClient, env } = getClients();
+  const { agenticIdClient, indexer, verifier, env } = getClients();
 
   let datas: IntelligentData[];
   try {
     datas = [...(await agenticIdClient.getIntelligentDatas(tokenId))];
   } catch (cause) {
-    // Most likely: token doesn't exist (contract reverts with "Token
-    // does not exist"). Map to 404. RPC-level failures map to 502.
     const message = cause instanceof Error ? cause.message : String(cause);
     if (/Token does not exist|nonexistent/i.test(message)) {
       throw new ProofResolutionError({
@@ -170,12 +209,6 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
     });
   }
 
-  // Pick the exec-log entry. AgenticID tokens can carry multiple
-  // IntelligentData entries (token 0 in the canonical example has
-  // agent_name, model, capabilities, system_prompt). We anchor
-  // exec-logs with a dataDescription prefix per ADR-08, which lets
-  // the dashboard skip past unrelated metadata entries on the same
-  // token without misinterpreting them as session logs.
   const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
   if (execLogEntry === undefined) {
     throw new ProofResolutionError({
@@ -187,24 +220,9 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
 
   const sessionId = parseSessionIdFromDescription(execLogEntry.dataDescription);
 
-  let blobBytes: Uint8Array;
-  try {
-    blobBytes = await storageClient.download(execLogEntry.dataHash);
-  } catch (cause) {
-    throw new ProofResolutionError({
-      status: 502,
-      code: "STORAGE_DOWNLOAD_FAILED",
-      message: `Failed to download SessionLog from 0G Storage at rootHash ${execLogEntry.dataHash}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      cause,
-    });
-  }
-
+  const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
   const sessionLog = parseSessionLog(blobBytes);
 
-  // Cross-check: the sessionId encoded in the dataDescription must
-  // match the sessionId in the JSON blob. A mismatch means either
-  // the contract was anchored against the wrong rootHash OR the
-  // storage blob was tampered with. Either way the proof is broken.
   if (sessionLog.sessionId !== sessionId) {
     throw new ProofResolutionError({
       status: 422,
@@ -213,7 +231,7 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
     });
   }
 
-  const verified = computeVerificationStatus(sessionLog, env);
+  const verified = await computeVerificationStatus(sessionLog, verifier);
 
   return {
     tokenId: tokenId.toString(),
@@ -272,9 +290,45 @@ function parseSessionIdFromDescription(dataDescription: string): string {
       message: `dataDescription must follow ADR-08 "exec-log:<sessionId>:<modelId>"; got "${dataDescription}".`,
     });
   }
-  // sessionId is parts[1]; modelId is the remainder joined back (in
-  // case the modelId itself contains colons, e.g. "claude-sonnet-4-6:beta").
   return parts[1];
+}
+
+async function downloadStorageBlob(
+  indexer: Indexer,
+  rootHash: string,
+): Promise<Uint8Array> {
+  // 0G Storage SDK uses `[result, err]` Go-style tuples — destructure
+  // both, throw on err per logger/StorageClient convention. proof:true
+  // ensures the blob is verified against the Merkle proof on download.
+  let tuple: Awaited<ReturnType<Indexer["downloadToBlob"]>>;
+  try {
+    tuple = await indexer.downloadToBlob(rootHash, { proof: true });
+  } catch (cause) {
+    throw new ProofResolutionError({
+      status: 502,
+      code: "STORAGE_DOWNLOAD_FAILED",
+      message: `0G Storage downloadToBlob threw for rootHash=${rootHash}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      cause,
+    });
+  }
+  const [blob, err] = tuple;
+  if (err !== null) {
+    throw new ProofResolutionError({
+      status: 502,
+      code: "STORAGE_DOWNLOAD_FAILED",
+      message: `0G Storage download failed for rootHash=${rootHash}: ${err.message}`,
+    });
+  }
+  try {
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch (cause) {
+    throw new ProofResolutionError({
+      status: 502,
+      code: "STORAGE_DOWNLOAD_FAILED",
+      message: `Failed to read storage blob for rootHash=${rootHash}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      cause,
+    });
+  }
 }
 
 function parseSessionLog(bytes: Uint8Array): SessionLog {
@@ -300,50 +354,80 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
   return result.data;
 }
 
-function computeVerificationStatus(
+/**
+ * Compute the verification status for a session log via on-chain
+ * verifyTEESignature calls. The verifier contract is the source of
+ * truth — we don't ECDSA-recover client-side and trust the result;
+ * the contract holds the trusted-signer address constant and does
+ * the recover + compare for us. (Closes Codex web R1 P1 + Logic
+ * fail on PR #20: "verified" was previously set whenever ANY
+ * signature recovered to a non-zero address, which an attacker can
+ * trivially produce.)
+ */
+async function computeVerificationStatus(
   sessionLog: SessionLog,
-  env: DashboardEnv,
-): ProofResponse["verified"] {
-  // No verifier configured → preview mode (dashboard is usable for
-  // storage-only proofs before the verifier contract is deployed).
-  if (env.TEE_VERIFIER_ADDRESS === undefined) {
+  verifier: Contract | null,
+): Promise<ProofResponse["verified"]> {
+  if (verifier === null) {
+    // No verifier configured → preview mode (dashboard usable for
+    // storage-only proofs before the verifier contract is deployed
+    // to mainnet).
     return "preview";
   }
 
-  // No signatures at all → preview (dev session that didn't go through
-  // agent-wrapper's TEE container). Technically "unverified" is the
-  // strict reading, but "preview" is more useful for the UI badge —
-  // unverified should mean "we tried and it failed", not "no attempt".
-  const entriesWithSigs = sessionLog.entries.filter((e) => e.teeSignature !== undefined);
+  const entriesWithSigs = sessionLog.entries.filter(
+    (e) => e.teeSignature !== undefined,
+  );
   if (entriesWithSigs.length === 0) {
+    // Verifier configured but the session has no signed entries —
+    // dev session that didn't go through agent-wrapper's TEE
+    // container. Preview, not unverified, so the badge tells the
+    // user "this is real but not attested" rather than "this failed
+    // verification".
     return "preview";
   }
 
-  // Verify each ECDSA signature recovers to a non-zero address.
-  // The signing payload follows agent-wrapper convention:
-  //   keccak256("X-Agent-Id:" + agentId + ";X-Seal-Id:" + sealId +
-  //             ";X-Timestamp:" + signedAt + ";body:" + outputHash)
-  // For the dashboard MVP we use a SIMPLIFIED check: signature can
-  // be recovered to a non-zero address (proves it's a well-formed
-  // ECDSA sig, not a random hex string). Full agent-wrapper signing-
-  // payload reconstruction lives in tee-adapter and would be wired
-  // here in a follow-up; for the demo arc the presence + recoverability
-  // check is sufficient to flip the "Verified" badge.
   for (const entry of entriesWithSigs) {
-    if (entry.teeSignature === undefined) continue; // type guard
+    if (!hasAttestationFields(entry)) {
+      // Has signature but missing the agentId / sealId / signedAt
+      // fields needed to reconstruct the signing digest. Cannot
+      // verify → unverified (something is malformed about how the
+      // entry was logged).
+      return "unverified";
+    }
+    // Reconstruct the agent-wrapper signing message digest. The
+    // bodyHashHex piece IS the entry's outputHash (sha256 of the
+    // response body, lowercase hex no 0x prefix — that's what
+    // agent-wrapper writes into the signing message per the upstream
+    // Go convention; see tee-adapter/signing-message.ts).
+    const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
+    const digest = signingMessageDigestFromString(message);
+    let ok: boolean;
     try {
-      // hashMessage produces the EIP-191 personal-sign digest; agent-
-      // wrapper signs with this prefix per the upstream Go code. The
-      // outputHash field is the body hash so we use it as the message.
-      const digest = hashMessage(getBytes(`0x${entry.outputHash}`));
-      const recovered = recoverAddress(digest, entry.teeSignature);
-      if (recovered === "0x0000000000000000000000000000000000000000") {
-        return "unverified";
-      }
+      ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
     } catch {
-      // Any recover failure → unverified.
+      // Contract revert (wrong sig length, bad signature shape, etc.)
+      // → unverified. The verifier is `view` so transport issues
+      // here would be unusual and would also indicate a misconfig.
+      return "unverified";
+    }
+    if (!ok) {
       return "unverified";
     }
   }
+
+  // All signed entries passed on-chain verification.
   return "verified";
+}
+
+function hasAttestationFields(entry: {
+  agentId?: string;
+  sealId?: string;
+  signedAt?: number;
+}): entry is { agentId: string; sealId: string; signedAt: number } {
+  return (
+    typeof entry.agentId === "string" &&
+    typeof entry.sealId === "string" &&
+    typeof entry.signedAt === "number"
+  );
 }
