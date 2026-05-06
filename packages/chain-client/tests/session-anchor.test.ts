@@ -204,6 +204,27 @@ describe("SessionAnchor — constructor validation", () => {
     expect(anchor.modelId).toBe(MODEL_ID);
   });
 
+  it("the 5th `options` arg cannot be omitted — type-level enforcement (Codex R5)", () => {
+    // Compile-time enforcement that the constructor signature is
+    // 5-arg, not 4-arg-with-optional-options. If a future refactor
+    // makes `options` optional (e.g., to "make migration easier"),
+    // this test fails to compile via the @ts-expect-error directive.
+    //
+    // Note on directive placement: @ts-expect-error suppresses the
+    // error on the IMMEDIATELY-following line. Splitting the call
+    // across an outer `expect(() => ...)` wrapper would put the
+    // `new SessionAnchor` expression 2+ lines below the directive,
+    // making the directive "unused" per TS2578. The
+    // `const construct = (): SessionAnchor => ...` shape keeps the
+    // directive directly above the failing expression.
+    const logger = buildSessionLogger();
+    const { client } = buildAgenticIdClient();
+    const construct = (): SessionAnchor =>
+      // @ts-expect-error — omitting the 5th `options` arg must remain a compile error
+      new SessionAnchor(logger, client, VALID_AGENT_ADDRESS, MODEL_ID);
+    expect(construct).toThrow();
+  });
+
   it("chainId is REQUIRED inside options — no Galileo default at the type level", () => {
     // Compile-time enforcement of the "no silent default chainId"
     // invariant codified in story-session-mint.md "Spec evolution".
