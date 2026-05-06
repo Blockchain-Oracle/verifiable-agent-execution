@@ -220,8 +220,14 @@ export function handleAfterToolCall(
         : event.result;
     const outputHash = sha256Hex(outputPayload);
 
+    // seq from getStatus().entryCount (O(1)) — the prior version used
+    // logger.getEntries().length which clones the entry array on every
+    // call (O(n) per append → O(n²) for an N-tool-call session). For
+    // long-running sessions on agents that hammer tools every few
+    // seconds this would dominate session-end memory + CPU. (Closes
+    // Codex web R3 P2 on PR #20.)
     logger.appendEntry({
-      seq: logger.getEntries().length,
+      seq: logger.getStatus().entryCount,
       ts: Date.now(),
       type: "tool_call",
       tool: toolName,
