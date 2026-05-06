@@ -163,6 +163,37 @@ describe("AgenticIDClient — construction", () => {
       () => new AgenticIDClient(PRE_DEPLOYED, fakeProvider, unconnectedSigner),
     ).not.toThrow();
   });
+
+  it("rejects a signer already bound to a different provider than the one passed (Codex P1 round 3 on PR #19)", async () => {
+    // The high-impact silent-failure mode: caller passes provider B,
+    // but signer is already connected to provider A. Pre-fix, the
+    // constructor silently used the signer's provider A, so mint()
+    // would land on A's chain while the caller believed they targeted
+    // B. Now we throw at construction time so the bug surfaces loud.
+    const { JsonRpcProvider, Wallet } = await import("ethers");
+    const providerA = new JsonRpcProvider("https://provider-a.invalid");
+    const providerB = new JsonRpcProvider("https://provider-b.invalid");
+    const signerOnA = new Wallet(`0x${"1".repeat(64)}`, providerA);
+    expect(signerOnA.provider).toBe(providerA);
+
+    expect(
+      () => new AgenticIDClient(PRE_DEPLOYED, providerB, signerOnA),
+    ).toThrow(AgenticIDInputError);
+    expect(
+      () => new AgenticIDClient(PRE_DEPLOYED, providerB, signerOnA),
+    ).toThrow(/different provider/);
+  });
+
+  it("accepts a signer already bound to the SAME provider as the one passed", async () => {
+    // The matching-provider case must remain valid — only the
+    // mismatch case throws.
+    const { JsonRpcProvider, Wallet } = await import("ethers");
+    const provider = new JsonRpcProvider("https://shared.invalid");
+    const signerOnSame = new Wallet(`0x${"1".repeat(64)}`, provider);
+    expect(
+      () => new AgenticIDClient(PRE_DEPLOYED, provider, signerOnSame),
+    ).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------

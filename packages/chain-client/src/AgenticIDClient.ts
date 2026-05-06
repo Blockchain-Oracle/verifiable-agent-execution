@@ -140,18 +140,35 @@ export class AgenticIDClient {
 
     // Production path: build Contract from provider + signer.
     //
-    // If a signer is supplied without a connected provider, attach the
-    // supplied provider via signer.connect(provider) — otherwise writes
-    // would fail because ethers Contract calls go through signer.provider
-    // for nonces/network state. Closes Codex round 2 P1: the BDD shape
-    // is `(addr, provider, signer)` and callers reasonably expect both
-    // args to be wired together.
+    // Provider/signer wiring rules (Codex P1 round 1 = unconnected signer
+    // + provider missing; Codex P1 round 2 on PR #19 = SILENT mismatch
+    // when the signer is already bound to a DIFFERENT provider):
+    //   - signer with no .provider + explicit provider → connect them
+    //   - signer with a .provider matching the explicit one → use as-is
+    //   - signer with a .provider DIFFERENT from the explicit one → THROW
+    //     (silently picking one would let `mint()` go to the wrong chain
+    //     while the caller believed they targeted the explicit RPC —
+    //     a high-impact correctness risk for on-chain anchoring)
+    //   - signer alone (no explicit provider) → use signer's provider
     let runner: ContractRunner;
     if (signer !== undefined) {
-      const connectedSigner =
-        signer.provider === null && provider !== undefined
-          ? signer.connect(provider)
-          : signer;
+      let connectedSigner: Signer;
+      if (signer.provider === null) {
+        connectedSigner =
+          provider !== undefined ? signer.connect(provider) : signer;
+      } else if (provider !== undefined && signer.provider !== provider) {
+        throw new AgenticIDInputError(
+          "AgenticIDClient received both `provider` and a `signer` already " +
+            "connected to a different provider. Refusing to construct — silently " +
+            "preferring one would let mint() go to the wrong chain while the " +
+            "caller believed they targeted the explicit provider. Pass either " +
+            "(a) a signer with no .provider and the explicit provider, or " +
+            "(b) a signer already connected to the same provider, or " +
+            "(c) only the signer (its bound provider is used).",
+        );
+      } else {
+        connectedSigner = signer;
+      }
       runner = connectedSigner;
     } else {
       runner = provider as Provider;

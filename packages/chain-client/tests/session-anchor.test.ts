@@ -20,20 +20,24 @@
  * scripts/smoke/ harnesses.
  */
 
-import { Wallet } from "ethers";
+import {
+  Interface,
+  Wallet,
+  type ContractTransactionResponse,
+  type Log,
+  type TransactionReceipt,
+} from "ethers";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   SessionLogger,
   StorageClient,
   type IndexerLike,
-  type LogFlushResult,
-  type SessionMetadata,
 } from "@verifiable-agent-execution/logger";
 
 import {
+  AGENTICID_ABI,
   AgenticIDClient,
-  AgenticIDInputError,
   type AgenticIDContractLike,
   type IntelligentData,
   type MintResult,
@@ -364,5 +368,99 @@ describe("SessionAnchor.anchor — orchestration", () => {
       containerHash: CONTAINER_HASH,
     });
     expect(result.verifyUrl).toBe(`/verify/16661/${MINT_TOKEN_ID.toString()}`);
+  });
+
+  // BDD coverage for: "Given the transaction is confirmed on-chain / When ethers.js
+  // listens for IntelligentDataSet events from the mint tx / Then at least one event
+  // is emitted confirming the data anchor" (story-session-mint.md). The other
+  // orchestration tests stub AgenticIDClient.mint directly so the receipt/event
+  // path isn't exercised — Codex P2 round 1 on PR #19 caught the gap. This
+  // test routes through the REAL AgenticIDClient.mint() with a contract stub
+  // that returns a receipt containing an encoded IntelligentDataSet log,
+  // proving the end-to-end event-recovery path works.
+  it("receipt contains an IntelligentDataSet event whose tokenId surfaces in the AnchorResult (Codex P2 round 1)", async () => {
+    const logger = buildSessionLogger();
+    const expectedTokenId = 7n;
+    const expectedTxHash = `0x${"e".repeat(64)}`;
+
+    // Encode a real IntelligentDataSet log against the bundled ABI so
+    // AgenticIDClient's receipt parser can decode it without any
+    // patching. Matches the helper pattern in agenticid-client.test.ts.
+    const iface = new Interface(AGENTICID_ABI);
+    const eventFragment = iface.getEvent("IntelligentDataSet");
+    if (eventFragment === null) {
+      throw new Error("IntelligentDataSet event missing from AGENTICID_ABI");
+    }
+    const expectedDatas: IntelligentData[] = [
+      {
+        dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`,
+        dataHash: ROOT_HASH,
+      },
+    ];
+    const encodedEvent = iface.encodeEventLog(eventFragment, [
+      expectedTokenId,
+      expectedDatas,
+    ]);
+    const eventLog = {
+      address: PRE_DEPLOYED_AGENTICID,
+      topics: encodedEvent.topics as string[],
+      data: encodedEvent.data,
+      blockNumber: 1,
+      blockHash: `0x${"1".repeat(64)}`,
+      transactionHash: expectedTxHash,
+      transactionIndex: 0,
+      index: 0,
+      removed: false,
+    } as unknown as Log;
+    const receipt = {
+      hash: expectedTxHash,
+      blockNumber: 1,
+      logs: [eventLog],
+      status: 1,
+    } as unknown as TransactionReceipt;
+    const txResponse = {
+      hash: expectedTxHash,
+      wait: vi.fn().mockResolvedValue(receipt),
+    } as unknown as ContractTransactionResponse;
+
+    const iMintSpy = vi.fn(async () => txResponse);
+    const contract: AgenticIDContractLike = {
+      iMint: iMintSpy as unknown as AgenticIDContractLike["iMint"],
+      getIntelligentDatas: (async () =>
+        expectedDatas) as unknown as AgenticIDContractLike["getIntelligentDatas"],
+    };
+    // Real AgenticIDClient (no mint stub) so the receipt path runs.
+    const client = new AgenticIDClient(
+      PRE_DEPLOYED_AGENTICID,
+      undefined,
+      undefined,
+      { contract },
+    );
+
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+
+    const result = await anchor.anchor({
+      sessionId: SESSION_ID,
+      containerHash: CONTAINER_HASH,
+    });
+
+    // The tokenId surfaced in the AnchorResult ONLY if the receipt's
+    // IntelligentDataSet log was successfully decoded by mint(). If the
+    // event were absent, AgenticIDMintEventMissingError would have been
+    // thrown before reaching this assertion.
+    expect(result.tokenId).toBe(expectedTokenId);
+    expect(result.txHash).toBe(expectedTxHash);
+    expect(result.verifyUrl).toBe(
+      `/verify/${GALILEO_CHAIN_ID}/${expectedTokenId.toString()}`,
+    );
+    // Sanity: contract was actually invoked with the SessionAnchor-built
+    // payload — proves the orchestration didn't accidentally short-circuit.
+    expect(iMintSpy).toHaveBeenCalledWith(VALID_AGENT_ADDRESS, expectedDatas);
   });
 });
