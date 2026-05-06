@@ -200,6 +200,56 @@ export function __setCachedClientsForTests(clients: CachedClients | null): void 
   cachedClients = clients;
 }
 
+/**
+ * Load + parse the SessionLog for a tokenId. Used by the per-entry
+ * verify route (Stage 5 — badge-flip animation) so the route can
+ * grab one entry by seq without reconstructing the whole proof.
+ *
+ * Throws ProofResolutionError on the same paths as resolveProof
+ * (404 token-not-found, 422 schema mismatch, 502 chain/storage
+ * transport failure).
+ */
+export async function loadSessionLogForToken(
+  tokenIdRaw: string,
+): Promise<{ sessionLog: SessionLog; verifier: Contract }> {
+  const tokenId = parseTokenId(tokenIdRaw);
+  const { agenticIdClient, indexer, verifier, env } = getClients();
+
+  let datas: IntelligentData[];
+  try {
+    datas = [...(await agenticIdClient.getIntelligentDatas(tokenId))];
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (/Token does not exist|nonexistent/i.test(message)) {
+      throw new ProofResolutionError({
+        status: 404,
+        code: "TOKEN_NOT_FOUND",
+        message: `tokenId ${tokenId.toString()} does not exist on AgenticID at ${env.AGENTICID_ADDRESS}.`,
+        cause,
+      });
+    }
+    throw new ProofResolutionError({
+      status: 502,
+      code: "CHAIN_READ_FAILED",
+      message: `Failed to read AgenticID.getIntelligentDatas(${tokenId.toString()}): ${message}`,
+      cause,
+    });
+  }
+
+  const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
+  if (execLogEntry === undefined) {
+    throw new ProofResolutionError({
+      status: 404,
+      code: "NO_EXEC_LOG_ANCHOR",
+      message: `Token ${tokenId.toString()} has no exec-log anchor.`,
+    });
+  }
+
+  const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
+  const sessionLog = parseSessionLog(blobBytes);
+  return { sessionLog, verifier };
+}
+
 // ---------------------------------------------------------------------------
 // Main entry — resolveProof(tokenId)
 // ---------------------------------------------------------------------------
@@ -396,6 +446,79 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
  * signature recovered to a non-zero address, which an attacker can
  * trivially produce.)
  */
+/**
+ * Verify ONE entry against the verifier contract. Returns a per-entry
+ * status that the dashboard can use to drive the badge-flip animation
+ * (PRD reverse-demo arc: "click Verify on chain → 4 badges flip from
+ * grey to TEE Verified ✓ in sequence").
+ *
+ * Three outcomes:
+ *   - "unsigned": entry has no teeSignature OR is missing the
+ *     attestation fields (agentId/sealId/signedAt). Badge stays grey;
+ *     not a failure, just nothing to verify.
+ *   - "verified": signature recovered to the trusted oracle on-chain.
+ *     Badge flips green.
+ *   - "unverified": verifier said no. Badge flips red.
+ *
+ * Throws ProofResolutionError on infrastructure failure (RPC down,
+ * wrong contract address, etc.) so the route can surface 502 rather
+ * than misreport an outage as a verification failure.
+ */
+export type EntryVerificationStatus = "verified" | "unverified" | "unsigned";
+
+export interface EntryVerificationResult {
+  seq: number;
+  verified: EntryVerificationStatus;
+  /** Revert reason from the contract (when verified === "unverified"). */
+  reason?: string;
+  /** Wall-clock ms to perform the verifyTEESignature call. */
+  durationMs: number;
+}
+
+export async function verifyOneEntry(
+  entry: SessionLog["entries"][number],
+  verifier: Contract,
+): Promise<EntryVerificationResult> {
+  const start = Date.now();
+  if (entry.teeSignature === undefined || !hasAttestationFields(entry)) {
+    return { seq: entry.seq, verified: "unsigned", durationMs: Date.now() - start };
+  }
+  const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
+  const digest = signingMessageDigestFromString(message);
+  let ok: boolean;
+  try {
+    ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
+  } catch (cause) {
+    const code = (cause as { code?: string } | null)?.code;
+    const reason = (cause as { reason?: string | null } | null)?.reason;
+    if (code === "CALL_EXCEPTION" && typeof reason === "string" && reason.length > 0) {
+      console.error(
+        "[verify-proof] verifier reverted on entry %d: %s",
+        entry.seq,
+        reason,
+      );
+      return {
+        seq: entry.seq,
+        verified: "unverified",
+        reason,
+        durationMs: Date.now() - start,
+      };
+    }
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new ProofResolutionError({
+      status: 502,
+      code: "VERIFIER_CALL_FAILED",
+      message: `Verifier RPC call failed for entry ${entry.seq} (${code ?? "unknown code"}): ${message}`,
+      cause,
+    });
+  }
+  return {
+    seq: entry.seq,
+    verified: ok ? "verified" : "unverified",
+    durationMs: Date.now() - start,
+  };
+}
+
 async function computeVerificationStatus(
   sessionLog: SessionLog,
   verifier: Contract,
@@ -404,6 +527,10 @@ async function computeVerificationStatus(
   // The "no verifier configured" branch from the previous version is
   // gone — "preview" only fires for sessions with zero signed entries
   // (dev sessions that didn't go through agent-wrapper's TEE container).
+  //
+  // This is the AGGREGATE status used by the initial /api/verify/[tokenId]
+  // response. The badge-flip animation uses verifyOneEntry() per entry
+  // (Stage 5, 2026-05-06) so the UI can drive sequential reveal.
 
   const entriesWithSigs = sessionLog.entries.filter(
     (e) => e.teeSignature !== undefined,

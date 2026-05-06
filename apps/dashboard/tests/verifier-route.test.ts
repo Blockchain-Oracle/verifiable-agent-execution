@@ -386,3 +386,107 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
     expect(body.error?.code).toBe("VERIFIER_CALL_FAILED");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stage 5 — per-entry verify endpoint (powers badge-flip animation)
+// ---------------------------------------------------------------------------
+
+describe("GET /api/verify/[tokenId]/entry/[seq]", () => {
+  // Lazy-import the per-entry route handler so the existing tests
+  // above (which rely on the aggregate route) aren't affected.
+  async function importEntryRoute() {
+    return await import("@/app/api/verify/[tokenId]/entry/[seq]/route");
+  }
+
+  function blobWithEntries(entries: Array<Record<string, unknown>>) {
+    return makeSessionLogBlob({ entries, entryCount: entries.length });
+  }
+
+  it("returns 200 verified='verified' when verifier returns true", async () => {
+    const { GET: GET_ENTRY } = await importEntryRoute();
+    installFakeClients({
+      intelligentDatas: [
+        { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
+      ],
+      storageBlob: blobWithEntries([
+        {
+          seq: 0,
+          ts: 1700000000050,
+          type: "tool_call",
+          tool: "quote",
+          inputHash: "a".repeat(64),
+          outputHash: "b".repeat(64),
+          teeSignature: `0x${"c".repeat(130)}`,
+          agentId: `0x${"d".repeat(40)}`,
+          sealId: `0x${"e".repeat(64)}`,
+          signedAt: 1700000000040,
+        },
+      ]),
+      verifierResult: true,
+    });
+    const response = await GET_ENTRY(
+      new Request("http://localhost:3000/api/verify/1/entry/0"),
+      { params: Promise.resolve({ tokenId: "1", seq: "0" }) },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ seq: 0, verified: "verified" });
+    expect(typeof body.durationMs).toBe("number");
+  });
+
+  it("returns 200 verified='unsigned' when entry has no teeSignature (badge stays grey)", async () => {
+    const { GET: GET_ENTRY } = await importEntryRoute();
+    installFakeClients({
+      intelligentDatas: [
+        { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
+      ],
+      storageBlob: blobWithEntries([
+        {
+          seq: 0,
+          ts: 1700000000050,
+          type: "tool_call",
+          tool: "preflight",
+          inputHash: "a".repeat(64),
+          outputHash: "b".repeat(64),
+          // no teeSignature
+        },
+      ]),
+      verifierResult: true,
+    });
+    const response = await GET_ENTRY(
+      new Request("http://localhost:3000/api/verify/1/entry/0"),
+      { params: Promise.resolve({ tokenId: "1", seq: "0" }) },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.verified).toBe("unsigned");
+  });
+
+  it("returns 400 INVALID_SEQ for non-numeric seq", async () => {
+    const { GET: GET_ENTRY } = await importEntryRoute();
+    const response = await GET_ENTRY(
+      new Request("http://localhost:3000/api/verify/1/entry/abc"),
+      { params: Promise.resolve({ tokenId: "1", seq: "abc" }) },
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error?.code).toBe("INVALID_SEQ");
+  });
+
+  it("returns 404 ENTRY_NOT_FOUND when seq is past the session's entry count", async () => {
+    const { GET: GET_ENTRY } = await importEntryRoute();
+    installFakeClients({
+      intelligentDatas: [
+        { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
+      ],
+      storageBlob: makeSessionLogBlob(), // single entry seq=0
+    });
+    const response = await GET_ENTRY(
+      new Request("http://localhost:3000/api/verify/1/entry/99"),
+      { params: Promise.resolve({ tokenId: "1", seq: "99" }) },
+    );
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.error?.code).toBe("ENTRY_NOT_FOUND");
+  });
+});
