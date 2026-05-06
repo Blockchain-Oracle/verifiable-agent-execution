@@ -21,8 +21,16 @@ import { Contract, JsonRpcProvider } from "ethers";
 import { loadEnv } from "./env.js";
 
 const FEED_PROBE_CEILING_OFFSET = 0n; // probe FROM nextTokenId-1 backward
-const FEED_PROBE_DEPTH = 32; // walk this many tokenIds back
+const FEED_PROBE_DEPTH = 64; // walk this many tokenIds back
 const FEED_RESULT_LIMIT = 12;
+
+// Cache the discovered ceiling for ~30s. The deployed AgenticID example
+// at 0x2700F6A3…EF1F does NOT expose a working `_nextTokenId` getter
+// (call reverts on chain), so we have to discover the highest existing
+// tokenId ourselves. Binary search costs ~log₂(N) RPC calls; cache so
+// every dashboard request doesn't pay it.
+let cachedCeiling: { value: bigint; at: number } | null = null;
+const CEILING_TTL_MS = 30_000;
 
 /**
  * Minimal AgenticID ABI for the feed walker. Owner is read alongside
@@ -63,17 +71,7 @@ export async function fetchRecentFeed(
   const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
   const contract = new Contract(env.AGENTICID_ADDRESS, AGENTICID_FEED_ABI, provider);
 
-  // Determine the probe ceiling. Try the public _nextTokenId getter
-  // first; if it reverts (older contract version), fall back to a
-  // generous static ceiling that walks past the latest known tokenId.
-  let ceiling: bigint;
-  try {
-    const next = (await contract._nextTokenId()) as bigint;
-    ceiling = next - 1n - FEED_PROBE_CEILING_OFFSET;
-  } catch {
-    ceiling = 200n;
-  }
-
+  const ceiling = await resolveCeiling(contract, FEED_PROBE_CEILING_OFFSET);
   const rows: FeedRow[] = [];
   const start = ceiling;
   const stop = start - BigInt(FEED_PROBE_DEPTH);
@@ -100,14 +98,7 @@ export async function fetchTokensForAgent(
   const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
   const contract = new Contract(env.AGENTICID_ADDRESS, AGENTICID_FEED_ABI, provider);
 
-  let ceiling: bigint;
-  try {
-    const next = (await contract._nextTokenId()) as bigint;
-    ceiling = next - 1n;
-  } catch {
-    ceiling = 200n;
-  }
-
+  const ceiling = await resolveCeiling(contract, 0n);
   const target = agentAddress.toLowerCase();
   const rows: FeedRow[] = [];
   for (let id = ceiling; id >= 0n && rows.length < limit; id--) {
@@ -117,6 +108,73 @@ export async function fetchTokensForAgent(
     }
   }
   return rows;
+}
+
+/**
+ * Resolve the highest existing tokenId. Tries `_nextTokenId()` first
+ * (cheap when the contract exposes it); falls back to a binary-search
+ * probe via `getIntelligentDatas` when the getter reverts (which is
+ * the case for the AgenticID example contract on Galileo as of
+ * 2026-05-06 — `_nextTokenId` is internal-only there).
+ *
+ * Result is module-cached for CEILING_TTL_MS so concurrent dashboard
+ * requests don't re-pay the binary search.
+ */
+async function resolveCeiling(
+  contract: Contract,
+  offset: bigint,
+): Promise<bigint> {
+  const now = Date.now();
+  if (cachedCeiling !== null && now - cachedCeiling.at < CEILING_TTL_MS) {
+    return cachedCeiling.value - offset;
+  }
+  let latest: bigint;
+  try {
+    const next = (await contract._nextTokenId()) as bigint;
+    latest = next - 1n;
+  } catch {
+    latest = await binarySearchLatestTokenId(contract);
+  }
+  cachedCeiling = { value: latest, at: now };
+  return latest - offset;
+}
+
+/**
+ * Find the highest tokenId for which `getIntelligentDatas` does not
+ * revert. Two-phase:
+ *   1. Exponential probe upward to bracket the answer (start at 64,
+ *      double until we hit a non-existent id).
+ *   2. Binary search within the bracket for the smallest non-existent
+ *      id; the answer is one less.
+ * Cost: ~log₂(N) RPC calls (~12-16 for 0–10k token contracts).
+ */
+async function binarySearchLatestTokenId(contract: Contract): Promise<bigint> {
+  let lo = 0n;
+  let hi = 64n;
+  for (let i = 0; i < 12; i++) {
+    if (await tokenExists(contract, hi)) {
+      lo = hi;
+      hi = hi * 2n;
+    } else {
+      break;
+    }
+  }
+  if (!(await tokenExists(contract, lo))) return 0n;
+  while (hi - lo > 1n) {
+    const mid = (lo + hi) / 2n;
+    if (await tokenExists(contract, mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+async function tokenExists(contract: Contract, id: bigint): Promise<boolean> {
+  try {
+    await contract.getIntelligentDatas(id);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function fetchOneRow(contract: Contract, id: bigint): Promise<FeedRow | null> {

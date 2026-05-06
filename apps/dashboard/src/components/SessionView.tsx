@@ -39,7 +39,6 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
   );
   const [running, setRunning] = useState(false);
   const [completed, setCompleted] = useState(false);
-  const [autoStarted, setAutoStarted] = useState(false);
   const startedRef = useRef(false);
 
   const verifyOnChain = useCallback(async () => {
@@ -102,17 +101,23 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
     startedRef.current = false; // permit replay
   }, [proof.tokenId, proof.entries.length]);
 
-  // AUTO-VERIFY on mount — the bold move.
+  // AUTO-VERIFY on mount — the bold move. Empty deps so the effect
+  // runs exactly once per mount; startedRef inside verifyOnChain
+  // prevents StrictMode's double-invoke from firing the cascade twice.
+  // (Earlier version gated on a useState flag and put it in deps —
+  // the dependency change re-ran the effect, whose cleanup cancelled
+  // the pending setTimeout before it could fire. Caught via Playwright,
+  // 2026-05-06.)
   useEffect(() => {
-    if (autoStarted) return;
-    setAutoStarted(true);
     const handle = setTimeout(() => {
       void verifyOnChain();
     }, AUTO_VERIFY_INITIAL_DELAY_MS);
     return () => clearTimeout(handle);
-    // verifyOnChain intentionally NOT in deps — we only want one auto-fire per mount
+    // verifyOnChain intentionally NOT in deps — its identity is stable
+    // (only depends on tokenId + entry count) and adding it would
+    // reintroduce the cleanup-cancels-cascade bug above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStarted]);
+  }, []);
 
   const allVerified = completed && statuses.every((s) => s.state === "verified");
   const anyFailed = completed && statuses.some((s) => s.state === "unverified");
