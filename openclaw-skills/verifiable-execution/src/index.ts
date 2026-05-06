@@ -61,6 +61,7 @@ import {
 import { resolveConfig, type VerifiableExecutionConfig } from "./config.js";
 import { sha256Hex } from "./hash.js";
 import { SessionManager } from "./SessionManager.js";
+import { printFirstRunBanner, resolveWallet } from "./wallet.js";
 
 const PLUGIN_ID = "verifiable-execution";
 const PLUGIN_NAME = "Verifiable Execution";
@@ -124,22 +125,27 @@ function deriveContainerHash(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// State construction — happy path. Throws on PRIVATE_KEY-missing OR
-// 0G SDK construction failure; caller catches + degrades.
+// State construction — happy path. Resolves the wallet via the
+// auto-managed pattern (wallet.ts): env override > disk cache >
+// freshly generated. Throws ONLY on 0G SDK construction failure.
 // ---------------------------------------------------------------------------
 
 function buildPluginState(config: VerifiableExecutionConfig): PluginState {
-  const privateKey = process.env[config.privateKeyEnvVar];
-  if (privateKey === undefined || privateKey.length === 0) {
-    throw new Error(
-      `Required env var ${config.privateKeyEnvVar} is unset; cannot construct signer for storage upload + iMint.`,
-    );
-  }
+  // Auto-managed wallet — no PRIVATE_KEY env required for the demo
+  // path. First run generates + persists to ~/.openclaw/verifiable-execution/wallet.json.
+  // Subsequent runs read from disk. PRIVATE_KEY env still works as
+  // an advanced override.
+  const wallet = resolveWallet();
+  printFirstRunBanner(wallet);
+  structuredLog("INFO", "wallet", "Wallet resolved", {
+    address: wallet.address,
+    source: wallet.source,
+  });
 
   // Wallet without a connected provider — StorageClient internally
   // wires the rpcUrl to its 0G Storage upload signer; AgenticIDClient
   // gets the signer + an explicit JsonRpcProvider via fromRpc().
-  const storageSigner = new Wallet(privateKey);
+  const storageSigner = new Wallet(wallet.privateKey);
 
   const indexer = new Indexer(config.indexerUrl);
   const storageClient = new StorageClient({
@@ -152,7 +158,7 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
   const agenticIdClient = AgenticIDClient.fromRpc(
     config.agenticIdAddress,
     config.rpcUrl,
-    privateKey,
+    wallet.privateKey,
   );
 
   const sessions = new SessionManager({ storageClient });
