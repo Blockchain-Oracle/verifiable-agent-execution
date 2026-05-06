@@ -13,7 +13,15 @@ export {
   AgenticIDMintError,
   AgenticIDMintEventMissingError,
   AgenticIDReadError,
+  SessionAnchorError,
 } from "./errors.js";
+
+export { SessionAnchor } from "./SessionAnchor.js";
+export type {
+  AnchorInput,
+  AnchorResult,
+  SessionAnchorOptions,
+} from "./SessionAnchor.js";
 
 export {
   addressSchema,

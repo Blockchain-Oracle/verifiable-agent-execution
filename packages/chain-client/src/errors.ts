@@ -53,3 +53,16 @@ export class AgenticIDReadError extends ChainClientError {
     this.name = "AgenticIDReadError";
   }
 }
+
+/**
+ * SessionAnchor input validation, sessionId mismatch between SessionAnchor
+ * and the bound SessionLogger, or any structural problem before the
+ * flush+mint sequence begins. (Distinct from underlying flush/mint
+ * failures, which surface as the SessionLogger or AgenticID errors above.)
+ */
+export class SessionAnchorError extends ChainClientError {
+  constructor(message: string, cause?: unknown) {
+    super("SESSION_ANCHOR", message, cause);
+    this.name = "SessionAnchorError";
+  }
+}
