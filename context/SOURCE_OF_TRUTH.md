@@ -36,7 +36,7 @@ The deployed contract source is **`0gfoundation/agenticID-examples/examples/01-m
 | `TEEVerifier.verifyTEESignature(bytes32, bytes) → bool` | story files + architecture.md | `0gfoundation/0g-agent-nft/contracts/TeeVerifier.sol:78-84` |
 | Default TEE oracle = `0x04581d192d22510ced643eaced12ef169644811a` | story files + architecture.md | `0gfoundation/0g-agent-nft/scripts/deploy/deploy_tee.ts:13` (hardcoded) |
 | `ZG-Res-Key` = `chatID` string verified via `broker.inference.processResponse(addr, chatID)` | architecture.md ADR-07 (rewritten 2026-05-01) | `docs.0g.ai/developer-hub/building-on-0g/compute-network/inference` (via context7 `/websites/0g_ai`) — three independent code samples confirm |
-| Storage SDK `@0gfoundation/0g-ts-sdk` exports `ZgFile`, `Indexer`, `MemData` | story files + sdk-snippets | npm registry + unpkg `lib.commonjs/file/index.js` re-exports |
+| Storage SDK `@0gfoundation/0g-storage-ts-sdk` exports `ZgFile`, `Indexer`, `MemData` (the historic `@0gfoundation/0g-ts-sdk` is npm-deprecated — every version redirects to the new name) | story files + sdk-snippets | npm registry + unpkg `lib.commonjs/file/index.js` re-exports |
 | Compute SDK package | story files (post-fix) | npm registry: `@0glabs/0g-serving-broker` is **deprecated** (description field), renamed to `@0gfoundation/0g-compute-ts-sdk` |
 | Galileo chain ID = 16602, Mainnet = 16661 | architecture.md | `eth_chainId` returned `0x40da` and `0x4115` from the respective RPCs |
 

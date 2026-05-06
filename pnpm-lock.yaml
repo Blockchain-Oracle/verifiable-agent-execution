@@ -49,6 +49,31 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@20.19.39)
 
+  packages/logger:
+    dependencies:
+      '@0gfoundation/0g-storage-ts-sdk':
+        specifier: ^1.2.8
+        version: 1.2.8(bufferutil@4.1.0)(ethers@6.13.7(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
+      ethers:
+        specifier: ~6.13.1
+        version: 6.13.7(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^20.14.10
+        version: 20.19.39
+      '@vitest/coverage-v8':
+        specifier: ^2.0.0
+        version: 2.1.9(vitest@2.1.9(@types/node@20.19.39))
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.19.39)
+
 packages:
 
   '@0gfoundation/0g-compute-ts-sdk@0.8.0':
