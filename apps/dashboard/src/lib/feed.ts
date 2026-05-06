@@ -64,8 +64,8 @@ export async function fetchRecentFeed(
   const contract = new Contract(env.AGENTICID_ADDRESS, AGENTICID_FEED_ABI, provider);
 
   // Determine the probe ceiling. Try the public _nextTokenId getter
-  // first; if it reverts (older contract version), use a generous
-  // hardcoded ceiling that walks past the latest known tokenId.
+  // first; if it reverts (older contract version), fall back to a
+  // generous static ceiling that walks past the latest known tokenId.
   let ceiling: bigint;
   try {
     const next = (await contract._nextTokenId()) as bigint;

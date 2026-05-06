@@ -218,14 +218,23 @@ function NumericHero({
           {running ? (
             <>
               <span className="h-2 w-2 animate-spin rounded-full border-2 border-text-secondary border-t-transparent" />
-              Verifying {proof.entryCount}
+              Auto-verifying {proof.entryCount}
             </>
           ) : completed && allVerified ? (
             <>↺ Replay verification</>
           ) : completed && anyFailed ? (
             <>↺ Re-run failed verification</>
           ) : (
-            <>Verify on chain ↻</>
+            // Pre-cascade label matches the running state — the page
+            // auto-fires within 600ms of mount, so there's no window
+            // where the user sees a static "click me" CTA. (Caught in
+            // design review, 2026-05-06: was "Verify on chain ↻" which
+            // implied a click-to-trigger affordance contradicting the
+            // auto-fire behavior.)
+            <>
+              <span className="h-2 w-2 animate-spin rounded-full border-2 border-text-secondary border-t-transparent" />
+              Auto-verifying {proof.entryCount}
+            </>
           )}
         </button>
         <p className="mt-2 max-w-[180px] text-right font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary">
@@ -260,12 +269,13 @@ function FieldRow({
 function SessionRecord({ proof }: { proof: ProofResponse }) {
   return (
     <section className="perforated-border pb-6">
-      <div className="grid grid-cols-1 gap-x-12 gap-y-3 font-mono text-[11px] sm:grid-cols-3">
-        <RecordCell
-          label="Filed"
-          value="2026-05-06 11:09 UTC"
-          sub="block 31845767+"
-        />
+      <div className="grid grid-cols-1 gap-x-12 gap-y-3 font-mono text-[11px] sm:grid-cols-2">
+        {/* "Filed" cell removed: we don't have the mint timestamp /
+            block in the API yet (would require an extra event query
+            against AgenticID's IntelligentDataSet log). Hardcoding a
+            static value would be a credibility leak in a verifier
+            app — caught in design review, 2026-05-06. Re-add when
+            ProofResponse.meta gains mintedAt + blockNumber. */}
         <RecordCell
           label="Storage anchor"
           value={

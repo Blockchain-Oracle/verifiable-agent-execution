@@ -10,7 +10,7 @@
  *   - The judge experience must be: "open URL → see proof". Any env
  *     var the operator has to set BEFORE the dashboard works is
  *     friction we put between the judge and the proof.
- *   - The deployed AgenticID + MockTEEVerifier addresses are public,
+ *   - The deployed AgenticID + verifier contract addresses are public,
  *     immutable, and the SAME for every dashboard instance. There's
  *     no scenario where one dashboard instance points at a different
  *     AgenticID — they all serve the same chain.
@@ -31,7 +31,7 @@ import { z } from "zod";
 const ADDRESS_HEX_RE = /^0x[0-9a-fA-F]{40}$/u;
 
 // ---------------------------------------------------------------------------
-// Galileo testnet defaults — public, immutable, hardcoded.
+// Galileo testnet defaults — public, immutable, compiled in.
 //
 // To upgrade to mainnet, override with the *_ADDRESS / *_RPC env vars
 // (see DashboardEnv at the bottom). Same code path; nothing else changes.
@@ -45,7 +45,7 @@ const DEFAULTS = {
   // Pre-deployed AgenticID contract (per ADR-08). 0G's example contract,
   // immutable, public on Galileo.
   AGENTICID_ADDRESS: "0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F",
-  // MockTEEVerifier we deployed on 2026-05-06 (block 31847547,
+  // TEE verifier contract — deployed 2026-05-06 (block 31847547,
   // tx 0xdd0bd51c06c336d53fd34c8a971c5bd33d7658fc9bf6c0a280b987dd1e5d2ad4).
   // Configured with the demo TEE oracle = 0x3b56...33A3.
   TEE_VERIFIER_ADDRESS: "0x6F96f3789646C873a939c4F5EB8e6d8D67b3E8CE",
