@@ -22,40 +22,78 @@ As an OpenClaw integration developer, I need to scaffold an OpenClaw **plugin** 
 ```gherkin
 Given the workspace root has the directory `openclaw-skills/verifiable-execution/`
 And `openclaw-skills/verifiable-execution/openclaw.plugin.json` is created with:
-  {
-    "id": "verifiable-execution",
-    "configSchema": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "rpcUrl":            { "type": "string",  "description": "0G Chain RPC endpoint" },
-        "indexerUrl":        { "type": "string",  "description": "0G Storage indexer endpoint" },
-        "agenticIdAddress":  { "type": "string",  "description": "Pre-deployed AgenticID contract" },
-        "verifierAddress":   { "type": "string",  "description": "Deployed MockTEEVerifier" },
-        "verifyUrlBase":     { "type": "string",  "description": "Base URL of the verifier dashboard" },
-        "privateKeyEnvVar":  { "type": "string",  "description": "Name of env var holding signer key (default PRIVATE_KEY)" }
+  - `id: "verifiable-execution"` and a `configSchema` declaring rpcUrl,
+    indexerUrl, agenticIdAddress, verifierAddress, verifyUrlBase,
+    chainId (REQUIRED — see "Spec evolution" on chainId-required), agentId,
+    modelId, privateKeyEnvVar (defaults to "PRIVATE_KEY")
+And `openclaw-skills/verifiable-execution/package.json` declares:
+  - `name: "@verifiable-agent-execution/openclaw-skill"`
+  - `openclaw.extensions: ["./src/index.ts"]` — the loader entrypoint
+  - `peerDependencies: { "openclaw": ">=2026.5.0" }`
+  - `dependencies` include `@verifiable-agent-execution/logger: "workspace:*"`
+And `openclaw-skills/verifiable-execution/src/index.ts` exports:
+  - the OpenClaw plugin OBJECT (NOT a function — see "Spec evolution"):
+      export default {
+        id: "verifiable-execution",
+        name: "Verifiable Execution",
+        description: "...",
+        register(api: OpenClawPluginApi) { ... }
       }
-    }
-  }
-And `openclaw-skills/verifiable-execution/package.json` declares the plugin name + deps + `peerDependencies: { "openclaw": ">=*" }`
-And `openclaw-skills/verifiable-execution/src/index.ts` is created with:
-  - import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core"
-  - export default function activate(api: OpenClawPluginApi): void { ... }
-  - inside activate(): register onSessionStart, onToolCall, onSessionEnd handlers (stubs OK for this story)
+  - inside register(api): wire `api.on("after_tool_call", ...)` and
+    `api.on("session_end", ...)` lifecycle hooks (stubs OK for this
+    story; real handlers ship in story-skill-intercept and
+    story-skill-close)
 
-When the plugin is installed via OpenClaw's plugin registry
-Then the plugin id `verifiable-execution` appears in OpenClaw's loaded plugins
-And the three lifecycle handlers fire on the appropriate session events
-And configuration is read from openclaw.plugin.json's configSchema (validated against the schema by OpenClaw)
+When the plugin is installed via OpenClaw's plugin loader (config-side enable)
+Then OpenClaw fires the registered hooks AUTOMATICALLY on every
+  `after_tool_call` / `session_end` event — the AI agent does not need
+  to know about or opt into the plugin (this is the whole point of
+  hooks-vs-tools: hooks are runtime-fired, tools are agent-callable)
+And configuration is read from openclaw.plugin.json's configSchema
+  (validated against the schema by OpenClaw at load time)
 
 Given any required config field is missing
 When the plugin is loaded
 Then it logs a structured warning to stderr (NOT crashes the host)
-And operates in degraded mode (no anchor; logs only) — rather than throwing
+And operates in degraded mode: registers no-op stubs for after_tool_call
+  + session_end so OpenClaw still sees the plugin as healthy, no anchor
+  attempted
 
-Given pnpm exec tsc --noEmit is run on the openclaw-skills/verifiable-execution package
+Given pnpm --filter @verifiable-agent-execution/openclaw-skill exec tsc --noEmit
 Then it exits 0
+And `pnpm --filter @verifiable-agent-execution/openclaw-skill test` exits 0 with at least 14 tests passing
 ```
+
+### Spec evolution — corrections from the original BDD
+
+The original draft had two bugs caught by reading the OpenClaw SDK
+types directly + the canonical reference plugin `0g-memory/openclaw-skills/evermemos`:
+
+1. **Plugin shape is OBJECT, not function**: original BDD said
+   `export default function activate(api: OpenClawPluginApi): void`. The
+   real OpenClaw contract is a default-exported OBJECT with
+   `{id, name, description, register(api)}` (see evermemos line 218).
+   `activate` is a Claude-Code-skill convention; OpenClaw uses `register`.
+   Updated to match.
+
+2. **Hook names are `api.on("after_tool_call", ...)`, not `onToolCall(...)`**:
+   original BDD listed `onSessionStart, onToolCall, onSessionEnd` as
+   methods on the api. The real API is `api.on<K extends PluginHookName>(K, handler)`
+   where `K` is one of 35 typed hook names defined in
+   `openclaw@2026.5.4/plugin-sdk/src/plugins/hook-types.d.ts:17`. The
+   handler signature is per-hook via `PluginHookHandlerMap[K]` —
+   `(event: PluginHookAfterToolCallEvent, ctx: PluginHookToolContext)`
+   for `after_tool_call`, `(event, ctx)` of different types for each.
+   Updated to use `api.on` + the real hook names. Note OpenClaw
+   does NOT expose `session_start` as a public hook in the same way;
+   we lazy-allocate per-session state on first `after_tool_call`
+   (mirroring evermemos's lazy groupId pattern).
+
+3. **chainId is REQUIRED in configSchema** — added per the same
+   no-Galileo-default rule from story-session-mint (silent
+   mainnet-URL leak risk on preview deploys). The configSchema field
+   `chainId` is required at validation time; the plugin degrades to
+   no-op if missing.
 
 ---
 
