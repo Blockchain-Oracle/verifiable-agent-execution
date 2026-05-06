@@ -19,6 +19,7 @@
 import Link from "next/link";
 
 import { Mono } from "@/components/Mono";
+import { RootHashWatermark } from "@/components/RootHashWatermark";
 import { SessionView } from "@/components/SessionView";
 import { TopBar } from "@/components/TopBar";
 import {
@@ -44,15 +45,20 @@ export default async function VerifyPage({ params }: PageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-bg text-text-primary">
-      <TopBar />
-      <main className="mx-auto max-w-5xl px-6 py-10">
+    <div className="relative min-h-screen overflow-hidden bg-bg text-text-primary">
+      {proof !== null && <RootHashWatermark rootHash={proof.rootHash} />}
+      <div className="relative z-10">
+        <TopBar />
         {proof !== null ? (
-          <SessionView proof={proof} />
+          <main>
+            <SessionView proof={proof} />
+          </main>
         ) : (
-          <ProofError cause={error} tokenId={tokenId} />
+          <main className="mx-auto max-w-5xl px-6 py-10">
+            <ProofError cause={error} tokenId={tokenId} />
+          </main>
         )}
-      </main>
+      </div>
     </div>
   );
 }

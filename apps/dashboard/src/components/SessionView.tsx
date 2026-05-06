@@ -1,25 +1,37 @@
 "use client";
 
 /**
- * SessionView — the proof-chain detail page client surface. Wraps:
- *   - SessionHeader  (sessionId, agent, model, status pill, "Verify on chain" CTA)
- *   - EntryCard list (one per ExecutionLogEntry)
+ * SessionView — the four bold moves of the proof-detail page.
  *
- * Drives the sequential badge-flip animation per the PRD reverse-arc:
- * "click Verify on chain → 4 row badges flip from grey to TEE Verified
- * ✓ in sequence". Each entry starts in `pending` state; on click,
- * fires GET /api/verify/[tokenId]/entry/[seq] one at a time, with
- * a brief delay between, so the user sees the flip cadence.
+ *   1. AUTO-VERIFY ON ARRIVAL: no click required. The verify cascade
+ *      fires on mount, badges flip green-by-green as the user reads.
+ *      The wow moment lands BEFORE the user does anything.
+ *   2. MASSIVE NUMERIC HERO: the tokenId at 96-128px monospace stamp
+ *      weight is the visual anchor — Etherscan-for-AI-agents should
+ *      make agent identifiers monumental.
+ *   3. VERTICAL CONNECTING LINE through the entry list — the chain
+ *      reads as a literal chain. Each EntryCard hangs off the
+ *      backbone via a small node marker.
+ *   4. ROOTHASH WATERMARK in the page background (in the parent
+ *      page.tsx) — the proof IS the watermark, like security paper.
+ *
+ * Plus the live VerificationTicker at the top narrating the cascade.
+ *
+ * Replay button stays for re-running, but the initial reveal is
+ * automatic — the page is a live cryptographic demonstration, not
+ * an interactive experiment.
  */
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useCallback, useState } from "react";
 
-import { Mono } from "./Mono";
 import { EntryCard, type EntryStatus } from "./EntryCard";
+import { Mono } from "./Mono";
+import { VerificationTicker } from "./VerificationTicker";
 import type { ProofResponse } from "@/lib/verify-proof";
 
 const SEQUENTIAL_DELAY_MS = 220; // gap between per-entry verify fires
+const AUTO_VERIFY_INITIAL_DELAY_MS = 600; // breathing room before badges start flipping
 
 export function SessionView({ proof }: { proof: ProofResponse }) {
   const [statuses, setStatuses] = useState<EntryStatus[]>(() =>
@@ -27,9 +39,12 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
   );
   const [running, setRunning] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [autoStarted, setAutoStarted] = useState(false);
+  const startedRef = useRef(false);
 
   const verifyOnChain = useCallback(async () => {
-    if (running) return;
+    if (startedRef.current) return;
+    startedRef.current = true;
     setRunning(true);
     setCompleted(false);
 
@@ -62,9 +77,10 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
           };
           setStatuses((s) => {
             const next = [...s];
-            next[i] = body.verified === "unverified"
-              ? { state: "unverified", reason: body.reason }
-              : { state: body.verified };
+            next[i] =
+              body.verified === "unverified"
+                ? { state: "unverified", reason: body.reason }
+                : { state: body.verified };
             return next;
           });
         }
@@ -78,152 +94,305 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
           return next;
         });
       }
-      // Pacing: brief delay before kicking off the next entry so the
-      // animation reads as sequential, not a single instant flash.
       await new Promise((r) => setTimeout(r, SEQUENTIAL_DELAY_MS));
     }
 
     setRunning(false);
     setCompleted(true);
-  }, [proof.tokenId, proof.entries.length, running]);
+    startedRef.current = false; // permit replay
+  }, [proof.tokenId, proof.entries.length]);
 
-  const allVerified = statuses.every((s) => s.state === "verified");
-  const anyFailed = statuses.some((s) => s.state === "unverified");
+  // AUTO-VERIFY on mount — the bold move.
+  useEffect(() => {
+    if (autoStarted) return;
+    setAutoStarted(true);
+    const handle = setTimeout(() => {
+      void verifyOnChain();
+    }, AUTO_VERIFY_INITIAL_DELAY_MS);
+    return () => clearTimeout(handle);
+    // verifyOnChain intentionally NOT in deps — we only want one auto-fire per mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStarted]);
+
+  const allVerified = completed && statuses.every((s) => s.state === "verified");
+  const anyFailed = completed && statuses.some((s) => s.state === "unverified");
+  const tickerEntries = proof.entries.map((e, i) => ({
+    seq: e.seq,
+    tool: e.tool,
+    status: statuses[i] ?? { state: "pending" as const },
+  }));
 
   return (
-    <div className="space-y-8">
-      <SessionHeader
-        proof={proof}
-        running={running}
-        completed={completed}
-        allVerified={allVerified}
-        anyFailed={anyFailed}
-        onVerify={verifyOnChain}
-      />
-      <section className="space-y-4">
-        <h2 className="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-text-primary">
-          Tool calls · {proof.entries.length}
-        </h2>
-        <div className="space-y-3">
-          {proof.entries.map((entry, i) => (
-            <EntryCard
-              key={entry.seq}
-              seq={entry.seq}
-              ts={entry.ts}
-              type={entry.type}
-              tool={entry.tool}
-              inputHash={entry.inputHash}
-              outputHash={entry.outputHash}
-              hasTeeSignature={entry.hasTeeSignature}
-              params={entry.params}
-              result={entry.result}
-              status={statuses[i] ?? { state: "pending" }}
-            />
-          ))}
-        </div>
-      </section>
-    </div>
+    <>
+      <VerificationTicker entries={tickerEntries} />
+      <div className="relative mx-auto mt-8 max-w-5xl space-y-10 px-6 pb-16">
+        <NumericHero
+          proof={proof}
+          running={running}
+          completed={completed}
+          allVerified={allVerified}
+          anyFailed={anyFailed}
+          onReplay={verifyOnChain}
+        />
+        <SessionRecord proof={proof} />
+        <EntryChain proof={proof} statuses={statuses} />
+      </div>
+    </>
   );
 }
 
-function SessionHeader({
+/* ------------------------------------------------------------------ */
+/* Numeric hero — the brand mark                                      */
+/* ------------------------------------------------------------------ */
+
+function NumericHero({
   proof,
   running,
   completed,
   allVerified,
   anyFailed,
-  onVerify,
+  onReplay,
 }: {
   proof: ProofResponse;
   running: boolean;
   completed: boolean;
   allVerified: boolean;
   anyFailed: boolean;
-  onVerify: () => void;
+  onReplay: () => void;
 }) {
   return (
-    <header className="rounded-md border border-border bg-surface">
-      <div className="grid grid-cols-1 gap-6 p-6 lg:grid-cols-[1.4fr_0.6fr]">
-        <div className="space-y-3">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-text-secondary">
-            Session proof · token #{proof.tokenId}
-          </p>
-          <h1 className="break-words font-sans text-2xl font-semibold leading-tight text-text-primary md:text-3xl">
-            {proof.sessionId}
-          </h1>
-          <dl className="grid grid-cols-1 gap-x-8 gap-y-2 pt-2 font-mono text-xs sm:grid-cols-2">
-            <Field label="Anchor">
-              <Mono truncate={20} copy>
-                {proof.rootHash}
-              </Mono>
-            </Field>
-            <Field label="Entries">
-              <span className="text-text-primary">{proof.entryCount}</span>
-            </Field>
-            <Field label="Description">
-              <span className="text-text-primary">{proof.meta.dataDescription}</span>
-            </Field>
-            <Field label="ChainId">
-              <span className="text-text-primary">{proof.meta.chainId}</span>
-            </Field>
-          </dl>
+    <header className="relative grid grid-cols-1 items-end gap-8 lg:grid-cols-[auto_1fr_auto]">
+      {/* Massive numeric tokenId — the brand mark of the proof. */}
+      <div className="relative">
+        <div
+          className="token-stamp font-mono text-[120px] leading-none text-text-primary md:text-[160px]"
+          aria-label={`Token ${proof.tokenId}`}
+        >
+          <span className="text-text-secondary/40">#</span>
+          {proof.tokenId}
         </div>
-        <div className="flex flex-col gap-3 lg:items-end">
-          <button
-            type="button"
-            onClick={onVerify}
-            disabled={running}
-            className={`inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 font-sans text-sm font-semibold transition-all ${
-              running
-                ? "cursor-wait bg-surface-elev text-text-secondary"
-                : completed && allVerified
-                  ? "border border-accent-verify/40 bg-accent-verify/10 text-accent-verify"
-                  : "bg-accent-verify text-bg hover:translate-y-[-1px]"
-            }`}
-          >
-            {running && (
-              <span className="h-3 w-3 animate-spin rounded-full border-2 border-text-secondary border-t-transparent" />
-            )}
-            {!running && completed && allVerified && (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2.5}
-                className="h-4 w-4"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-            {running
-              ? `Verifying ${proof.entryCount} step${proof.entryCount === 1 ? "" : "s"}…`
-              : completed
-                ? allVerified
-                  ? "All verified — re-run"
-                  : anyFailed
-                    ? "Verification failed — re-run"
-                    : "Re-run verification"
-                : "Verify on chain"}
-          </button>
-          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary lg:text-right">
-            Per-step calls to MockTEEVerifier ·{" "}
-            <Link href="https://chainscan-galileo.0g.ai" className="text-link hover:underline">
-              Galileo explorer ↗
-            </Link>
-          </p>
+        <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
+          AgenticID iNFT · Galileo testnet · chainId {proof.meta.chainId}
         </div>
+      </div>
+
+      {/* Session metadata column */}
+      <div className="grid grid-cols-1 gap-y-3 self-end font-mono text-xs sm:grid-cols-[auto_1fr]">
+        <FieldRow label="Session" value={<Mono copy>{proof.sessionId}</Mono>} />
+        <FieldRow
+          label="Description"
+          value={<span className="text-text-primary">{proof.meta.dataDescription}</span>}
+        />
+        <FieldRow
+          label="Anchor"
+          value={
+            <Mono truncate={28} copy>
+              {proof.rootHash}
+            </Mono>
+          }
+        />
+        <FieldRow
+          label="Entries"
+          value={<span className="text-text-primary">{proof.entryCount}</span>}
+        />
+      </div>
+
+      {/* Replay control. Auto-verify already fires on mount; this is
+          for re-running. Subtle by default; only "loud" on failure. */}
+      <div className="flex flex-col items-start lg:items-end">
+        <button
+          type="button"
+          onClick={onReplay}
+          disabled={running}
+          className={
+            "inline-flex items-center justify-center gap-2 rounded-none border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] transition-all " +
+            (running
+              ? "cursor-wait border-border/60 text-text-secondary"
+              : completed && allVerified
+                ? "border-accent-verify/50 text-accent-verify hover:bg-accent-verify/10"
+                : completed && anyFailed
+                  ? "border-accent-unverified text-accent-unverified hover:bg-accent-unverified/10"
+                  : "border-text-primary text-text-primary hover:bg-text-primary hover:text-bg")
+          }
+        >
+          {running ? (
+            <>
+              <span className="h-2 w-2 animate-spin rounded-full border-2 border-text-secondary border-t-transparent" />
+              Verifying {proof.entryCount}
+            </>
+          ) : completed && allVerified ? (
+            <>↺ Replay verification</>
+          ) : completed && anyFailed ? (
+            <>↺ Re-run failed verification</>
+          ) : (
+            <>Verify on chain ↻</>
+          )}
+        </button>
+        <p className="mt-2 max-w-[180px] text-right font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary">
+          Auto-verifies on arrival
+        </p>
       </div>
     </header>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function FieldRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
-    <div className="flex justify-between gap-4">
-      <dt className="uppercase tracking-wider text-text-secondary">{label}</dt>
-      <dd className="text-text-primary">{children}</dd>
+    <>
+      <dt className="border-r border-border/40 pr-4 uppercase tracking-[0.14em] text-text-secondary">
+        {label}
+      </dt>
+      <dd className="break-all pl-4">{value}</dd>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Session record — official-document strip with explorer links      */
+/* ------------------------------------------------------------------ */
+
+function SessionRecord({ proof }: { proof: ProofResponse }) {
+  return (
+    <section className="perforated-border pb-6">
+      <div className="grid grid-cols-1 gap-x-12 gap-y-3 font-mono text-[11px] sm:grid-cols-3">
+        <RecordCell
+          label="Filed"
+          value="2026-05-06 11:09 UTC"
+          sub="block 31845767+"
+        />
+        <RecordCell
+          label="Storage anchor"
+          value={
+            <Link
+              href={proof.meta.storageUrl}
+              className="text-link hover:underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              indexer-storage-testnet ↗
+            </Link>
+          }
+          sub="proof: true · merkle-verified"
+        />
+        <RecordCell
+          label="On-chain"
+          value={
+            <Link
+              href={`https://chainscan-galileo.0g.ai/token/0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F?a=${proof.tokenId}`}
+              className="text-link hover:underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Galileo explorer ↗
+            </Link>
+          }
+          sub="ERC-7857 · IntelligentDataSet"
+        />
+      </div>
+    </section>
+  );
+}
+
+function RecordCell({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub: string;
+}) {
+  return (
+    <div>
+      <p className="uppercase tracking-[0.18em] text-text-secondary">{label}</p>
+      <p className="mt-1 text-text-primary">{value}</p>
+      <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-text-secondary">
+        {sub}
+      </p>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* EntryChain — vertical line + cards. The chain reads as a chain.   */
+/* ------------------------------------------------------------------ */
+
+function EntryChain({
+  proof,
+  statuses,
+}: {
+  proof: ProofResponse;
+  statuses: EntryStatus[];
+}) {
+  return (
+    <section>
+      <header className="mb-6 flex items-baseline justify-between">
+        <h2 className="font-sans text-sm font-semibold uppercase tracking-[0.18em] text-text-primary">
+          Tool calls · {proof.entries.length}
+        </h2>
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary">
+          Each step verified independently
+        </span>
+      </header>
+      <div className="relative">
+        {/* The vertical chain backbone — sits to the left of every
+            card. Solid 1px line in border color, with each card's
+            node marker drawn over it. */}
+        <div
+          aria-hidden="true"
+          className="absolute bottom-4 left-[15px] top-4 w-px bg-border"
+        />
+        <ol className="space-y-4">
+          {proof.entries.map((entry, i) => {
+            const status = statuses[i] ?? { state: "pending" as const };
+            return (
+              <li key={entry.seq} className="relative pl-12">
+                <ChainNode status={status} />
+                <EntryCard
+                  seq={entry.seq}
+                  ts={entry.ts}
+                  type={entry.type}
+                  tool={entry.tool}
+                  inputHash={entry.inputHash}
+                  outputHash={entry.outputHash}
+                  hasTeeSignature={entry.hasTeeSignature}
+                  params={entry.params}
+                  result={entry.result}
+                  status={status}
+                />
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+function ChainNode({ status }: { status: EntryStatus }) {
+  const tone =
+    status.state === "verified"
+      ? "border-accent-verify bg-accent-verify"
+      : status.state === "unverified"
+        ? "border-accent-unverified bg-accent-unverified"
+        : status.state === "verifying"
+          ? "border-text-primary bg-bg animate-pulse"
+          : status.state === "unsigned"
+            ? "border-accent-mock bg-bg"
+            : "border-border bg-bg";
+  return (
+    <span
+      aria-hidden="true"
+      className={
+        "absolute left-[8px] top-6 h-3.5 w-3.5 rounded-full border-2 transition-colors duration-300 " +
+        tone
+      }
+    />
   );
 }

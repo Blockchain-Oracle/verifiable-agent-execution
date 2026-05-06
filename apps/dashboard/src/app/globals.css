@@ -24,3 +24,37 @@
     color: theme("colors.bg");
   }
 }
+
+/* Marquee ticker animation — used by VerificationTicker. Linear,
+   infinite loop, 24s wrap-around. The track holds 2x the content
+   so the wrap is seamless. */
+@keyframes ticker {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Massive numeric stamp — used for the tokenId hero on /verify/[tokenId].
+   Tabular nums + condensed letter-spacing so 6-digit tokenIds fit
+   without rebreaking the hero. */
+.token-stamp {
+  font-feature-settings: "tnum" 1, "ss01" 1;
+  font-variation-settings: "wght" 700;
+  letter-spacing: -0.04em;
+}
+
+/* Subtle perforation between sections of an "official record" page —
+   row of dots at the divider line that signals "stamped section". */
+.perforated-border {
+  background-image: radial-gradient(
+    circle,
+    theme("colors.border") 1px,
+    transparent 1.5px
+  );
+  background-size: 8px 1px;
+  background-repeat: repeat-x;
+  background-position: bottom;
+}
