@@ -1,0 +1,28 @@
+{
+  "name": "@verifiable-agent-execution/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "description": "MockTEEVerifier and ITEEVerifier for verifiable-agent-execution. Solidity 0.8.24, evmVersion cancun, deploys to 0G Galileo (16602) and Aristotle mainnet (16661).",
+  "scripts": {
+    "build": "hardhat compile",
+    "compile": "hardhat compile",
+    "lint": "tsc --noEmit",
+    "test": "hardhat test",
+    "typecheck": "tsc --noEmit",
+    "deploy:testnet": "hardhat run scripts/deploy-mock.ts --network 0g-testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy-mock.ts --network 0g-mainnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.14.10",
+    "chai": "^4.5.0",
+    "dotenv": "^16.4.0",
+    "ethers": "~6.13.1",
+    "hardhat": "^2.22.0",
+    "typescript": "^5.5.4"
+  }
+}

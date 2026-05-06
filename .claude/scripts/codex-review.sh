@@ -30,7 +30,7 @@
 set -euo pipefail
 
 STORY_ID="${1:-}"
-BASE_BRANCH="origin/main"
+BASE_BRANCH="${3:-origin/main}"
 if [ "${2:-}" = "--base" ] && [ -n "${3:-}" ]; then
   BASE_BRANCH="$3"
 fi
@@ -54,11 +54,14 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 3
 fi
 
-# Capture the diff vs the chosen base into /tmp/changes.patch.
+# Capture the diff vs the chosen base into /tmp/changes.patch so the
+# prompt can reference it without echoing into shell args.
 git diff "${BASE_BRANCH}...HEAD" > /tmp/changes.patch
 DIFF_LINES="$(wc -l < /tmp/changes.patch | tr -d ' ')"
 
-# Build the prompt by assembling the static template + the story body.
+# Build the prompt. Using `cat` heredocs without command substitution
+# avoids the apostrophe-in-prose parsing issue that bit the first
+# version of this script.
 PROMPT_FILE="$(mktemp -t codex-review-prompt.XXXXXX)"
 trap 'rm -f "$PROMPT_FILE"' EXIT
 
@@ -142,5 +145,7 @@ echo "[codex-review] Prompt size:  $(wc -l < "$PROMPT_FILE" | tr -d ' ') lines"
 echo ""
 
 # Use `codex exec` (not `codex exec review --base`) — the former accepts
-# arbitrary [PROMPT] without conflicting with diff-source flags.
+# arbitrary [PROMPT] without conflicting with diff-source flags. We
+# already captured the diff to /tmp/changes.patch above; the prompt
+# instructs Codex to read it.
 codex exec --full-auto "$(cat "$PROMPT_FILE")"

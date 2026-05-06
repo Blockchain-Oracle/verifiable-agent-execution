@@ -3,6 +3,24 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Hardhat — `artifacts/`, `cache/`, `typechain-types/` (no slash in the
+# middle) match at any depth per the gitignore spec, so they catch
+# `contracts/artifacts/`, `contracts/cache/`, etc. without further
+# qualification. The `deployments/*/` pattern HAS a slash mid-pattern
+# (it must, to allow the .gitkeep negation), so the spec anchors it to
+# this .gitignore's dir — that's why we use the `**/` prefix to also
+# catch `contracts/deployments/<network>/`. (Closes Codex P2 on PR #18.)
+artifacts/
+cache/
+typechain-types/
+**/deployments/*/
+!**/deployments/.gitkeep
+
+# Coverage outputs — generated per-machine, contain absolute paths.
+# (Closes Codex P3 on epic/02 — coverage-summary.json was accidentally
+# committed with /Users/abu/... paths and would create noisy diffs.)
+coverage/
+
 # Env / secrets — NEVER commit
 .env
 .env.*
