@@ -226,6 +226,17 @@ export function handleAfterToolCall(
         : event.result;
     const outputHash = sha256Hex(outputPayload);
 
+    // Capture decoded content alongside the hashes (Stage 3 of the
+    // zero-config UX work, 2026-05-06). Hashes alone are PROOF OF
+    // EXISTENCE; decoded content is what makes the dashboard
+    // "Etherscan for AI agents" instead of a JSON viewer. We
+    // serialize-and-reparse so unserializable values (BigInt,
+    // circular refs) are filtered to undefined → entry stores only
+    // what's safely JSON-roundtrippable. The hash fields anchor
+    // integrity even when the decoded content is omitted.
+    const decodedParams = safeJsonRoundtrip(event.params);
+    const decodedResult = safeJsonRoundtrip(outputPayload);
+
     // seq from getStatus().entryCount (O(1)) — the prior version used
     // logger.getEntries().length which clones the entry array on every
     // call (O(n) per append → O(n²) for an N-tool-call session). For
@@ -239,6 +250,11 @@ export function handleAfterToolCall(
       tool: toolName,
       inputHash,
       outputHash,
+      // Decoded content (Stage 3 — Etherscan-grade story not just hashes).
+      // Omitted from the entry when undefined (schema fields are optional)
+      // so unserializable inputs don't bloat the log with empty fields.
+      ...(decodedParams !== undefined ? { params: decodedParams } : {}),
+      ...(decodedResult !== undefined ? { result: decodedResult } : {}),
     });
   } catch (cause) {
     // appendEntry can throw on schema-mismatch or post-flush; sha256Hex
@@ -381,6 +397,29 @@ function pickSessionKey(ctx: {
     return ctx.sessionKey;
   }
   return null;
+}
+
+/**
+ * JSON-roundtrip a value: returns a deep clone via JSON.parse(JSON.stringify(value))
+ * IFF the value is safely serializable. Returns `undefined` when JSON.stringify
+ * throws (BigInt, circular references) OR returns undefined (top-level
+ * function / symbol / undefined).
+ *
+ * Used to populate the OPTIONAL `params` / `result` fields on
+ * ExecutionLogEntry. Hash fields (inputHash / outputHash) are computed
+ * separately by sha256Hex, which has its own deterministic fallback for
+ * unserializable inputs — so omitting decoded content here doesn't break
+ * the proof chain, it just means the dashboard renders "<unserializable>"
+ * for that field instead of the decoded value.
+ */
+function safeJsonRoundtrip(value: unknown): unknown {
+  try {
+    const stringified = JSON.stringify(value);
+    if (stringified === undefined) return undefined;
+    return JSON.parse(stringified);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

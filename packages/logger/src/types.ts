@@ -80,6 +80,36 @@ export const executionLogEntrySchema = z.object({
   sealId: bytes32HexSchema.optional(),
   /** X-Timestamp header (Unix seconds) — part of the signing payload. */
   signedAt: z.number().int().nonnegative().optional(),
+  // ─────────────────────────────────────────────────────────────────
+  // Decoded content (Stage 3 of the zero-config UX work, 2026-05-06).
+  //
+  // Hashes alone are PROOF OF EXISTENCE; decoded content is what makes
+  // the dashboard "Etherscan for AI agents" instead of a JSON viewer.
+  // The hashes stay (they're the integrity check); these fields are
+  // additive + optional so old SessionLog blobs still parse cleanly.
+  //
+  // Privacy: callers can omit `params`/`result` (or set `redacted:true`)
+  // when the tool I/O is sensitive. Verifiers can still confirm that
+  // the omitted-but-hashed step happened — they just can't see what
+  // was inside.
+  // ─────────────────────────────────────────────────────────────────
+  /**
+   * Actual tool input (the params the agent passed). Optional —
+   * present when not redacted. Should be JSON-serializable; the plugin
+   * round-trips this through JSON.stringify and re-stores the result.
+   */
+  params: z.unknown().optional(),
+  /**
+   * Actual tool output (what the tool returned). Optional — present
+   * when not redacted. Same JSON-serializability constraint as params.
+   */
+  result: z.unknown().optional(),
+  /**
+   * True when the operator chose to redact this step's content.
+   * inputHash/outputHash still anchor the integrity; params/result
+   * are intentionally omitted.
+   */
+  redacted: z.boolean().optional(),
 });
 
 export type ExecutionLogEntry = z.infer<typeof executionLogEntrySchema>;

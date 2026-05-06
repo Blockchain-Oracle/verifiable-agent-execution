@@ -105,6 +105,23 @@ export interface ProofResponse {
     inputHash: string;
     outputHash: string;
     hasTeeSignature: boolean;
+    /**
+     * Decoded tool input — present when the plugin captured
+     * unredacted serializable params. Hash field above (`inputHash`)
+     * is always present; this is additive content for the dashboard
+     * to render the actual story (Stage 3, 2026-05-06).
+     */
+    params?: unknown;
+    /**
+     * Decoded tool output. Same semantics as `params`.
+     */
+    result?: unknown;
+    /**
+     * True when the operator chose to redact this entry's content.
+     * The hashes still anchor integrity; params/result are absent
+     * by design.
+     */
+    redacted?: boolean;
   }>;
   /**
    * Diagnostic context for the UI — surfaces the chainId so the
@@ -255,6 +272,13 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
       inputHash: e.inputHash,
       outputHash: e.outputHash,
       hasTeeSignature: e.teeSignature !== undefined,
+      // Decoded content — additive, only present on entries the plugin
+      // captured AFTER the Stage 3 schema upgrade (2026-05-06). Old
+      // SessionLog blobs without these fields render as hash-only,
+      // which is the correct degraded behavior.
+      ...(e.params !== undefined ? { params: e.params } : {}),
+      ...(e.result !== undefined ? { result: e.result } : {}),
+      ...(e.redacted === true ? { redacted: true } : {}),
     })),
     meta: {
       chainId: env.CHAIN_ID,
