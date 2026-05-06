@@ -37,8 +37,13 @@ And the rootHash is a valid bytes32 hex string
 Given the SDK's underlying call returns the fragmented variant
   ({ rootHashes: string[]; txHashes: string[]; txSeqs: number[] })
 When StorageClient handles it
-Then it returns the FIRST element of each array as { rootHash, txHash, txSeq }
-And documents in a comment that fragmentation occurred
+Then it throws StorageUploadError naming the fragment count
+And the error message instructs the caller to split the session or raise the segment budget
+And the upload is NOT treated as successful (chunks 1..N would otherwise be unrecoverable
+  through download(rootHash), which only accepts a single root)
+# Hackathon scope: session-log JSON is well under the ~256KB segment size, so
+# fragmentation should never occur in practice. Multi-fragment download/anchor
+# is post-hackathon scope (see ADR-05 and the StorageClient.upload comments).
 
 Given `MerkleTree.rootHash()` returns null (per the SDK type, this is possible)
 When upload encounters it
@@ -51,7 +56,9 @@ Then it throws StorageUploadError including err.message — never silently swall
 
 Given a rootHash returned from upload()
 When `StorageClient.download(rootHash)` is called
-Then it writes verified bytes to a temp path (Node-only, indexer.download with proof=true)
+Then it calls `indexer.downloadToBlob(rootHash, { proof: true })` (verified Merkle proof,
+  Node + browser-safe — chosen over the disk-only `indexer.download(...)` so callers
+  receive bytes directly without a temp-file round-trip)
 And returns a Uint8Array that, parsed as JSON, deep-equals the original upload payload
 
 Given pnpm tsc --noEmit is run on the logger package
@@ -84,7 +91,9 @@ pnpm --filter=logger exec tsc --noEmit
 export ZG_TESTNET_RPC="https://evmrpc-testnet.0g.ai"
 export ZG_INDEXER_RPC="https://indexer-storage-testnet-turbo.0g.ai"
 export PRIVATE_KEY="<testnet-funded-wallet-key>"
-pnpm --filter=logger vitest run storage-client.test.ts
+pnpm --filter @verifiable-agent-execution/logger exec vitest run storage-client.test.ts
+# Use the SCOPED package name; bare `--filter=logger` does NOT match
+# (the workspace package id is @verifiable-agent-execution/logger).
 # Should pass with upload + download cycle confirmed against Galileo.
 ```
 
@@ -96,5 +105,5 @@ pnpm --filter=logger vitest run storage-client.test.ts
 - **The SDK uses Go-style `[result, err]` tuples**, not exceptions. Always destructure as `const [result, err] = await indexer.upload(...)` and throw on `err !== null` yourself. Do not assume `await` will throw.
 - **`tree.rootHash()` returns `string | null`.** Treat null as a failure mode (StorageRootHashError) rather than coercing — the smoke test `scripts/smoke/storage.ts` shows the canonical null-check.
 - **Always close `ZgFile` handles** in a `finally` block (per `agent-skills/patterns/STORAGE.md` — prevents memory leaks). Not applicable to `MemData`.
-- **Verified downloads** (`indexer.download(rootHash, path, /* proof */ true)`) — always pass `true` for the third arg per STORAGE.md critical rules.
+- **Verified downloads** — pass `{ proof: true }` to `indexer.downloadToBlob(rootHash, { proof: true })` so the Merkle proof is checked. We use `downloadToBlob` (memory-based, Node + browser-safe) rather than the disk-only `indexer.download(rootHash, path, true)` because the caller wants bytes for direct deserialization, not a tempfile round-trip.
 - **Reference reading order:** `0gfoundation/0g-storage-ts-starter-kit/src/storage.ts` `uploadFile` + `uploadData` → `0gfoundation/0g-agent-skills/patterns/STORAGE.md` → this story.

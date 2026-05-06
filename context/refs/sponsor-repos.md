@@ -71,7 +71,7 @@ git clone https://github.com/0gfoundation/0g-sandbox
 **Repo:** https://github.com/0gfoundation/0g-ts-sdk
 **Language:** TypeScript
 **Last pushed:** Apr 24, 2026
-**Install:** `npm install @0gfoundation/0g-ts-sdk ethers`
+**Install:** `npm install @0gfoundation/0g-storage-ts-sdk ethers` (historic `@0gfoundation/0g-ts-sdk` is npm-deprecated — every version redirects to the new name)
 **Use for:** File storage/retrieval, KV store operations, browser support
 
 ### 0g-storage-client (Go Storage SDK)
@@ -100,7 +100,7 @@ npm run upload -- ./file.txt
 ### 0g-serving-broker (Compute Serving Broker)
 **Repo:** https://github.com/0gfoundation/0g-serving-broker
 **Last pushed:** Apr 27, 2026
-**Install:** `npm install @0glabs/0g-serving-broker`
+**Install:** `npm install @0gfoundation/0g-compute-ts-sdk` (historic `@0glabs/0g-serving-broker` is a deprecated re-export shim per npm registry — do not use for new code)
 **Use for:** On-chain payment routing for 0G Compute inference requests
 
 ### 0g-serving-user-broker
