@@ -38,6 +38,21 @@ Given the transaction is confirmed on-chain
 When ethers.js listens for Updated or IntelligentDataSet events from the mint tx
 Then at least one event is emitted confirming the data anchor
 And the recovered tokenId surfaces in AnchorResult (proving the event drove the result, not a stub)
+
+# Recovery: flush succeeds, mint fails (added round-8 per Codex finding)
+Given anchor() has flushed the SessionLogger to 0G Storage successfully
+And the subsequent agenticIdClient.mint() throws (network blip, gas, etc.)
+When the caller catches the failure
+Then it receives SessionAnchorMintAfterFlushError carrying:
+  - rootHash         (the bytes32 from the successful flush)
+  - entryCount       (the count from the LogFlushResult)
+  - sessionId        (the bound session identifier)
+  - dataDescription  (the ADR-08 string, pre-built so the caller doesn't reconstruct)
+  - cause            (the underlying mint error for diagnostics)
+And the SessionLogger is sealed (cannot re-flush — a second anchor() throws ALREADY_FLUSHED)
+And the caller can recover by calling SessionAnchor.retryMint({rootHash, entryCount, sessionId})
+And retryMint() does NOT touch the SessionLogger (mint-only path)
+And retryMint() returns the same AnchorResult shape on success
 ```
 
 ### Spec evolution — why the constructor takes 5 args, not 4
@@ -94,11 +109,12 @@ export PRIVATE_KEY="<testnet-funded-wallet-key>"  # 0.1 0G/day from https://fauc
 # script in package.json, so vitest must be invoked via `exec`):
 pnpm --filter @verifiable-agent-execution/chain-client exec vitest run session-anchor.test.ts
 # Must exit 0
-# Expect: 16 tests total. Without env vars set: 15 passed | 1 skipped
-#         (the gated live anchor suite skips intentionally — see "How
-#          the env maps to the test" table below).
-#         With ALL four env vars set: 16 passed | 0 skipped (the live
-#         anchor test is exercised end-to-end against Galileo).
+# Expect: 19 tests total in session-anchor.test.ts.
+#         Without env vars set: 18 passed | 1 skipped (the gated live
+#           anchor suite skips intentionally — see "How the env maps
+#           to the test" table below).
+#         With ALL four env vars set: 19 passed | 0 skipped (the live
+#           anchor test runs end-to-end against Galileo).
 ```
 
 ### How the env maps to the test

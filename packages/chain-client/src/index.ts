@@ -15,6 +15,7 @@ export {
   AgenticIDMintEventDataMismatchError,
   AgenticIDReadError,
   SessionAnchorError,
+  SessionAnchorMintAfterFlushError,
 } from "./errors.js";
 
 export { SessionAnchor } from "./SessionAnchor.js";

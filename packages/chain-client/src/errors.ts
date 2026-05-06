@@ -81,3 +81,52 @@ export class SessionAnchorError extends ChainClientError {
     this.name = "SessionAnchorError";
   }
 }
+
+/**
+ * Mint failed AFTER a successful flush — the log is uploaded to 0G
+ * Storage but the on-chain anchor was not created. The SessionLogger
+ * is now sealed (flushed=true), so calling `anchor()` again would
+ * throw ALREADY_FLUSHED. Caller must retry via `SessionAnchor.retryMint(...)`
+ * (or call `AgenticIDClient.mint(...)` directly) using the `rootHash`
+ * exposed on this error. (Codex round 8 on PR #19.)
+ *
+ * Carries enough context for either recovery path:
+ *   - `rootHash`        — feed back into retryMint() / mint()
+ *   - `entryCount`      — for the AnchorResult on retry
+ *   - `sessionId`       — the bound session identifier
+ *   - `dataDescription` — the ADR-08 string ("exec-log:<sessionId>:<modelId>")
+ *                          so the caller doesn't have to reconstruct it
+ *   - `cause`           — the underlying mint error (for diagnostics)
+ */
+export class SessionAnchorMintAfterFlushError extends ChainClientError {
+  readonly rootHash: string;
+  readonly entryCount: number;
+  readonly sessionId: string;
+  readonly dataDescription: string;
+
+  constructor(opts: {
+    rootHash: string;
+    entryCount: number;
+    sessionId: string;
+    dataDescription: string;
+    cause: unknown;
+  }) {
+    super(
+      "SESSION_ANCHOR_MINT_AFTER_FLUSH",
+      `Mint failed AFTER successful flush of session ${opts.sessionId}. ` +
+        `The log is uploaded to 0G Storage with rootHash ${opts.rootHash} ` +
+        `(${opts.entryCount} entries) but the on-chain anchor was NOT created. ` +
+        `The SessionLogger is now sealed — DO NOT call anchor() again. ` +
+        `Recover by calling sessionAnchor.retryMint({rootHash, entryCount, sessionId}) ` +
+        `or directly via agenticIdClient.mint(agentId, [{dataDescription: ` +
+        `"${opts.dataDescription}", dataHash: "${opts.rootHash}"}]). ` +
+        `Underlying cause: ${opts.cause instanceof Error ? opts.cause.message : String(opts.cause)}`,
+      opts.cause,
+    );
+    this.name = "SessionAnchorMintAfterFlushError";
+    this.rootHash = opts.rootHash;
+    this.entryCount = opts.entryCount;
+    this.sessionId = opts.sessionId;
+    this.dataDescription = opts.dataDescription;
+  }
+}

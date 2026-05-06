@@ -29,7 +29,10 @@
 import type { SessionLogger } from "@verifiable-agent-execution/logger";
 
 import type { AgenticIDClient } from "./AgenticIDClient.js";
-import { SessionAnchorError } from "./errors.js";
+import {
+  SessionAnchorError,
+  SessionAnchorMintAfterFlushError,
+} from "./errors.js";
 import {
   addressSchema,
   bytes32Schema,
@@ -147,10 +150,17 @@ export class SessionAnchor {
   /**
    * Run the flush → mint → URL sequence and return the anchor result.
    *
-   * Errors surface as their underlying class — flush failures throw
-   * StorageUploadError / SessionLoggerError, mint failures throw
-   * AgenticIDMintError. SessionAnchorError is reserved for input
-   * validation + sessionId/containerHash drift caught at this layer.
+   * Error semantics:
+   *   - Input validation (sessionId mismatch, malformed containerHash)
+   *     → SessionAnchorError (no flush, no mint occurred)
+   *   - Flush failure (StorageUploadError, SessionLoggerError) →
+   *     surfaces UNWRAPPED — the SessionLogger is NOT sealed (the
+   *     `flushing` lock resets on upload failure), so the caller can
+   *     simply call anchor() again after the underlying issue resolves
+   *   - Mint failure AFTER successful flush → wrapped as
+   *     SessionAnchorMintAfterFlushError. The SessionLogger IS sealed
+   *     (cannot re-flush), so the caller must use `retryMint()` with
+   *     the rootHash exposed on the error. (Codex round 8 on PR #19.)
    */
   async anchor(input: AnchorInput): Promise<AnchorResult> {
     if (input.sessionId !== this.sessionLogger.sessionId) {
@@ -178,29 +188,107 @@ export class SessionAnchor {
 
     const flushResult = await this.sessionLogger.flush();
 
-    // ADR-08 dataDescription convention. Keeping it as a single string
-    // (vs separate fields) because the AgenticID schema is a 2-tuple
-    // (description, hash) and we want all the session identity in the
-    // description so a third-party verifier can decode without a
-    // side-channel lookup.
-    const data: IntelligentData = {
-      dataDescription: `exec-log:${input.sessionId}:${this.modelId}`,
-      dataHash: flushResult.rootHash,
-    };
-
-    const mintResult = await this.agenticIdClient.mint(
-      this.agentId,
-      [data],
-      this.confirmations,
+    // Mint AFTER successful flush. If mint fails, the SessionLogger
+    // is already sealed (flushed=true) and a second `anchor()` would
+    // throw ALREADY_FLUSHED — leaving the log uploaded to 0G Storage
+    // but never anchored on-chain. Wrap the mint failure as
+    // SessionAnchorMintAfterFlushError exposing the rootHash so the
+    // caller can recover via retryMint() (or AgenticIDClient.mint()
+    // directly). (Codex round 8 on PR #19.)
+    return this.mintAndBuildResult(
+      input.sessionId,
+      flushResult.rootHash,
+      flushResult.entryCount,
     );
+  }
+
+  /**
+   * Retry just the mint step using a previously-flushed rootHash. Use
+   * when `anchor()` threw SessionAnchorMintAfterFlushError — the
+   * SessionLogger is sealed and cannot be re-flushed, but the on-chain
+   * anchor still needs to happen for the proof link to exist.
+   *
+   * The error class carries `{rootHash, entryCount, sessionId}`; pass
+   * those fields here directly. SessionAnchor doesn't track per-call
+   * state, so the caller is the source of truth on what to retry —
+   * supports the case where the original SessionAnchor instance has
+   * already been GC'd (e.g., across a process restart) and the caller
+   * persisted the failure context.
+   *
+   * Throws SessionAnchorError on input validation; throws
+   * SessionAnchorMintAfterFlushError if mint fails again — operators
+   * can keep retrying with the same rootHash until it succeeds OR
+   * fall back to AgenticIDClient.mint() directly.
+   */
+  async retryMint(input: {
+    rootHash: string;
+    entryCount: number;
+    sessionId: string;
+  }): Promise<AnchorResult> {
+    if (!bytes32Schema.safeParse(input.rootHash).success) {
+      throw new SessionAnchorError(
+        `retryMint() rootHash must be 0x-prefixed 32-byte hex; got: ${input.rootHash}`,
+      );
+    }
+    if (!Number.isInteger(input.entryCount) || input.entryCount < 0) {
+      throw new SessionAnchorError(
+        `retryMint() entryCount must be a non-negative integer; got: ${String(input.entryCount)}`,
+      );
+    }
+    if (input.sessionId.length === 0) {
+      throw new SessionAnchorError(
+        "retryMint() sessionId must be a non-empty string",
+      );
+    }
+    return this.mintAndBuildResult(
+      input.sessionId,
+      input.rootHash,
+      input.entryCount,
+    );
+  }
+
+  /**
+   * Internal: mint with the assembled IntelligentData and convert into
+   * an AnchorResult. Wraps mint failures as SessionAnchorMintAfterFlushError
+   * so the caller always has the rootHash + retry path on hand.
+   *
+   * ADR-08 dataDescription convention. Keeping it as a single string
+   * (vs separate fields) because the AgenticID schema is a 2-tuple
+   * (description, hash) and we want all the session identity in the
+   * description so a third-party verifier can decode without a
+   * side-channel lookup.
+   */
+  private async mintAndBuildResult(
+    sessionId: string,
+    rootHash: string,
+    entryCount: number,
+  ): Promise<AnchorResult> {
+    const dataDescription = `exec-log:${sessionId}:${this.modelId}`;
+    const data: IntelligentData = { dataDescription, dataHash: rootHash };
+
+    let mintResult: Awaited<ReturnType<AgenticIDClient["mint"]>>;
+    try {
+      mintResult = await this.agenticIdClient.mint(
+        this.agentId,
+        [data],
+        this.confirmations,
+      );
+    } catch (cause) {
+      throw new SessionAnchorMintAfterFlushError({
+        rootHash,
+        entryCount,
+        sessionId,
+        dataDescription,
+        cause,
+      });
+    }
 
     const verifyUrl = `/verify/${this.chainId}/${mintResult.tokenId.toString()}`;
-
     return {
       tokenId: mintResult.tokenId,
       txHash: mintResult.txHash,
-      rootHash: flushResult.rootHash,
-      entryCount: flushResult.entryCount,
+      rootHash,
+      entryCount,
       verifyUrl,
     };
   }

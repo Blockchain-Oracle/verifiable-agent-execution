@@ -43,6 +43,7 @@ import {
   type MintResult,
   SessionAnchor,
   SessionAnchorError,
+  SessionAnchorMintAfterFlushError,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -367,6 +368,130 @@ describe("SessionAnchor.anchor — orchestration", () => {
     await expect(
       anchor.anchor({ sessionId: SESSION_ID, containerHash: CONTAINER_HASH }),
     ).resolves.toMatchObject({ rootHash: ROOT_HASH });
+  });
+
+  it("wraps mint failure AFTER successful flush as SessionAnchorMintAfterFlushError exposing rootHash (Codex R8)", async () => {
+    // The operational gap that motivates this wrapper: after a
+    // successful flush, the SessionLogger is sealed (flushed=true),
+    // so a second `anchor()` would throw ALREADY_FLUSHED. Without
+    // the wrapper, the caller would get an AgenticIDMintError but
+    // would have no way to recover — the log is on 0G Storage but
+    // the on-chain anchor never happened. The wrapper exposes the
+    // flushed rootHash so the caller can recover via retryMint().
+    const logger = buildSessionLogger();
+    // Mint stub that always fails — simulates the post-flush failure.
+    const { client, mintSpy } = buildAgenticIdClient({
+      mintImpl: async () => {
+        throw new Error("intermittent gas-price spike: tx replaced");
+      },
+    });
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+
+    let caught: SessionAnchorMintAfterFlushError | undefined;
+    try {
+      await anchor.anchor({ sessionId: SESSION_ID, containerHash: CONTAINER_HASH });
+    } catch (err) {
+      if (err instanceof SessionAnchorMintAfterFlushError) caught = err;
+      else throw err;
+    }
+    expect(caught).toBeInstanceOf(SessionAnchorMintAfterFlushError);
+    // Critical: rootHash must be exposed so the caller can retry mint
+    // with it. Without this, the log is unrecoverable on 0G Storage.
+    expect(caught!.rootHash).toBe(ROOT_HASH);
+    expect(caught!.entryCount).toBe(0); // no entries appended in this test
+    expect(caught!.sessionId).toBe(SESSION_ID);
+    expect(caught!.dataDescription).toBe(`exec-log:${SESSION_ID}:${MODEL_ID}`);
+    // The underlying mint cause must be preserved for diagnostics.
+    expect(String((caught as Error).message)).toMatch(/gas-price spike/);
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    // The SessionLogger should NOT have flushing reset — confirming
+    // it's truly sealed and the caller must use retryMint().
+    await expect(logger.flush()).rejects.toThrow(/already flushed/);
+  });
+
+  it("retryMint() succeeds without re-flushing the SessionLogger (recovery path)", async () => {
+    const logger = buildSessionLogger();
+    // First-attempt mint stub fails; second-attempt (retryMint) succeeds.
+    let callCount = 0;
+    const mintImpl = async (
+      _to: string,
+      _datas: ReadonlyArray<IntelligentData>,
+      _confirmations?: number,
+    ): Promise<MintResult> => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error("transient RPC failure");
+      }
+      return { tokenId: MINT_TOKEN_ID, txHash: MINT_TX_HASH };
+    };
+    const { client } = buildAgenticIdClient({ mintImpl });
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+
+    // First call: mint fails, error exposes rootHash for retry.
+    let firstErr: SessionAnchorMintAfterFlushError | undefined;
+    try {
+      await anchor.anchor({ sessionId: SESSION_ID, containerHash: CONTAINER_HASH });
+    } catch (err) {
+      if (err instanceof SessionAnchorMintAfterFlushError) firstErr = err;
+      else throw err;
+    }
+    expect(firstErr).toBeDefined();
+
+    // Recovery: pass the error's fields back into retryMint().
+    const result = await anchor.retryMint({
+      rootHash: firstErr!.rootHash,
+      entryCount: firstErr!.entryCount,
+      sessionId: firstErr!.sessionId,
+    });
+    expect(result.tokenId).toBe(MINT_TOKEN_ID);
+    expect(result.txHash).toBe(MINT_TX_HASH);
+    expect(result.rootHash).toBe(ROOT_HASH);
+    // entryCount must round-trip from the error → retryMint → result
+    expect(result.entryCount).toBe(0);
+    expect(result.verifyUrl).toBe(
+      `/verify/${GALILEO_CHAIN_ID}/${MINT_TOKEN_ID.toString()}`,
+    );
+    // mint() was called twice — once in anchor(), once in retryMint().
+    expect(callCount).toBe(2);
+  });
+
+  it("retryMint() validates inputs before touching the chain", async () => {
+    const logger = buildSessionLogger();
+    const { client, mintSpy } = buildAgenticIdClient();
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+
+    // Malformed rootHash (not 0x-prefixed bytes32).
+    await expect(
+      anchor.retryMint({ rootHash: "0xabc", entryCount: 1, sessionId: SESSION_ID }),
+    ).rejects.toBeInstanceOf(SessionAnchorError);
+    // Negative entryCount.
+    await expect(
+      anchor.retryMint({ rootHash: ROOT_HASH, entryCount: -1, sessionId: SESSION_ID }),
+    ).rejects.toBeInstanceOf(SessionAnchorError);
+    // Empty sessionId.
+    await expect(
+      anchor.retryMint({ rootHash: ROOT_HASH, entryCount: 1, sessionId: "" }),
+    ).rejects.toBeInstanceOf(SessionAnchorError);
+    // None of the validation failures should have called mint().
+    expect(mintSpy).not.toHaveBeenCalled();
   });
 
   it("propagates StorageUploadError from flush() unchanged (does not wrap)", async () => {

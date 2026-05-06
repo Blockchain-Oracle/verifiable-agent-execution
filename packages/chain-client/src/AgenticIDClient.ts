@@ -385,6 +385,37 @@ function parseMintEventFromReceipt(
  * counts as a mismatch (because consumers reading via index would see
  * different content). Hex comparisons are case-insensitive (lowercase
  * normalize) since 0G's ABI may emit either case across versions.
+ *
+ * AUDIT NOTE — why this check exists despite the deployed contract being correct:
+ *
+ * The pre-deployed AgenticID at 0x2700F6A3...EF1F is 0G's
+ * `agenticID-examples/01-mint-and-manage/contracts/AgenticID.sol`.
+ * Per source review (`AgenticID.sol:300-306` in /tmp/og-refs/),
+ * `_setIntelligentData` emits `IntelligentDataSet(tokenId, datas)`
+ * with the EXACT calldata `datas` passed to `iMint`. So for the
+ * deployed contract today, this assertion can never fail on a
+ * legitimate receipt.
+ *
+ * We keep the check anyway as a CONTRACT-SURFACE DRIFT DETECTOR:
+ *
+ *   1. 0G is actively iterating on the agenticID-examples repo. If a
+ *      future deployment swaps in a contract with different event
+ *      semantics (e.g., emits canonicalized hashes, or a different
+ *      tuple shape), this check fails LOUD instead of silently
+ *      returning a tokenId pointing at unrelated content.
+ *
+ *   2. Defense against malformed RPC responses (logs from a different
+ *      tx accidentally surfacing in the receipt — rare but documented
+ *      in some indexer-RPC bugs).
+ *
+ *   3. Lock-step regression coverage: anyone who refactors `mint()` to
+ *      a new event source must update this assertion, making the
+ *      coupling explicit instead of implicit.
+ *
+ * The check costs ~30 LOC + 2 negative tests + 1 error class. We
+ * accept that complexity tax for the future-proofing. (Codex round
+ * 6 on PR #19 surfaced the gap; audit-and-keep decision documented
+ * here per Codex round 8 reviewer dialogue.)
  */
 function assertEventDataMatches(
   expected: ReadonlyArray<IntelligentData>,
