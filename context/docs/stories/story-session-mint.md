@@ -80,9 +80,13 @@ fix was to update the spec rather than accept an unsafe default.
 ## Shell verification
 
 ```bash
-# Set env:
+# Set env — ALL FOUR are required for the gated live anchor test
+# (the suite skips silently if any are missing, so omitting them
+# means the on-chain BDD line stays unverified).
 export ZG_TESTNET_RPC="https://evmrpc-testnet.0g.ai"
-export PRIVATE_KEY="<testnet-funded-wallet-key>"
+export ZG_INDEXER_RPC="https://indexer-storage-testnet-turbo.0g.ai"
+export AGENTICID_ADDRESS="0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F"  # pre-deployed (ADR-08)
+export PRIVATE_KEY="<testnet-funded-wallet-key>"  # 0.1 0G/day from https://faucet.0g.ai
 
 # Run integration test (use the SCOPED package name — bare `--filter=chain-client`
 # does NOT match the workspace package id, which is
@@ -90,4 +94,23 @@ export PRIVATE_KEY="<testnet-funded-wallet-key>"
 # script in package.json, so vitest must be invoked via `exec`):
 pnpm --filter @verifiable-agent-execution/chain-client exec vitest run session-anchor.test.ts
 # Must exit 0
+# Expect: 15 passed (1 skipped if env is missing → test gating intentional;
+# 15 passed (0 skipped) when ALL four env vars are set → live anchor exercised)
 ```
+
+### How the env maps to the test
+
+| Env var              | Used by                         | Where it lands                                |
+|----------------------|---------------------------------|-----------------------------------------------|
+| `ZG_TESTNET_RPC`     | `JsonRpcProvider` + `StorageClient.rpcUrl` | network probe + storage tx broadcast         |
+| `ZG_INDEXER_RPC`     | `Indexer` constructor            | 0G Storage upload target                      |
+| `AGENTICID_ADDRESS`  | `AgenticIDClient` constructor    | iMint contract address                        |
+| `PRIVATE_KEY`        | `Wallet` constructor             | signer for both the storage tx + the mint tx  |
+
+The gated suite is `describe.skipIf(!liveAnchorEnvReady)` in
+`session-anchor.test.ts` — pins network.chainId === 16602n before
+spending gas, runs the full StorageClient → SessionLogger →
+AgenticIDClient → SessionAnchor pipeline, then read-back via
+`getIntelligentDatas(tokenId)` to prove the on-chain anchor is
+queryable (the BDD's "at least one event ... data anchor" condition
+is satisfied iff getIntelligentDatas returns the expected entry).
