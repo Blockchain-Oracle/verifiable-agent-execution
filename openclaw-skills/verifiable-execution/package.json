@@ -18,7 +18,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@verifiable-agent-execution/logger": "workspace:*"
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
+    "@verifiable-agent-execution/chain-client": "workspace:*",
+    "@verifiable-agent-execution/logger": "workspace:*",
+    "ethers": "~6.13.1"
   },
   "peerDependencies": {
     "openclaw": ">=2026.5.0"

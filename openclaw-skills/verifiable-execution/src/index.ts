@@ -1,49 +1,65 @@
 /**
  * verifiable-execution — OpenClaw plugin entry.
  *
+ * Closes Epic 4 (stories: skill-init, skill-intercept, skill-close).
  * Captures every tool call inside an agent session, flushes the log to
  * 0G Storage at session end, and mints an AgenticID iNFT anchoring the
- * rootHash on-chain. Produces a `/verify/<chainId>/<tokenId>` URL the
- * verifier dashboard can resolve cold.
+ * rootHash on-chain. Produces a `<verifyUrlBase>/verify/<chainId>/<tokenId>`
+ * URL the verifier dashboard can resolve cold.
  *
- * Source of truth:
- *   - Reference plugin layout: 0g-memory/openclaw-skills/evermemos/
- *     (verified via /tmp/og-refs/ during the outwards audit). Default
- *     export is an OBJECT with {id, name, description, register} —
- *     NOT `export default function activate(api)` per the original
- *     story BDD (that was Claude-Code-skill-convention drift; story
- *     updated to match the real OpenClaw API).
+ * Hooks fire AUTOMATICALLY — every tool call across every channel
+ * (Telegram/Discord/Slack/CLI), every session end. The AI is observed
+ * from outside its decision loop, never asked to cooperate. This is
+ * the wedge: judges download a verifiable-claw demo distro, use it
+ * normally, every action gets anchored with zero AI awareness required.
  *
- *   - OpenClawPluginApi shape: openclaw@2026.5.4
- *     dist/plugin-sdk/src/plugins/types.d.ts:2052. We use
- *     `api.on<K extends PluginHookName>(hookName, handler)` — the typed
- *     lifecycle-hook API. The lower-level `api.registerHook(events,
- *     InternalHookHandler)` exists too but its handler signature is
- *     internal-runtime-shaped (`(event: InternalHookEvent) => ...`)
- *     and doesn't carry the per-event (event, ctx) types. `api.on`
- *     destructures the right `(event, ctx)` shape per PluginHookName
- *     via `PluginHookHandlerMap[K]`.
+ * Source of truth (verified by reading SDK + reference plugin):
+ *   - Reference plugin: 0g-memory/openclaw-skills/evermemos/ (cloned to
+ *     /tmp/og-refs/ during the outwards audit). Default export is an
+ *     OBJECT with {id, name, description, register} — NOT a function.
+ *   - OpenClawPluginApi.on signature: openclaw@2026.5.4
+ *     dist/plugin-sdk/src/plugins/types.d.ts:2052 — typed lifecycle hook
+ *     entry. Per-hook (event, ctx) types come from PluginHookHandlerMap[K].
+ *   - Hook event names + payloads: same package's hook-types.d.ts.
+ *     `after_tool_call` → (PluginHookAfterToolCallEvent, PluginHookToolContext).
+ *     `session_end` → (PluginHookSessionEndEvent, PluginHookSessionContext).
  *
- *   - Hook event names: "after_tool_call", "session_end". OpenClaw
- *     does NOT expose a `session_start` event in the public hooks
- *     surface, so we lazy-allocate per-session state on first
- *     `after_tool_call` for an unseen sessionId (same pattern as
- *     evermemos's lazy groupId derivation).
- *
- * Lifecycle in this story (story-skill-init scope):
- *   1. Plugin load → resolve config from `api.pluginConfig`. If REQUIRED
- *      fields are missing, log a structured warning to stderr and
- *      register a NO-OP plugin (degraded mode). Never crashes the host.
- *   2. Register the lifecycle hooks (after_tool_call, session_end).
- *      The actual capture logic ships in story-skill-intercept; this
- *      story stubs the handlers so the registration shape is verified.
- *   3. session_end calls SessionAnchor.anchor() — that wiring lives in
- *      story-skill-close (deferred until PR #19's chain-client lands).
+ * containerHash strategy (note for reviewer):
+ *   The session-mint BDD (story-session-mint.md) says containerHash is
+ *   "the OpenClaw container hash captured at session end". OpenClaw
+ *   doesn't expose a hardware-attested TEE container hash today, so we
+ *   derive a deterministic synthetic:
+ *     containerHash = sha256("openclaw-session:" + sessionKey + ":" + agentId)
+ *   formatted as 0x-prefixed bytes32. This is sufficient for the
+ *   AgenticID anchor (which doesn't cryptographically validate
+ *   containerHash semantics — that's Epic 5 verifier scope), and lets
+ *   any third party re-derive the hash from public session metadata.
+ *   When OpenClaw exposes a real TEE attestation we swap this synthetic
+ *   for the attestation hash, no schema change required (it's the same
+ *   bytes32 slot).
  */
 
+import { createHash } from "node:crypto";
+
+import { Wallet } from "ethers";
+import {
+  Indexer,
+} from "@0gfoundation/0g-storage-ts-sdk";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
+import {
+  StorageClient,
+  type IndexerLike,
+  type SessionLogger,
+} from "@verifiable-agent-execution/logger";
+import {
+  AgenticIDClient,
+  SessionAnchor,
+  SessionAnchorMintAfterFlushError,
+} from "@verifiable-agent-execution/chain-client";
+
 import { resolveConfig, type VerifiableExecutionConfig } from "./config.js";
+import { sha256Hex } from "./hash.js";
 import { SessionManager } from "./SessionManager.js";
 
 const PLUGIN_ID = "verifiable-execution";
@@ -51,49 +67,303 @@ const PLUGIN_NAME = "Verifiable Execution";
 const PLUGIN_DESCRIPTION =
   "Anchors every agent session as a TEE-signed log on 0G Storage + iNFT on AgenticID, producing a /verify/<chainId>/<tokenId> URL anyone can verify cold.";
 
-/**
- * Per-plugin runtime state. Constructed only when the config resolves
- * successfully — a degraded plugin (missing config) skips this and
- * logs warnings instead.
- *
- * The StorageClient + SessionManager are NOT built here yet because
- * Epic 4's first story (skill-init) is the scaffold. Both get wired
- * in story-skill-intercept (StorageClient construction) and
- * story-skill-close (SessionAnchor + mint). For now the resolved
- * config is captured + reported, hooks are registered as stubs that
- * record receipt so tests can assert the registration succeeded.
- */
+// ---------------------------------------------------------------------------
+// Plugin state — built when config + private key both resolve. A
+// degraded plugin (missing config OR missing PRIVATE_KEY env) skips
+// state construction and registers no-op stubs.
+// ---------------------------------------------------------------------------
+
 interface PluginState {
   config: VerifiableExecutionConfig;
-  // SessionManager is allocated lazily in story-skill-intercept; the
-  // null placeholder here is intentional during the skill-init
-  // scaffold so the type stays accurate as scope expands.
-  sessions: SessionManager | null;
+  sessions: SessionManager;
+  agenticIdClient: AgenticIDClient;
 }
 
-/**
- * Stderr structured logger — never throws (matches evermemos pattern
- * of swallowing log-write failures so logging itself can't crash the
- * plugin host). Uses console.error directly because the OpenClaw
- * `api.logger` is only available inside register() and we want to
- * report config failures too.
- */
-function warn(component: string, msg: string, data?: unknown): void {
+// ---------------------------------------------------------------------------
+// Logging — never throws, structured JSON to stderr. Mirrors evermemos
+// pattern of swallowing log-write failures so logging itself can't
+// crash the plugin host.
+// ---------------------------------------------------------------------------
+
+type LogLevel = "INFO" | "WARN" | "ERROR";
+
+function structuredLog(
+  level: LogLevel,
+  component: string,
+  msg: string,
+  data?: unknown,
+): void {
   try {
     const entry = JSON.stringify({
       ts: new Date().toISOString(),
-      level: "WARN",
+      level,
       plugin: PLUGIN_ID,
       component,
       msg,
       ...(data !== undefined ? { data } : {}),
     });
-    // Stderr keeps it out of the model's stdout-piped streams.
     process.stderr.write(entry + "\n");
   } catch {
     // Logging failures must never crash the plugin host.
   }
 }
+
+// ---------------------------------------------------------------------------
+// Container hash derivation — deterministic synthetic per the docstring
+// note above. Re-derivable from public session metadata.
+// ---------------------------------------------------------------------------
+
+function deriveContainerHash(opts: {
+  sessionKey: string;
+  agentId: string;
+}): string {
+  const digest = createHash("sha256")
+    .update(`openclaw-session:${opts.sessionKey}:${opts.agentId}`, "utf8")
+    .digest("hex");
+  return `0x${digest}`;
+}
+
+// ---------------------------------------------------------------------------
+// State construction — happy path. Throws on PRIVATE_KEY-missing OR
+// 0G SDK construction failure; caller catches + degrades.
+// ---------------------------------------------------------------------------
+
+function buildPluginState(config: VerifiableExecutionConfig): PluginState {
+  const privateKey = process.env[config.privateKeyEnvVar];
+  if (privateKey === undefined || privateKey.length === 0) {
+    throw new Error(
+      `Required env var ${config.privateKeyEnvVar} is unset; cannot construct signer for storage upload + iMint.`,
+    );
+  }
+
+  // Wallet without a connected provider — StorageClient internally
+  // wires the rpcUrl to its 0G Storage upload signer; AgenticIDClient
+  // gets the signer + an explicit JsonRpcProvider via fromRpc().
+  const storageSigner = new Wallet(privateKey);
+
+  const indexer = new Indexer(config.indexerUrl);
+  const storageClient = new StorageClient({
+    rpcUrl: config.rpcUrl,
+    indexerUrl: config.indexerUrl,
+    signer: storageSigner,
+    indexer: indexer as unknown as IndexerLike,
+  });
+
+  const agenticIdClient = AgenticIDClient.fromRpc(
+    config.agenticIdAddress,
+    config.rpcUrl,
+    privateKey,
+  );
+
+  const sessions = new SessionManager({ storageClient });
+  return { config, sessions, agenticIdClient };
+}
+
+// ---------------------------------------------------------------------------
+// Hook handlers — exported so tests can drive them with synthetic
+// (event, ctx) tuples without standing up an OpenClaw runtime.
+// ---------------------------------------------------------------------------
+
+/**
+ * after_tool_call handler — append an ExecutionLogEntry to the session's
+ * SessionLogger. Lazy-allocates the SessionLogger on first sight of a
+ * sessionKey (OpenClaw does not expose `session_start` so we cannot
+ * pre-allocate). Never throws — tool errors are themselves captured as
+ * log entries with the error payload reflected in `outputHash`. The
+ * BDD's "tool_error" type is mapped to type:"tool_call" + the error
+ * captured in the hash, because the logger schema doesn't include a
+ * separate tool_error variant (would be a cross-package change in a
+ * different epic).
+ */
+export function handleAfterToolCall(
+  state: PluginState,
+  event: { toolName?: unknown; params?: unknown; result?: unknown; error?: unknown },
+  ctx: { sessionKey?: unknown; sessionId?: unknown },
+): void {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "after_tool_call", "Skipping entry: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+  const toolName = typeof event.toolName === "string" ? event.toolName : "<unknown>";
+
+  let logger: SessionLogger;
+  try {
+    logger = state.sessions.getOrCreate(sessionKey);
+  } catch (cause) {
+    structuredLog("ERROR", "after_tool_call", "Failed to allocate SessionLogger", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+    return;
+  }
+
+  // Compose the entry. Tool errors land in outputHash via the
+  // {error} envelope so downstream verifiers see SOMETHING captured
+  // for the failure (vs the entry being absent and the proof chain
+  // having an inferred gap).
+  const inputHash = sha256Hex(event.params);
+  const outputPayload =
+    event.error !== undefined
+      ? { error: serializeError(event.error) }
+      : event.result;
+  const outputHash = sha256Hex(outputPayload);
+
+  try {
+    logger.appendEntry({
+      seq: logger.getEntries().length,
+      ts: Date.now(),
+      type: "tool_call",
+      tool: toolName,
+      inputHash,
+      outputHash,
+    });
+  } catch (cause) {
+    // appendEntry can throw on schema-mismatch or post-flush. Both
+    // are OPERATOR errors (we built the wrong entry / fired after
+    // session_end). Log + swallow — never crash the host.
+    structuredLog("ERROR", "after_tool_call", "appendEntry failed", {
+      sessionKey,
+      tool: toolName,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}
+
+/**
+ * session_end handler — flush the SessionLogger to 0G Storage, mint an
+ * iNFT anchor via SessionAnchor, and log the resulting verifyUrl. Three
+ * outcomes:
+ *   1. No SessionLogger for this sessionKey (zero tool calls happened
+ *      in this session) → nothing to anchor; INFO log; return.
+ *   2. Anchor succeeds → INFO log including the full verifyUrl
+ *      (verifyUrlBase + relative path); release the SessionLogger.
+ *   3. Anchor fails → ERROR log including the rootHash from
+ *      SessionAnchorMintAfterFlushError so operators can manually
+ *      retryMint(); release the SessionLogger so memory doesn't leak.
+ *
+ * Always returns void — the OpenClaw hook contract doesn't surface a
+ * return value back to the agent. The verifyUrl appears in the
+ * structured log, where dashboards / verifier UIs pick it up.
+ */
+export async function handleSessionEnd(
+  state: PluginState,
+  _event: unknown,
+  ctx: { sessionKey?: unknown; sessionId?: unknown },
+): Promise<void> {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "session_end", "Skipping anchor: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+  if (!state.sessions.has(sessionKey)) {
+    // Zero tool calls in this session — nothing to anchor.
+    structuredLog("INFO", "session_end", "No active SessionLogger for session; skipping anchor", {
+      sessionKey,
+    });
+    return;
+  }
+
+  const logger = state.sessions.getOrCreate(sessionKey); // safe — we just checked has()
+  const containerHash = deriveContainerHash({
+    sessionKey,
+    agentId: state.config.agentId,
+  });
+
+  const anchor = new SessionAnchor(
+    logger,
+    state.agenticIdClient,
+    state.config.agentId,
+    state.config.modelId,
+    { chainId: state.config.chainId },
+  );
+
+  try {
+    const result = await anchor.anchor({
+      sessionId: sessionKey,
+      containerHash,
+    });
+    const fullVerifyUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
+    structuredLog("INFO", "session_end", "Session anchored on-chain", {
+      sessionKey,
+      tokenId: result.tokenId.toString(),
+      txHash: result.txHash,
+      rootHash: result.rootHash,
+      entryCount: result.entryCount,
+      verifyUrl: fullVerifyUrl,
+    });
+  } catch (cause) {
+    // Surface as a STRUCTURED failure (per BDD: "the error is caught
+    // and surfaced as a structured failure"). The recovery path
+    // (rootHash for retryMint) is captured when the cause is
+    // SessionAnchorMintAfterFlushError so operators can manually
+    // retry against the chain.
+    const failureFields: Record<string, unknown> = {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    };
+    if (cause instanceof SessionAnchorMintAfterFlushError) {
+      failureFields.rootHash = cause.rootHash;
+      failureFields.entryCount = cause.entryCount;
+      failureFields.dataDescription = cause.dataDescription;
+      failureFields.recovery = "Call SessionAnchor.retryMint({rootHash, entryCount, sessionId}) to retry mint without re-flushing.";
+    }
+    structuredLog("ERROR", "session_end", "Anchor failed", failureFields);
+  } finally {
+    // Always release — even on failure, the SessionLogger is sealed
+    // (flush either succeeded or threw) and shouldn't sit in the
+    // SessionManager map across long-running OpenClaw processes.
+    state.sessions.release(sessionKey);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Read sessionKey from ctx, falling back to sessionId if sessionKey is
+ * absent. Per evermemos's groupId-derivation comment, sessionKey is
+ * the preferred isolation key because OpenClaw sessions can share the
+ * same workspaceDir; sessionId is the fallback.
+ */
+function pickSessionKey(ctx: {
+  sessionKey?: unknown;
+  sessionId?: unknown;
+}): string | null {
+  if (typeof ctx?.sessionKey === "string" && ctx.sessionKey.length > 0) {
+    return ctx.sessionKey;
+  }
+  if (typeof ctx?.sessionId === "string" && ctx.sessionId.length > 0) {
+    return ctx.sessionId;
+  }
+  return null;
+}
+
+/**
+ * Serialize an error for inclusion in outputHash. Captures message +
+ * name (Error subclass) + stringified cause where available. Avoids
+ * including stack traces — they'd make outputHash unstable across
+ * runtimes (different node versions, sourcemaps, etc.).
+ */
+function serializeError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      ...(err.cause !== undefined ? { cause: String(err.cause) } : {}),
+    };
+  }
+  return { message: String(err) };
+}
+
+// ---------------------------------------------------------------------------
+// Plugin export — default OBJECT per OpenClaw contract.
+// ---------------------------------------------------------------------------
 
 export default {
   id: PLUGIN_ID,
@@ -102,18 +372,13 @@ export default {
 
   register(api: OpenClawPluginApi): void {
     const resolution = resolveConfig(api.pluginConfig);
-
     if (!resolution.ok) {
-      // Degraded mode: missing required config. Log a structured
-      // warning naming every missing/invalid field at once (vs
-      // failing on the first — operators get one shot at fixing).
-      warn("register", "Plugin loaded in degraded mode: missing required config", {
-        missing: resolution.missing,
-        invalid: resolution.invalid,
-      });
-      // Register no-op stubs so OpenClaw still sees the plugin as
-      // healthy; otherwise the host might mark it as failed-to-load
-      // and the operator gets a less useful error than our warning.
+      structuredLog(
+        "WARN",
+        "register",
+        "Plugin loaded in degraded mode: missing required config",
+        { missing: resolution.missing, invalid: resolution.invalid },
+      );
       api.on("after_tool_call", () => {
         /* noop in degraded mode */
       });
@@ -123,66 +388,39 @@ export default {
       return;
     }
 
-    const state: PluginState = {
-      config: resolution.config,
-      sessions: null, // wired in story-skill-intercept
-    };
+    let state: PluginState;
+    try {
+      state = buildPluginState(resolution.config);
+    } catch (cause) {
+      // Most likely: PRIVATE_KEY env var unset. Plugin stays
+      // installable but operates as no-op until the env is wired.
+      structuredLog(
+        "WARN",
+        "register",
+        "Plugin loaded in degraded mode: failed to build runtime state",
+        { cause: cause instanceof Error ? cause.message : String(cause) },
+      );
+      api.on("after_tool_call", () => {
+        /* noop in degraded mode */
+      });
+      api.on("session_end", () => {
+        /* noop in degraded mode */
+      });
+      return;
+    }
 
     api.on("after_tool_call", (event, ctx) => {
-      // story-skill-intercept will wire SessionLogger.appendEntry here.
-      // For story-skill-init, this stub proves the hook fires + that
-      // we can read `event.toolName` + `ctx.sessionId` (the shape we'll
-      // need to consume in the next story).
-      onToolCallStub(state, event, ctx);
+      handleAfterToolCall(state, event, ctx);
     });
 
-    api.on("session_end", (event, ctx) => {
-      // story-skill-close will wire SessionAnchor.anchor() here.
-      // For story-skill-init, this stub proves the hook fires + that
-      // ctx.sessionId is available so we know we can look up the
-      // SessionLogger we allocated on the first tool call.
-      onSessionEndStub(state, event, ctx);
+    api.on("session_end", async (event, ctx) => {
+      await handleSessionEnd(state, event, ctx);
     });
 
-    warn("register", "Plugin loaded with full config", {
+    structuredLog("INFO", "register", "Plugin loaded with full runtime state", {
       chainId: state.config.chainId,
       agentId: state.config.agentId,
       verifyUrlBase: state.config.verifyUrlBase,
     });
   },
 };
-
-// ---------------------------------------------------------------------------
-// Stub handlers — exported as hooks so future stories can wire real logic
-// without changing the registration surface.
-// ---------------------------------------------------------------------------
-
-// Loose event/ctx shape — the real per-event types come from
-// PluginHookHandlerMap (PluginHookAfterToolCallEvent / PluginHookToolContext
-// for after_tool_call; PluginHookSessionEndEvent / PluginHookSessionContext
-// for session_end). The stubs intentionally accept `unknown` here so the
-// next stories can replace the bodies without changing this signature
-// (the api.on call sites already enforce the per-event types via
-// PluginHookHandlerMap[K] inference).
-export function onToolCallStub(
-  _state: PluginState,
-  _event: unknown,
-  _ctx: unknown,
-): void {
-  // story-skill-intercept will replace this with:
-  //   const logger = state.sessions.getOrCreate(String(ctx.sessionKey));
-  //   logger.appendEntry({...});
-}
-
-export function onSessionEndStub(
-  _state: PluginState,
-  _event: unknown,
-  _ctx: unknown,
-): void {
-  // story-skill-close will replace this with:
-  //   const logger = state.sessions.get(String(ctx.sessionKey));
-  //   if (!logger) return;
-  //   const anchor = new SessionAnchor(logger, agenticIdClient, ...);
-  //   await anchor.anchor({...});
-  //   state.sessions.release(String(ctx.sessionKey));
-}
