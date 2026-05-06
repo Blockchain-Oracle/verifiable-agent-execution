@@ -1,64 +1,229 @@
 # Verifiable Agent Execution
 
-> Prove your AI agent ran exactly what it claimed — cryptographic receipts for every session.
+> **Etherscan for AI agents — share a URL, verify any agent run cold.**
 
-**Hackathon:** 0G APAC Hackathon 2026 — Track 1 (Agentic Infrastructure & OpenClaw Lab)  
-**Deadline:** May 16, 2026  
-**Prize pool:** $150K USDT | Grand Prize: $45K / $35K / $20K
-
----
-
-## What it is
-
-AI agents are increasingly trusted to act autonomously — but today there is no way to prove what an agent actually did. Anyone can claim an agent ran a task correctly; no one can verify it.
-
-**Verifiable Agent Execution** closes this gap: every OpenClaw agent session produces a cryptographically signed, immutably stored, on-chain-anchored proof that anyone can independently verify. The proof chain runs:
-
-```
-Tool call → TEE signature (0G Private Computer) → 0G Storage hash → iNFT attestation (ERC-7857)
-```
-
-Share one link. Anyone can verify the agent did exactly what it claimed.
+**Hackathon:** 0G APAC Hackathon 2026 — Track 1 (Agentic Infrastructure & OpenClaw Lab)
+**Deadline:** May 16, 2026
 
 ---
 
-## 0G Primitives integrated
+## The wedge
+
+AI agents act autonomously. Today, there's no way to prove what one actually did. Anyone can claim an agent ran a task correctly; no one can verify it.
+
+**Verifiable Agent Execution** is an OpenClaw plugin + dashboard that produces a cryptographically signed, on-chain-anchored proof for every agent session. The proof chain:
+
+```
+Tool call (params + result)
+   ↓
+TEE signature (agent-wrapper, recovered against deployed verifier)
+   ↓
+SessionLog (full content, sha256-hashed, JSON)
+   ↓
+0G Storage (rootHash anchored)
+   ↓
+ERC-7857 iNFT mint on AgenticID (Galileo)
+   ↓
+Verifier dashboard (open URL → see the story → click "Verify on chain"
+                    → 4 row badges flip green sequentially)
+```
+
+Anyone clicks the URL on any device — no wallet, no login, no setup. Etherscan UX for agent runs.
+
+---
+
+## Try it (live, on Galileo testnet)
+
+> **Pre-minted demo session — tokenId 98 — DeFi swap simulator (4 signed steps).**
+
+```bash
+# 1. Clone + install (one shot)
+git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
+cd verifiable-agent-execution
+pnpm install
+
+# 2. Start the dashboard (zero env vars needed — constants baked in)
+pnpm --filter @verifiable-agent-execution/dashboard dev
+
+# 3. Open the demo proof
+open http://localhost:3000/verify/98
+```
+
+You'll see the 4-step DeFi swap session, fully decoded (`quote → liquidity → simulate-swap → final-approval`) with green TEE Verified badges flipping in sequence.
+
+---
+
+## Mint your own session
+
+```bash
+# Set up your wallet — first run AUTO-creates one
+pnpm --filter @verifiable-agent-execution/openclaw-skill exec node -e "import('./src/wallet.js').then(m => m.printFirstRunBanner(m.resolveWallet()))"
+
+# It prints something like:
+#   Wallet:    0xABC...
+#   Saved to:  ~/.openclaw/verifiable-execution/wallet.json
+#   Fund:      Visit https://faucet.0g.ai → paste 0xABC... → claim 0.1 0G
+
+# After funding (one-time), every OpenClaw session you run with this
+# plugin enabled will auto-anchor and print a /verify/<tokenId> URL.
+```
+
+---
+
+## 0G primitives integrated
 
 | Primitive | Role |
 |---|---|
-| 0G Private Computer (TEE) | Signs agent inference responses — proves what the model actually output |
-| 0G Storage | Immutable session log — stores the full execution trace |
-| 0G Chain / AgenticID (ERC-8004) | On-chain anchor — ties sessions to a verifiable agent identity |
-| iNFT / ERC-7857 | Proof attestation — mints a non-transferable receipt per session |
+| **0G Storage** | Immutable session log blob (rootHash anchored on-chain) |
+| **0G Chain** | EVM-compatible RPC for the AgenticID + verifier contracts |
+| **AgenticID (ERC-7857 iNFT)** | Per-session proof token at `0x2700F6A3...EF1F` (pre-deployed by 0G) |
+| **TEE Verifier (MockTEEVerifier.sol)** | Our deploy at `0x6F96f3789...3E8CE` — verifyTEESignature view function |
+| **agent-wrapper signing convention** | `keccak256(agentId\|sealId\|signedAt\|bodyHashHex)` per the upstream Go signSession code |
 
 ---
 
-## Repo structure
+## Architecture
 
 ```
-research/          # Full hackathon research, competitor analysis, SDK docs
-docs/              # PRD, architecture, epics, UX spec, UI mining, sprint status
-docs/stories/      # 14 implementation stories (decomposed by epic)
-refs/              # SDK snippets, sponsor repos, participant repos
-src/               # Source code (coming)
+┌────────────────────────────────────────────────────────────────────────┐
+│  OpenClaw                                                              │
+│  ┌──────────────────────────────────────────────────────────────────┐ │
+│  │ verifiable-execution plugin (openclaw-skills/verifiable-execution)│ │
+│  │   • register(api): wires api.on("after_tool_call", session_end)  │ │
+│  │   • after_tool_call: appendEntry(seq, ts, tool, params, result,  │ │
+│  │                                  inputHash, outputHash, teeSig)  │ │
+│  │   • session_end: SessionAnchor.anchor() → mint iNFT              │ │
+│  │   • Wallet: ~/.openclaw/verifiable-execution/wallet.json (auto)  │ │
+│  └──────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  packages/  (TypeScript workspaces)                                    │
+│  • logger        SessionLogger + StorageClient + schema               │
+│  • tee-adapter   HeaderParser + signing-message + MockTEEVerifier ABI │
+│  • chain-client  AgenticIDClient + SessionAnchor + retryMint          │
+│  • contracts     MockTEEVerifier.sol (Solidity 0.8.24, evm cancun)    │
+└────────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  apps/dashboard  (Next.js 14 App Router, dark, Geist, zero-config)    │
+│  • /                       Landing                                    │
+│  • /verify/[tokenId]       Proof chain page (server component)        │
+│  • /api/verify/[tokenId]   Aggregate proof JSON                       │
+│  • /api/verify/[tokenId]/entry/[seq]   Per-entry verify (badge flip)  │
+└────────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  0G Galileo testnet (chainId 16602)                                    │
+│  • AgenticID:        0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F       │
+│  • MockTEEVerifier:  0x6F96f3789646C873a939c4F5EB8e6d8D67b3E8CE       │
+│  • Storage indexer:  https://indexer-storage-testnet-turbo.0g.ai      │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Demo moment (judge walkthrough)
+## Zero-config UX
 
-1. Run any OpenClaw agent task
-2. Agent executes under TEE — Private Computer signs the response
-3. Session log sealed and pinned to 0G Storage — returns a CID
-4. iNFT minted on 0G Chain — ties CID + TEE signature to AgenticID
-5. Share the proof link — anyone opens it, sees the full verifiable audit trail
+Inspired by [xlmtools](https://github.com/Blockchain-Oracle/xlmtools)'s wallet-on-first-run pattern.
 
-Total demo time: ~90 seconds.
+| What | How |
+|---|---|
+| **Dashboard** | 0 env vars required. Galileo addresses + RPC are compiled-in constants. Override via env to self-host on mainnet |
+| **Plugin wallet** | First run auto-creates a wallet at `~/.openclaw/verifiable-execution/wallet.json` (mode 0o600). Friendly banner with faucet URL. PRIVATE_KEY env stays as advanced override |
+| **Verifier contract** | Pre-deployed by us. Plugin and dashboard both know the address — operators don't configure it |
+
+The ONLY user step on first run: paste your auto-generated wallet address into [https://faucet.0g.ai](https://faucet.0g.ai) and claim 0.1 0G. After that, sessions auto-mint.
+
+---
+
+## Demo session (the canonical artifact)
+
+**TokenId 98** on Galileo — autonomous DeFi swap simulator:
+
+| Seq | Tool | What |
+|---|---|---|
+| 0 | `quote` | USDC→ETH 1000 → rate 2380.42, ethOut 0.42 |
+| 1 | `liquidity` | Uniswap V3 USDC/WETH 0.3% → depth $1.23M, slippage 0.42% |
+| 2 | `simulate-swap` | slippage=0.5% → executed=true, gas 142k |
+| 3 | `final-approval` | human=`0x3b56...33A3` → approved=false (demo mode) |
+
+All 4 entries TEE-signed. Anchor: `0xfd23614f0d49c85c68ec7e8a57960f770afff171898ec892a198539409873313`.
+Storage rootHash: `0x9c08776db62cb84a9e4ec6b3fdd2961c47948c727b1874650837a52ac1bac570`.
+
+Re-mint a fresh session anytime: `pnpm exec tsx scripts/smoke/defi-swap-demo.ts`.
+
+---
+
+## Smoke scripts (live testnet)
+
+```bash
+# Mint a fresh DeFi swap demo session (~25-30s):
+pnpm exec tsx scripts/smoke/defi-swap-demo.ts
+
+# Resolve a tokenId end-to-end (chain + storage + TEE verify):
+pnpm exec tsx scripts/smoke/verify-token.ts <tokenId>
+
+# Per-entry verification (drives the badge-flip animation):
+pnpm exec tsx scripts/smoke/per-entry-verify.ts <tokenId>
+
+# Mint a single-entry signed session:
+pnpm exec tsx scripts/smoke/signed-anchor.ts
+```
+
+---
+
+## Repo layout
+
+```
+apps/
+  dashboard/              Next.js 14 verifier dashboard
+contracts/
+  contracts/MockTEEVerifier.sol   verifyTEESignature view function
+  scripts/deploy-mock.ts          deploy + persist deployment record
+openclaw-skills/
+  verifiable-execution/   OpenClaw plugin (register, hooks, wallet, hash)
+packages/
+  logger/                 SessionLogger + StorageClient (0G Storage)
+  tee-adapter/            HeaderParser, signing-message, error classes
+  chain-client/           AgenticIDClient + SessionAnchor + retryMint
+scripts/
+  smoke/                  live testnet smoke tests
+context/
+  PRD.md, ux-spec.md, architecture.md   spec stack
+docs/stories/             14 BDD-shaped implementation stories
+```
+
+---
+
+## Status
+
+| Epic | Status |
+|---|---|
+| Epic 1 — Logger Core | ✅ on main (PR #17) |
+| Epic 2 — TEE Adapter | ✅ on main (PR #18) |
+| Epic 3 — On-chain Anchor | ✅ on main (PR #19) |
+| Epic 4 — OpenClaw Plugin | ✅ on main (PR #20) |
+| Epic 5 — Verifier Dashboard | 🟡 PR #21 in review |
+| Epic 6 — Zero-config UX + demo polish | 🟡 epic/06-zero-config-ux |
+| Design polish (Magic MCP, scamper, frontend skill) | 👤 Abu |
 
 ---
 
 ## Links
 
-- Hackathon: https://www.hackquest.io/hackathons/0G-APAC-Hackathon
-- 0G Docs: https://docs.0g.ai
-- 0G Chain (Aristotle Mainnet): Chain ID 16661, RPC https://evmrpc.0g.ai
+- **Hackathon:** https://www.hackquest.io/hackathons/0G-APAC-Hackathon
+- **0G Docs:** https://docs.0g.ai
+- **0G Faucet:** https://faucet.0g.ai (Galileo testnet, 0.1 0G/day)
+- **0G Galileo Explorer:** https://chainscan-galileo.0g.ai
+- **Reference plugin (OpenClaw):** https://github.com/0gfoundation/0g-memory/tree/main/openclaw-skills/evermemos
+- **Wallet UX inspiration:** https://github.com/Blockchain-Oracle/xlmtools
+
+---
+
+## Demo script (3 minutes)
+
+See [DEMO.md](./DEMO.md) for the 5-step reverse-arc walkthrough.
