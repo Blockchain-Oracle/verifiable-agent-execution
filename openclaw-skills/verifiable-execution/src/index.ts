@@ -345,15 +345,34 @@ export async function handleSessionEnd(
  * the preferred isolation key because OpenClaw sessions can share the
  * same workspaceDir; sessionId is the fallback.
  */
+/**
+ * Resolve the canonical key that identifies "this OpenClaw session"
+ * across hook phases. Both sessionId and sessionKey exist on
+ * OpenClaw's hook contexts but they aren't always populated together
+ * (sessionKey is the per-account routing key derived from
+ * sessionId + accountId; documented as optional on some contexts).
+ *
+ * Codex web R4 P2 on PR #20 caught a real bug: this function used to
+ * prefer sessionKey. If after_tool_call fired with only sessionId
+ * (logger stored under that key) and session_end fired with both
+ * sessionId AND sessionKey, the lookup would miss the orphaned
+ * logger entirely — silently skipping the anchor + leaving the
+ * SessionLogger unreleased.
+ *
+ * Fix: prefer sessionId. It's the chat-session ID, set the moment a
+ * session is created and present on EVERY agent/tool/session hook
+ * context. Choosing sessionId guarantees both hook phases resolve to
+ * the SAME key for the same session.
+ */
 function pickSessionKey(ctx: {
   sessionKey?: unknown;
   sessionId?: unknown;
 }): string | null {
-  if (typeof ctx?.sessionKey === "string" && ctx.sessionKey.length > 0) {
-    return ctx.sessionKey;
-  }
   if (typeof ctx?.sessionId === "string" && ctx.sessionId.length > 0) {
     return ctx.sessionId;
+  }
+  if (typeof ctx?.sessionKey === "string" && ctx.sessionKey.length > 0) {
+    return ctx.sessionKey;
   }
   return null;
 }
