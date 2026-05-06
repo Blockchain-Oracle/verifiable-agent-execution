@@ -28,6 +28,7 @@ import {
   AgenticIDClient,
   AgenticIDInputError,
   AgenticIDMintError,
+  AgenticIDMintEventDataMismatchError,
   AgenticIDMintEventMissingError,
   AgenticIDReadError,
   type AgenticIDContractLike,
@@ -404,6 +405,86 @@ describe("AgenticIDClient.mint — error mapping", () => {
     );
     await expect(client.mint(VALID_ADDRESS, SAMPLE_DATA)).rejects.toBeInstanceOf(
       AgenticIDMintEventMissingError,
+    );
+  });
+
+  it("throws AgenticIDMintEventDataMismatchError when the event's data payload differs from what was minted (Codex R6)", async () => {
+    // The BDD says the IntelligentDataSet event "confirms the data anchor".
+    // Pre-fix, mint() recovered tokenId from any IntelligentDataSet event
+    // without checking the event's data field — so a contract bug, a
+    // reordered receipt, or a stray event from an unrelated mint with the
+    // right tokenId could surface as a successful return while the data
+    // payload pointed at different anchor content. Now mint() validates
+    // the event's data round-trips the input datas.
+    const expectedTokenId = 11n;
+    const wrongData: IntelligentData[] = [
+      {
+        dataDescription: "exec-log:wrong-session:other-model",
+        dataHash: `0x${"e".repeat(64)}`,
+      },
+    ];
+    // Encode the event with the expected tokenId but DIFFERENT data:
+    const log = encodeIntelligentDataSetLog(
+      PRE_DEPLOYED,
+      expectedTokenId,
+      wrongData,
+    );
+    const receipt = makeReceipt([log]);
+    const txResponse = makeMintResponse(receipt);
+    const contract: AgenticIDContractLike = {
+      iMint: vi.fn().mockResolvedValue(txResponse),
+      getIntelligentDatas: vi.fn(),
+    };
+    const client = new AgenticIDClient(
+      PRE_DEPLOYED,
+      undefined,
+      undefined,
+      { contract },
+    );
+    // SAMPLE_DATA is what we're "minting"; wrongData is what the event
+    // emits. mint() must reject the receipt rather than silently return.
+    await expect(client.mint(VALID_ADDRESS, SAMPLE_DATA)).rejects.toBeInstanceOf(
+      AgenticIDMintEventDataMismatchError,
+    );
+    // Message must name the offending field so operators can diagnose
+    // without re-reading the receipt by hand.
+    await expect(client.mint(VALID_ADDRESS, SAMPLE_DATA)).rejects.toThrow(
+      /dataDescription\[0\] mismatch/,
+    );
+  });
+
+  it("throws AgenticIDMintEventDataMismatchError on a length mismatch in the event data array", async () => {
+    // Two-entry event when we asked to mint one entry — a contract
+    // duplicating or appending entries would land here. Order-preserving
+    // comparison: the "extra" entries must surface as a length mismatch
+    // rather than be silently truncated.
+    const expectedTokenId = 12n;
+    const extraDatas: IntelligentData[] = [
+      ...SAMPLE_DATA,
+      {
+        dataDescription: "exec-log:phantom-extra:noop",
+        dataHash: `0x${"d".repeat(64)}`,
+      },
+    ];
+    const log = encodeIntelligentDataSetLog(
+      PRE_DEPLOYED,
+      expectedTokenId,
+      extraDatas,
+    );
+    const receipt = makeReceipt([log]);
+    const txResponse = makeMintResponse(receipt);
+    const contract: AgenticIDContractLike = {
+      iMint: vi.fn().mockResolvedValue(txResponse),
+      getIntelligentDatas: vi.fn(),
+    };
+    const client = new AgenticIDClient(
+      PRE_DEPLOYED,
+      undefined,
+      undefined,
+      { contract },
+    );
+    await expect(client.mint(VALID_ADDRESS, SAMPLE_DATA)).rejects.toThrow(
+      /length mismatch: expected 1, got 2/,
     );
   });
 });

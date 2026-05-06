@@ -12,6 +12,7 @@ export {
   AgenticIDInputError,
   AgenticIDMintError,
   AgenticIDMintEventMissingError,
+  AgenticIDMintEventDataMismatchError,
   AgenticIDReadError,
   SessionAnchorError,
 } from "./errors.js";

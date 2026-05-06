@@ -31,6 +31,7 @@ import type {
 import {
   AgenticIDInputError,
   AgenticIDMintError,
+  AgenticIDMintEventDataMismatchError,
   AgenticIDMintEventMissingError,
   AgenticIDReadError,
 } from "./errors.js";
@@ -286,7 +287,19 @@ export class AgenticIDClient {
       );
     }
 
-    const tokenId = parseTokenIdFromReceipt(receipt, this.contractAddress);
+    const { tokenId, data: eventData } = parseMintEventFromReceipt(
+      receipt,
+      this.contractAddress,
+    );
+
+    // BDD: "the event confirms the data anchor" — verify the event's
+    // data payload exactly matches the IntelligentData we asked the
+    // contract to mint. Without this, a contract bug, reordered
+    // receipt, or stray IntelligentDataSet from an unrelated mint
+    // could surface as our tokenId+data while pointing at different
+    // anchor content. (Codex round 6 on PR #19.)
+    assertEventDataMatches(datas, eventData, tx.hash);
+
     return { tokenId, txHash: tx.hash };
   }
 
@@ -325,10 +338,10 @@ export class AgenticIDClient {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function parseTokenIdFromReceipt(
+function parseMintEventFromReceipt(
   receipt: TransactionReceipt,
   contractAddress: string,
-): bigint {
+): { tokenId: bigint; data: IntelligentData[] } {
   const target = contractAddress.toLowerCase();
   for (const log of receipt.logs as ReadonlyArray<Log | EventLog>) {
     if (log.address.toLowerCase() !== target) continue;
@@ -343,13 +356,62 @@ function parseTokenIdFromReceipt(
     }
     if (parsed?.name === "IntelligentDataSet") {
       const tokenIdArg = parsed.args.getValue("tokenId") as bigint | number;
-      return typeof tokenIdArg === "bigint" ? tokenIdArg : BigInt(tokenIdArg);
+      const tokenId =
+        typeof tokenIdArg === "bigint" ? tokenIdArg : BigInt(tokenIdArg);
+      // ethers v6 returns the tuple-array as a Result; normalize to
+      // IntelligentData[] so downstream comparison doesn't have to know
+      // about Result. The ABI shape is `(string dataDescription,
+      // bytes32 dataHash)[]`.
+      const rawData = parsed.args.getValue("data") as ReadonlyArray<{
+        dataDescription: string;
+        dataHash: string;
+      }>;
+      const data = rawData.map((entry) => ({
+        dataDescription: entry.dataDescription,
+        dataHash: entry.dataHash,
+      }));
+      return { tokenId, data };
     }
   }
   throw new AgenticIDMintEventMissingError(
     `iMint receipt for ${receipt.hash} did not include IntelligentDataSet from ${contractAddress}; ` +
       "cannot recover tokenId. Contract surface may have changed.",
   );
+}
+
+/**
+ * Assert the event's data payload exactly matches what we asked to
+ * mint. Order-preserving: if the contract reordered entries, that
+ * counts as a mismatch (because consumers reading via index would see
+ * different content). Hex comparisons are case-insensitive (lowercase
+ * normalize) since 0G's ABI may emit either case across versions.
+ */
+function assertEventDataMatches(
+  expected: ReadonlyArray<IntelligentData>,
+  actual: ReadonlyArray<IntelligentData>,
+  txHash: string,
+): void {
+  const mismatchPrefix =
+    `iMint event data for ${txHash} does not match the minted IntelligentData[] — `;
+  if (expected.length !== actual.length) {
+    throw new AgenticIDMintEventDataMismatchError(
+      `${mismatchPrefix}length mismatch: expected ${expected.length}, got ${actual.length}.`,
+    );
+  }
+  for (let i = 0; i < expected.length; i++) {
+    const e = expected[i];
+    const a = actual[i];
+    if (e.dataDescription !== a.dataDescription) {
+      throw new AgenticIDMintEventDataMismatchError(
+        `${mismatchPrefix}dataDescription[${i}] mismatch: expected ${JSON.stringify(e.dataDescription)}, got ${JSON.stringify(a.dataDescription)}.`,
+      );
+    }
+    if (e.dataHash.toLowerCase() !== a.dataHash.toLowerCase()) {
+      throw new AgenticIDMintEventDataMismatchError(
+        `${mismatchPrefix}dataHash[${i}] mismatch: expected ${e.dataHash}, got ${a.dataHash}.`,
+      );
+    }
+  }
 }
 
 function ensureBytes32(value: string): string {

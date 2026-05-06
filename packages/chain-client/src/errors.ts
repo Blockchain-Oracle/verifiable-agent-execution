@@ -46,6 +46,21 @@ export class AgenticIDMintEventMissingError extends ChainClientError {
   }
 }
 
+/**
+ * The IntelligentDataSet event was present in the receipt with a tokenId,
+ * but the event's `data` payload does NOT match the IntelligentData[]
+ * that was minted. The BDD says the event "confirms the data anchor" —
+ * accepting just any event with the right tokenId would let a contract
+ * bug or reordered receipt pass an unrelated mint as ours. (Codex round
+ * 6 on PR #19.)
+ */
+export class AgenticIDMintEventDataMismatchError extends ChainClientError {
+  constructor(message: string) {
+    super("AGENTICID_MINT_EVENT_DATA_MISMATCH", message);
+    this.name = "AgenticIDMintEventDataMismatchError";
+  }
+}
+
 /** A read call to AgenticID failed at the transport / RPC layer. */
 export class AgenticIDReadError extends ChainClientError {
   constructor(message: string, cause?: unknown) {
