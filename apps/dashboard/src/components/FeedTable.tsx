@@ -24,10 +24,17 @@ const POLL_INTERVAL_MS = 15_000;
 
 export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
   const [rows, setRows] = useState(initialRows);
-  const [updatedAt, setUpdatedAt] = useState(Date.now());
+  // updatedAt = 0 on the server render so SSR and the first client render
+  // agree. The post-mount effect fills it in. Without this, calling
+  // Date.now() during render produced a hydration mismatch (the server
+  // and client clocks differ by hundreds of ms over the wire). The
+  // <time> element below conditionally renders only when the value is
+  // populated.
+  const [updatedAt, setUpdatedAt] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setUpdatedAt(Date.now());
     let cancelled = false;
     const tick = async () => {
       try {
@@ -52,11 +59,11 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
 
   return (
     <section className="overflow-hidden rounded-md border border-border bg-surface">
-      <header className="flex items-baseline justify-between border-b border-border px-5 py-3">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-3 sm:px-5">
         <h2 className="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-text-primary">
           Latest sessions
         </h2>
-        <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-wider text-text-secondary">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] uppercase tracking-wider text-text-secondary">
           <span className="flex items-center gap-1.5">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-verify opacity-75" />
@@ -64,20 +71,29 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
             </span>
             Live · refresh 15s
           </span>
-          <time dateTime={new Date(updatedAt).toISOString()}>
-            updated {formatRelativeShort(updatedAt)}
-          </time>
+          {updatedAt > 0 && (
+            <time dateTime={new Date(updatedAt).toISOString()}>
+              updated {formatRelativeShort(updatedAt)}
+            </time>
+          )}
         </div>
       </header>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="bg-bg">
             <tr className="text-[10px] uppercase tracking-[0.14em] text-text-secondary">
-              <th className="px-5 py-2 font-mono font-normal">Token</th>
-              <th className="px-5 py-2 font-mono font-normal">Session</th>
-              <th className="px-5 py-2 font-mono font-normal">Agent</th>
-              <th className="px-5 py-2 font-mono font-normal">Model</th>
-              <th className="px-5 py-2 font-mono font-normal text-right">Status</th>
+              <th className="px-3 py-2 font-mono font-normal sm:px-5">Token</th>
+              <th className="px-3 py-2 font-mono font-normal sm:px-5">Session</th>
+              <th className="px-3 py-2 font-mono font-normal sm:px-5">Agent</th>
+              {/* Model is the least load-bearing column — drop on narrow
+                  viewports so Status stays visible without horizontal
+                  scroll. */}
+              <th className="hidden px-5 py-2 font-mono font-normal md:table-cell">
+                Model
+              </th>
+              <th className="px-3 py-2 text-right font-mono font-normal sm:px-5">
+                Status
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -86,7 +102,7 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
                 key={row.tokenId}
                 className="border-t border-border/60 transition-colors hover:bg-surface-elev"
               >
-                <td className="whitespace-nowrap px-5 py-3 font-mono text-text-primary">
+                <td className="whitespace-nowrap px-3 py-3 font-mono text-text-primary sm:px-5">
                   <Link
                     href={`/verify/${row.tokenId}`}
                     className="text-link hover:underline"
@@ -94,10 +110,10 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
                     #{row.tokenId}
                   </Link>
                 </td>
-                <td className="px-5 py-3 font-mono text-xs text-text-primary">
+                <td className="px-3 py-3 font-mono text-xs text-text-primary sm:px-5">
                   <span title={row.sessionId}>{truncateMiddle(row.sessionId, 14)}</span>
                 </td>
-                <td className="px-5 py-3 font-mono text-xs">
+                <td className="px-3 py-3 font-mono text-xs sm:px-5">
                   <Link
                     href={`/agent/${row.owner}`}
                     className="text-link hover:underline"
@@ -106,10 +122,10 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
                     {truncateAddress(row.owner)}
                   </Link>
                 </td>
-                <td className="px-5 py-3 font-mono text-xs text-text-secondary">
+                <td className="hidden px-5 py-3 font-mono text-xs text-text-secondary md:table-cell">
                   {row.modelId || "—"}
                 </td>
-                <td className="px-5 py-3 text-right">
+                <td className="px-3 py-3 text-right sm:px-5">
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-accent-verify/30 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-verify">
                     <span className="h-1 w-1 rounded-full bg-accent-verify" />
                     Anchored

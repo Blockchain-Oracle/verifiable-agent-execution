@@ -368,13 +368,13 @@ function EntryChain({
             node marker drawn over it. */}
         <div
           aria-hidden="true"
-          className="absolute bottom-4 left-[15px] top-4 w-px bg-border"
+          className="absolute bottom-4 left-[11px] top-4 w-px bg-border sm:left-[15px]"
         />
-        <ol className="space-y-4">
+        <ol className="min-w-0 space-y-4">
           {proof.entries.map((entry, i) => {
             const status = statuses[i] ?? { state: "pending" as const };
             return (
-              <li key={entry.seq} className="relative pl-12">
+              <li key={entry.seq} className="relative min-w-0 pl-8 sm:pl-12">
                 <ChainNode status={status} />
                 <EntryCard
                   seq={entry.seq}
@@ -412,7 +412,7 @@ function ChainNode({ status }: { status: EntryStatus }) {
     <span
       aria-hidden="true"
       className={
-        "absolute left-[8px] top-6 h-3.5 w-3.5 rounded-full border-2 transition-colors duration-300 " +
+        "absolute left-[4px] top-6 h-3.5 w-3.5 rounded-full border-2 transition-colors duration-300 sm:left-[8px] " +
         tone
       }
     />

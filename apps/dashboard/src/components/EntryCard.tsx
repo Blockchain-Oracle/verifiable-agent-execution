@@ -54,20 +54,20 @@ export function EntryCard(props: EntryProps) {
   const [resultOpen, setResultOpen] = useState(true);
 
   return (
-    <article className="group rounded-md border border-border bg-surface transition-colors hover:border-border/80">
-      <header className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-3">
-        <div className="flex items-baseline gap-4">
+    <article className="group min-w-0 overflow-hidden rounded-md border border-border bg-surface transition-colors hover:border-border/80">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/60 px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 items-baseline gap-3 sm:gap-4">
           <span className="font-mono text-[11px] tabular-nums text-text-secondary">
             #{props.seq.toString().padStart(3, "0")}
           </span>
-          <span className="font-sans text-base font-semibold text-text-primary">
+          <span className="truncate font-sans text-base font-semibold text-text-primary">
             {props.tool ?? props.type}
           </span>
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary">
+          <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary sm:inline">
             {props.type}
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <time
             dateTime={new Date(props.ts).toISOString()}
             className="font-mono text-[11px] tabular-nums text-text-secondary"
@@ -78,7 +78,7 @@ export function EntryCard(props: EntryProps) {
         </div>
       </header>
 
-      <div className="space-y-4 px-5 py-4">
+      <div className="min-w-0 space-y-4 px-4 py-4 sm:px-5">
         <ContentBlock
           label="Input"
           value={props.params}
@@ -95,7 +95,7 @@ export function EntryCard(props: EntryProps) {
         />
       </div>
 
-      <footer className="grid grid-cols-1 gap-y-1 border-t border-border/60 bg-bg/40 px-5 py-3 font-mono text-[11px] text-text-secondary md:grid-cols-2 md:gap-x-8">
+      <footer className="grid grid-cols-1 gap-y-1 border-t border-border/60 bg-bg/40 px-4 py-3 font-mono text-[11px] text-text-secondary sm:px-5 md:grid-cols-2 md:gap-x-8">
         <div className="flex justify-between gap-4">
           <span className="uppercase tracking-wider">inputHash</span>
           <Mono truncate={20} copy>
