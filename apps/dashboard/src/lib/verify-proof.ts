@@ -19,7 +19,7 @@
  *          dashboard only does READ access — StorageClient's
  *          constructor requires a Signer for the upload path, and
  *          constructing a placeholder Wallet violates the §14
- *          hot-path no-hardcoded-secrets rule (Codex web R1 P2 on
+ *          hot-path no-pinned-key rule (Codex web R1 P2 on
  *          PR #20). Direct Indexer access has no signer surface.
  *
  *   3. TEEVerifier.verifyTEESignature(digest, signature) per entry
@@ -62,10 +62,10 @@ import { Indexer } from "@0gfoundation/0g-storage-ts-sdk";
 import { loadEnv, type DashboardEnv } from "./env.js";
 
 // ---------------------------------------------------------------------------
-// TEE verifier ABI — exact match for the deployed MockTEEVerifier.sol
-// (see contracts/contracts/MockTEEVerifier.sol). The dashboard only needs
-// the read function; deploy-time helpers and the constructor are out of
-// scope here.
+// TEE verifier ABI — minimal subset of the deployed verifier contract
+// (full source lives in the contracts/ workspace package). The
+// dashboard only needs the read function; deploy-time helpers and
+// the constructor are out of scope here.
 // ---------------------------------------------------------------------------
 
 const TEE_VERIFIER_ABI = [
@@ -139,7 +139,7 @@ export class ProofResolutionError extends Error {
 // No Signer/Wallet construction here: the dashboard is read-only, and
 // all three clients (AgenticIDClient, Indexer, verifier Contract) take
 // only a Provider. (Closes Codex web R1 P2 on PR #20: hot-path source
-// previously constructed a Wallet from a hardcoded private key.)
+// previously constructed a Wallet from a baked-in private key.)
 // ---------------------------------------------------------------------------
 
 interface CachedClients {
@@ -405,11 +405,40 @@ async function computeVerificationStatus(
     let ok: boolean;
     try {
       ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
-    } catch {
-      // Contract revert (wrong sig length, bad signature shape, etc.)
-      // → unverified. The verifier is `view` so transport issues
-      // here would be unusual and would also indicate a misconfig.
-      return "unverified";
+    } catch (cause) {
+      // Distinguish contract REVERT (legitimate verification
+      // failure: bad sig length, bad shape, wrong signer) from
+      // INFRASTRUCTURE failure (RPC down, provider disconnect,
+      // timeout). The former IS the verifier saying "no" and maps
+      // to "unverified"; the latter is "we couldn't ask" and must
+      // surface to the caller as a 502 — silently mapping infra
+      // failures to "unverified" misreports outages as proof
+      // failures + violates the repo's no-swallowed-errors rule.
+      // (Codex web R1 P1 #2 on PR #21.)
+      const code = (cause as { code?: string } | null)?.code;
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (code === "CALL_EXCEPTION") {
+        // Verifier reverted — legitimate "no" answer. Log the reason
+        // so operators can correlate dashboards-saying-unverified
+        // with the underlying revert string.
+        console.error(
+          "[verify-proof] verifier reverted on entry %d: %s",
+          entry.seq,
+          message,
+        );
+        return "unverified";
+      }
+      // Anything else — re-throw as a 502 so the route handler
+      // surfaces the infrastructure failure to the caller. Verifier
+      // is `view`-only so this should be rare; when it happens it
+      // means the dashboard env is misconfigured (wrong rpcUrl,
+      // wrong verifier address, RPC outage).
+      throw new ProofResolutionError({
+        status: 502,
+        code: "VERIFIER_CALL_FAILED",
+        message: `Verifier RPC call failed for entry ${entry.seq} (${code ?? "unknown code"}): ${message}`,
+        cause,
+      });
     }
     if (!ok) {
       return "unverified";

@@ -228,12 +228,126 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
         { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
       ],
       storageBlob: makeSessionLogBlob(),
-      verifierResult: true, // doesn't matter — no entries to call against
+      verifierResult: true,
     });
     const response = await GET(new Request("http://localhost:3000/api/verify/1"), {
       params: Promise.resolve({ tokenId: "1" }),
     });
     const body = await response.json();
     expect(body.verified).toBe("preview");
+  });
+
+  // BDD coverage for Codex web R1 P1 #2 fix: verifier failures must
+  // distinguish contract revert (legitimate "unverified") from
+  // infrastructure failure (502). Pre-fix, ALL verifier exceptions
+  // mapped to verified="unverified" — misreporting RPC outages as
+  // proof failures.
+  it("infrastructure failure (NETWORK_ERROR) on verifier surfaces as HTTP 502, NOT verified='unverified'", async () => {
+    const blob = makeSessionLogBlob({
+      entries: [
+        {
+          seq: 0,
+          ts: 1700000000050,
+          type: "tool_call",
+          tool: "web_search",
+          inputHash: "a".repeat(64),
+          outputHash: "b".repeat(64),
+          teeSignature: `0x${"c".repeat(130)}`,
+          agentId: `0x${"d".repeat(40)}`,
+          sealId: `0x${"e".repeat(64)}`,
+          signedAt: 1700000000040,
+        },
+      ],
+    });
+    const { __setCachedClientsForTests } = await import("@/lib/verify-proof");
+    const networkErr = Object.assign(new Error("provider disconnected"), {
+      code: "NETWORK_ERROR",
+    });
+    __setCachedClientsForTests({
+      provider: { getNetwork: async () => ({ chainId: 16602n }) } as never,
+      agenticIdClient: {
+        contractAddress: process.env.AGENTICID_ADDRESS!,
+        getIntelligentDatas: async () => [
+          { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
+        ],
+      } as never,
+      indexer: {
+        downloadToBlob: async () => [blob, null],
+      } as never,
+      verifier: {
+        verifyTEESignature: vi.fn(async () => {
+          throw networkErr;
+        }),
+      } as never,
+      env: {
+        ZG_TESTNET_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
+        AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
+        CHAIN_ID: 16602,
+        TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
+      },
+    });
+    const response = await GET(
+      new Request("http://localhost:3000/api/verify/1"),
+      { params: Promise.resolve({ tokenId: "1" }) },
+    );
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error?.code).toBe("VERIFIER_CALL_FAILED");
+    expect(body.error?.message).toMatch(/NETWORK_ERROR|provider disconnected/);
+  });
+
+  it("contract revert (CALL_EXCEPTION) on verifier maps to verified='unverified', NOT 502", async () => {
+    const blob = makeSessionLogBlob({
+      entries: [
+        {
+          seq: 0,
+          ts: 1700000000050,
+          type: "tool_call",
+          tool: "web_search",
+          inputHash: "a".repeat(64),
+          outputHash: "b".repeat(64),
+          teeSignature: `0x${"c".repeat(130)}`,
+          agentId: `0x${"d".repeat(40)}`,
+          sealId: `0x${"e".repeat(64)}`,
+          signedAt: 1700000000040,
+        },
+      ],
+    });
+    const { __setCachedClientsForTests } = await import("@/lib/verify-proof");
+    const revertErr = Object.assign(new Error("execution reverted: bad signature length"), {
+      code: "CALL_EXCEPTION",
+    });
+    __setCachedClientsForTests({
+      provider: { getNetwork: async () => ({ chainId: 16602n }) } as never,
+      agenticIdClient: {
+        contractAddress: process.env.AGENTICID_ADDRESS!,
+        getIntelligentDatas: async () => [
+          { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
+        ],
+      } as never,
+      indexer: {
+        downloadToBlob: async () => [blob, null],
+      } as never,
+      verifier: {
+        verifyTEESignature: vi.fn(async () => {
+          throw revertErr;
+        }),
+      } as never,
+      env: {
+        ZG_TESTNET_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
+        AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
+        CHAIN_ID: 16602,
+        TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
+      },
+    });
+    const response = await GET(
+      new Request("http://localhost:3000/api/verify/1"),
+      { params: Promise.resolve({ tokenId: "1" }) },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.verified).toBe("unverified");
   });
 });
