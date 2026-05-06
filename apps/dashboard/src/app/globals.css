@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Body defaults — explicit dark theme per UX spec § Theme.
+ * Overrides are scoped to the body so utility classes can still
+ * specify their own colors without battling specificity.
+ */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-text-primary font-sans;
+    /* Anti-jitter for hash/address strings — the mono font has tabular
+       digits which the proof-detail page needs heavily. */
+    font-variant-numeric: tabular-nums;
+  }
+  /* Dark-mode-only — no light-mode media query toggling per the UX
+     spec scope cap. */
+  ::selection {
+    background-color: theme("colors.accent-verify");
+    color: theme("colors.bg");
+  }
+}
