@@ -1,31 +1,43 @@
 #!/usr/bin/env bash
 # codex-review.sh — pre-push Codex review with story BDD acceptance bundled in.
 #
-# Why this exists: a generic "codex exec review" checks for bugs but not for
-# SEMANTIC alignment with the story BDD acceptance criteria. This wrapper
+# Why this exists: a generic `codex exec review --base main` checks for
+# bugs but is BLIND to the story's BDD acceptance criteria. This wrapper
 # loads the story file (Given/When/Then + file map + shell verification)
 # into the prompt so Codex evaluates the diff against the spec, not just
 # against generic best practices.
 #
+# CLI compatibility note (Codex CLI v0.125+): `codex exec review` made
+# `--base <BRANCH>` and `[PROMPT]` mutually exclusive, so we use the
+# more flexible `codex exec` subcommand instead. We pre-write the diff
+# vs main to /tmp/changes.patch and tell Codex to read it.
+#
 # Usage:
 #   .claude/scripts/codex-review.sh <story-id>
+#   .claude/scripts/codex-review.sh <story-id> --base <branch>   # diff vs <branch> instead of main
 #
 # Examples:
 #   .claude/scripts/codex-review.sh storage-client
-#   .claude/scripts/codex-review.sh tee-proof-flow
+#   .claude/scripts/codex-review.sh tee-proof-flow --base epic/01-logger-core
 #
 # Story files live at: context/docs/stories/story-<id>.md
 #
 # Exit codes:
-#   0  Codex review completed (findings written to stdout)
+#   0  Codex review completed (verdict written to stdout)
 #   2  Bad invocation (story file missing)
 #   3  Codex CLI not installed or invocation failed
 
 set -euo pipefail
 
 STORY_ID="${1:-}"
+BASE_BRANCH="origin/main"
+if [ "${2:-}" = "--base" ] && [ -n "${3:-}" ]; then
+  BASE_BRANCH="$3"
+fi
+
 if [ -z "$STORY_ID" ]; then
-  echo "usage: codex-review.sh <story-id> (e.g. storage-client)" >&2
+  echo "usage: codex-review.sh <story-id> [--base <branch>]" >&2
+  echo "       e.g. codex-review.sh storage-client" >&2
   exit 2
 fi
 STORY_FILE="context/docs/stories/story-${STORY_ID}.md"
@@ -42,19 +54,18 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 3
 fi
 
-# Capture the diff vs main into /tmp/changes.patch.
-git diff origin/main...HEAD > /tmp/changes.patch
+# Capture the diff vs the chosen base into /tmp/changes.patch.
+git diff "${BASE_BRANCH}...HEAD" > /tmp/changes.patch
+DIFF_LINES="$(wc -l < /tmp/changes.patch | tr -d ' ')"
 
 # Build the prompt by assembling the static template + the story body.
-# Use a temp file to avoid bash quoting issues with apostrophes in the
-# template (heredocs inside $(...) parse awkwardly when prose contains
-# single-quote characters).
 PROMPT_FILE="$(mktemp -t codex-review-prompt.XXXXXX)"
 trap 'rm -f "$PROMPT_FILE"' EXIT
 
 {
-  echo "You are reviewing a code diff against the BDD acceptance criteria of a"
-  echo "specific story. The diff is at /tmp/changes.patch."
+  echo "You are reviewing a code diff against the BDD acceptance criteria of"
+  echo "a specific story. The diff is at /tmp/changes.patch (also reachable"
+  echo "via \`git diff ${BASE_BRANCH}...HEAD\`)."
   echo ""
   echo "# STORY: ${STORY_ID}"
   echo ""
@@ -62,7 +73,7 @@ trap 'rm -f "$PROMPT_FILE"' EXIT
   echo ""
   echo "# REVIEW INSTRUCTIONS"
   echo ""
-  echo "Read the diff at /tmp/changes.patch. Evaluate it against EACH acceptance"
+  echo "Read /tmp/changes.patch. Evaluate it against EACH acceptance"
   echo "criterion above. For each criterion, decide:"
   echo "  - PASS  — the diff faithfully implements this Given/When/Then"
   echo "  - FAIL  — the diff is missing implementation OR violates the criterion"
@@ -73,7 +84,20 @@ trap 'rm -f "$PROMPT_FILE"' EXIT
   echo "  Security    — injection, auth bypass, OWASP, exposed secrets, hardcoded keys"
   echo "  Performance — N+1, blocking ops, memory leaks"
   echo "  Frontend    — slop tells, anchor divergence, a11y (skip if no UI change)"
-  echo "  Tests       — meaningful coverage, every BDD line has a corresponding it()"
+  echo "  Tests       — meaningful coverage; every BDD line has a corresponding it()"
+  echo ""
+  echo "Repo-specific things to ALWAYS check (per CLAUDE.md anti-slop list):"
+  echo "  - No mock|fake|dummy|hardcoded in hot-path src (Mock*.sol exempt)"
+  echo "  - 0G storage SDK uses [result, err] tuples, not throws"
+  echo "  - MerkleTree.rootHash() is string|null — null must be handled"
+  echo "  - hardhat.config.ts must keep evmVersion: \"cancun\" (ADR-09)"
+  echo "  - OpenClaw plugin format is openclaw.plugin.json, not SKILL.md"
+  echo "  - Imports use @0gfoundation/0g-storage-ts-sdk and"
+  echo "    @0gfoundation/0g-compute-ts-sdk (NOT the deprecated names)"
+  echo "  - ethers v6 syntax only (no ethers.providers.*, ethers.utils.*,"
+  echo "    BigNumber.from, contract.deployed())"
+  echo "  - Doc/code drift: every path in CLAUDE.md / READMEs / PR body"
+  echo "    must resolve on the branch"
   echo ""
   echo "# RULES"
   echo "- Find at least one substantive issue. \"Looks good\" is not valid output."
@@ -103,16 +127,20 @@ trap 'rm -f "$PROMPT_FILE"' EXIT
   echo "**Tests:** Pass | Fail"
   echo "- file:line — finding"
   echo ""
+  echo "## Repo-specific checks"
+  echo "- §14 grep gate, doc/code drift, package names, ethers v6, etc."
+  echo ""
   echo "## Overall: Pass | Fail"
   echo "**Must-fix before merge:** items or none"
 } > "$PROMPT_FILE"
 
 echo "[codex-review] Reviewing story-${STORY_ID} against /tmp/changes.patch..."
-echo "[codex-review] Story file: $STORY_FILE"
-echo "[codex-review] Diff size: $(wc -l < /tmp/changes.patch) lines"
-echo "[codex-review] Prompt size: $(wc -l < "$PROMPT_FILE") lines"
+echo "[codex-review] Story file:   $STORY_FILE"
+echo "[codex-review] Base branch:  $BASE_BRANCH"
+echo "[codex-review] Diff size:    $DIFF_LINES lines"
+echo "[codex-review] Prompt size:  $(wc -l < "$PROMPT_FILE" | tr -d ' ') lines"
 echo ""
 
-codex exec review --base main --full-auto \
-  --title "review story-${STORY_ID}" \
-  "$(cat "$PROMPT_FILE")"
+# Use `codex exec` (not `codex exec review --base`) — the former accepts
+# arbitrary [PROMPT] without conflicting with diff-source flags.
+codex exec --full-auto "$(cat "$PROMPT_FILE")"

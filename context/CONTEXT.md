@@ -89,9 +89,9 @@ Detailed competitor analysis: `04-competitor-analysis.md`
 
 | Primitive | Status | Source |
 |---|---|---|
-| 0G Storage (TypeScript SDK `@0gfoundation/0g-ts-sdk`) | LIVE | https://docs.0g.ai/developer-hub/building-on-0g/storage/sdk |
+| 0G Storage (TypeScript SDK `@0gfoundation/0g-storage-ts-sdk` — was `@0gfoundation/0g-ts-sdk`, now npm-deprecated) | LIVE | https://docs.0g.ai/developer-hub/building-on-0g/storage/sdk |
 | 0G Storage (Go SDK `0gfoundation/0g-storage-client`) | LIVE | https://github.com/0gfoundation/0g-storage-client |
-| 0G Compute (`@0glabs/0g-serving-broker`) | LIVE | https://docs.0g.ai/developer-hub/building-on-0g/compute-network/inference |
+| 0G Compute (`@0gfoundation/0g-compute-ts-sdk` — was `@0glabs/0g-serving-broker`, now a deprecated re-export shim per npm registry) | LIVE | https://docs.0g.ai/developer-hub/building-on-0g/compute-network/inference |
 | 0G Private Computer (OpenAI-compatible TEE-sealed inference) | **LIVE (NEW — Apr 28, 2026)** | docs.0g.ai (docs may be in flux) |
 | 0G Chain mainnet (Chain ID 16661) | LIVE | https://evmrpc.0g.ai |
 | 0G Chain testnet (Galileo) | LIVE | https://evmrpc-testnet.0g.ai |
@@ -148,7 +148,7 @@ Full analysis: `06-hidden-field.md`
 - 0G Compute Router confirmed: OpenAI/Anthropic-compatible API gateway, handles billing + provider routing automatically. Endpoint: single API key, supports `/v1/chat/completions` with streaming, tool calling, reasoning tokens
 - Mainnet confirmed live: Chain ID 16661 (0G Mainnet / Aristotle), RPC `https://evmrpc.0g.ai`
 - Testnet confirmed live: Galileo testnet, Chain ID 16602, RPC `https://evmrpc-testnet.0g.ai`, faucet at `https://faucet.0g.ai`
-- All official SDKs confirmed live (TypeScript SDK: `npm install @0gfoundation/0g-ts-sdk`, Compute SDK: `npm install @0glabs/0g-serving-broker`)
+- All official SDKs confirmed live. Current canonical names (post-deprecation rename): `npm install @0gfoundation/0g-storage-ts-sdk` and `npm install @0gfoundation/0g-compute-ts-sdk`. The historic names `@0gfoundation/0g-ts-sdk` + `@0glabs/0g-serving-broker` are both npm-deprecated; do not use.
 - 0G Code to Coin (`@0gfoundation/0g-cc`) — an MCP server for Claude Code/Cursor that routes to 0G Compute for inference and 0G Storage for context. Published to npm. New competitor for infra tooling lane.
 - **New gallery project found:** "Synapse — Decentralized Memory Layer for AI Agents" — YouTube demo uploaded April 17 (13 days ago). This is a 0G APAC Hackathon 2026 submission specifically in the memory layer space. Direct competition for the YELLOW memory sub-lane.
 - **New HackQuest projects page** shows: ShieldAI (autonomous wallet security agent), SovereignVault, ClawWallet, AgentHub, ClawLens (credit score for AI agents). ClawLens is explicitly "credit score for agents based on identity, behavior, and repayment history" — a new Track 3 candidate.
