@@ -184,7 +184,13 @@ describe("SessionAnchor — constructor validation", () => {
     }
   });
 
-  it("accepts the BDD-positional shape with valid arguments", () => {
+  it("accepts the agreed 5-arg constructor shape: (sessionLogger, agenticIdClient, agentId, modelId, options)", () => {
+    // Pins the contract that story-session-mint.md "Spec evolution"
+    // section codifies. The original BDD had 4 args; we extended to 5
+    // (with REQUIRED options.chainId) to eliminate the silent-mainnet-
+    // URL risk. This test exists so the call-site shape doesn't
+    // accidentally regress to a 4-arg form during a refactor — the
+    // spec is enforced in code, not just in the markdown.
     const logger = buildSessionLogger();
     const { client } = buildAgenticIdClient();
     const anchor = new SessionAnchor(
@@ -196,6 +202,20 @@ describe("SessionAnchor — constructor validation", () => {
     );
     expect(anchor.agentId).toBe(VALID_AGENT_ADDRESS);
     expect(anchor.modelId).toBe(MODEL_ID);
+  });
+
+  it("chainId is REQUIRED inside options — no Galileo default at the type level", () => {
+    // Compile-time enforcement of the "no silent default chainId"
+    // invariant codified in story-session-mint.md "Spec evolution".
+    // If a future refactor makes chainId optional, this test fails to
+    // compile via the @ts-expect-error directive — keeping the spec
+    // and the implementation lock-stepped via the type system.
+    const logger = buildSessionLogger();
+    const { client } = buildAgenticIdClient();
+    const construct = (): SessionAnchor =>
+      // @ts-expect-error — omitting chainId inside options must remain a compile error
+      new SessionAnchor(logger, client, VALID_AGENT_ADDRESS, MODEL_ID, {});
+    expect(construct).toThrow();
   });
 });
 
@@ -371,14 +391,23 @@ describe("SessionAnchor.anchor — orchestration", () => {
   });
 
   // BDD coverage for: "Given the transaction is confirmed on-chain / When ethers.js
-  // listens for IntelligentDataSet events from the mint tx / Then at least one event
-  // is emitted confirming the data anchor" (story-session-mint.md). The other
-  // orchestration tests stub AgenticIDClient.mint directly so the receipt/event
-  // path isn't exercised — Codex P2 round 1 on PR #19 caught the gap. This
-  // test routes through the REAL AgenticIDClient.mint() with a contract stub
-  // that returns a receipt containing an encoded IntelligentDataSet log,
-  // proving the end-to-end event-recovery path works.
-  it("receipt contains an IntelligentDataSet event whose tokenId surfaces in the AnchorResult (Codex P2 round 1)", async () => {
+  // listens for Updated OR IntelligentDataSet events from the mint tx / Then at
+  // least one event is emitted confirming the data anchor" (story-session-mint.md).
+  //
+  // The "or" in the BDD reflects the contract's two possible signals;
+  // AgenticIDClient.mint() listens for IntelligentDataSet specifically (the
+  // event our code uses to recover the assigned tokenId — see AGENTICID_ABI
+  // in AgenticIDClient.ts). Asserting the IntelligentDataSet path therefore
+  // satisfies the "at least one event" criterion: a receipt without it
+  // throws AgenticIDMintEventMissingError before reaching the result here,
+  // so a passing assertion proves the event was present AND parseable.
+  //
+  // The other orchestration tests stub AgenticIDClient.mint directly, so the
+  // receipt/event path isn't exercised through SessionAnchor — Codex P2
+  // round 1 on PR #19 caught the gap. This test routes through the REAL
+  // AgenticIDClient.mint() with a contract stub returning a receipt that
+  // contains an ABI-encoded IntelligentDataSet log.
+  it("receipt's IntelligentDataSet event drives AnchorResult.tokenId (BDD: 'at least one event ... data anchor')", async () => {
     const logger = buildSessionLogger();
     const expectedTokenId = 7n;
     const expectedTxHash = `0x${"e".repeat(64)}`;
