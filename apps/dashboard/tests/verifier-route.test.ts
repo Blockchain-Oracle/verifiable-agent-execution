@@ -113,7 +113,11 @@ function installFakeClients(opts: {
       ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
       AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
       CHAIN_ID: 16602,
-      TEE_VERIFIER_ADDRESS: opts.verifierResult === undefined ? undefined : `0x${"a".repeat(40)}`,
+      // TEE_VERIFIER_ADDRESS is now always present (compiled-in
+      // constant in env.ts). Tests that need to exercise the
+      // "no-verifier-configured" path now exercise the
+      // "no-signed-entries" path instead — both produce verified="preview".
+      TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
     },
   });
 }

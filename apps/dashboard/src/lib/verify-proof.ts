@@ -146,7 +146,14 @@ interface CachedClients {
   provider: Provider;
   agenticIdClient: AgenticIDClient;
   indexer: Indexer;
-  verifier: Contract | null;
+  /**
+   * Always present now — TEE_VERIFIER_ADDRESS is a compiled-in
+   * constant (env.ts), no longer a user-supplied env var. The
+   * `null` branch in computeVerificationStatus that used to mean
+   * "no verifier configured → preview" is gone; "preview" only
+   * fires when a session has zero teeSignature entries.
+   */
+  verifier: Contract;
   env: DashboardEnv;
 }
 
@@ -158,10 +165,11 @@ function getClients(): CachedClients {
   const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
   const agenticIdClient = new AgenticIDClient(env.AGENTICID_ADDRESS, provider);
   const indexer = new Indexer(env.ZG_INDEXER_RPC);
-  const verifier =
-    env.TEE_VERIFIER_ADDRESS !== undefined
-      ? new Contract(env.TEE_VERIFIER_ADDRESS, TEE_VERIFIER_ABI, provider)
-      : null;
+  const verifier = new Contract(
+    env.TEE_VERIFIER_ADDRESS,
+    TEE_VERIFIER_ABI,
+    provider,
+  );
   cachedClients = { provider, agenticIdClient, indexer, verifier, env };
   return cachedClients;
 }
@@ -366,24 +374,21 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
  */
 async function computeVerificationStatus(
   sessionLog: SessionLog,
-  verifier: Contract | null,
+  verifier: Contract,
 ): Promise<ProofResponse["verified"]> {
-  if (verifier === null) {
-    // No verifier configured → preview mode (dashboard usable for
-    // storage-only proofs before the verifier contract is deployed
-    // to mainnet).
-    return "preview";
-  }
+  // Verifier is always present now (compiled-in default in env.ts).
+  // The "no verifier configured" branch from the previous version is
+  // gone — "preview" only fires for sessions with zero signed entries
+  // (dev sessions that didn't go through agent-wrapper's TEE container).
 
   const entriesWithSigs = sessionLog.entries.filter(
     (e) => e.teeSignature !== undefined,
   );
   if (entriesWithSigs.length === 0) {
-    // Verifier configured but the session has no signed entries —
-    // dev session that didn't go through agent-wrapper's TEE
-    // container. Preview, not unverified, so the badge tells the
-    // user "this is real but not attested" rather than "this failed
-    // verification".
+    // Session has no signed entries — dev session that didn't go
+    // through agent-wrapper's TEE container. "preview" not
+    // "unverified" so the badge tells the user "this is real but
+    // not attested" rather than "this failed verification".
     return "preview";
   }
 
