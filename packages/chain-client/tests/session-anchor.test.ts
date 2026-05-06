@@ -493,3 +493,119 @@ describe("SessionAnchor.anchor — orchestration", () => {
     expect(iMintSpy).toHaveBeenCalledWith(VALID_AGENT_ADDRESS, expectedDatas);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Live-mint integration — gated on PRIVATE_KEY (funded testnet wallet)
+//
+// BDD acceptance from story-session-mint.md:
+//   Given the transaction is confirmed on-chain
+//   When ethers.js listens for Updated or IntelligentDataSet events
+//   Then at least one event is emitted confirming the data anchor
+//
+// The unit suite above proves orchestration + receipt parsing, but it
+// uses fabricated receipts from stub contracts — so it covers the
+// "receipt parsing" half of "confirmed on-chain" but NOT actual chain
+// confirmation. Codex R3 on PR #19 caught this gap explicitly.
+//
+// This gated suite closes it: when the env is wired (PRIVATE_KEY +
+// ZG_TESTNET_RPC + ZG_INDEXER_RPC + AGENTICID_ADDRESS), it stands up
+// the REAL component graph (StorageClient → SessionLogger →
+// AgenticIDClient → SessionAnchor) and runs `anchor()` against
+// Galileo testnet. CI without env vars skips silently — matches the
+// agenticid-client.test.ts "live mint" pattern.
+// ---------------------------------------------------------------------------
+
+const liveAnchorEnvReady =
+  Boolean(process.env.ZG_TESTNET_RPC) &&
+  Boolean(process.env.ZG_INDEXER_RPC) &&
+  Boolean(process.env.AGENTICID_ADDRESS) &&
+  Boolean(process.env.PRIVATE_KEY);
+
+describe.skipIf(!liveAnchorEnvReady)(
+  "SessionAnchor — Galileo live anchor (integration, gated on PRIVATE_KEY)",
+  () => {
+    it("flushes a real session log to 0G Storage and mints a real iNFT, returning a tokenId from the on-chain event", async () => {
+      const { JsonRpcProvider, Wallet } = await import("ethers");
+      const { Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
+      const provider = new JsonRpcProvider(process.env.ZG_TESTNET_RPC);
+      const signer = new Wallet(process.env.PRIVATE_KEY!, provider);
+
+      // Pin chain identity before spending gas — exact same defensive
+      // pattern as the AgenticIDClient gated test.
+      const network = await provider.getNetwork();
+      expect(network.chainId).toBe(16602n);
+
+      const indexer = new Indexer(process.env.ZG_INDEXER_RPC!);
+      const storage = new StorageClient({
+        rpcUrl: process.env.ZG_TESTNET_RPC!,
+        indexerUrl: process.env.ZG_INDEXER_RPC!,
+        signer,
+        indexer: indexer as unknown as IndexerLike,
+      });
+      const liveSessionId = `ses_live_${Date.now()}`;
+      const logger = new SessionLogger(liveSessionId, storage);
+      // Append one entry so the flushed blob isn't empty (entryCount=0
+      // is valid but uninteresting). Using a deterministic shape so
+      // the blob hashes consistently across reruns.
+      logger.appendEntry({
+        seq: 0,
+        ts: Date.now(),
+        type: "tool_call",
+        tool: "live-integration-noop",
+        inputHash: "a".repeat(64),
+        outputHash: "b".repeat(64),
+      });
+
+      const agenticIdClient = new AgenticIDClient(
+        process.env.AGENTICID_ADDRESS!,
+        provider,
+        signer,
+      );
+      const anchor = new SessionAnchor(
+        logger,
+        agenticIdClient,
+        signer.address,
+        MODEL_ID,
+        { chainId: 16602 },
+      );
+
+      // Real container hash — keccak-style 32-byte, but content is
+      // arbitrary (the on-chain anchor doesn't validate it semantically).
+      const liveContainerHash = `0x${"f".repeat(64)}`;
+
+      const start = Date.now();
+      const result = await anchor.anchor({
+        sessionId: liveSessionId,
+        containerHash: liveContainerHash,
+      });
+      const elapsed = Date.now() - start;
+
+      expect(result.tokenId).toBeGreaterThanOrEqual(0n);
+      expect(result.txHash).toMatch(/^0x[0-9a-fA-F]{64}$/u);
+      expect(result.rootHash).toMatch(/^0x[0-9a-fA-F]{64}$/u);
+      expect(result.entryCount).toBe(1);
+      expect(result.verifyUrl).toBe(
+        `/verify/16602/${result.tokenId.toString()}`,
+      );
+      // BDD wall-clock: "appears on the block explorer within 60s"
+      // (mirroring story-agenticid-client). 90s soft cap to absorb
+      // 0G Storage upload time + iMint confirmation + Galileo block
+      // jitter — anything slower indicates a real degradation.
+      expect(elapsed).toBeLessThanOrEqual(90_000);
+
+      // Read-back through AgenticIDClient — proves the on-chain anchor
+      // is queryable (not just that the tx confirmed). This is the
+      // "Then at least one event is emitted confirming the data anchor"
+      // BDD line: getIntelligentDatas only returns data if iMint
+      // committed and the event was indexed.
+      const readBack = await agenticIdClient.getIntelligentDatas(
+        result.tokenId,
+      );
+      expect(readBack.length).toBe(1);
+      expect(readBack[0].dataDescription).toBe(
+        `exec-log:${liveSessionId}:${MODEL_ID}`,
+      );
+      expect(readBack[0].dataHash).toBe(result.rootHash);
+    }, 120_000);
+  },
+);

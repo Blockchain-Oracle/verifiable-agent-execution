@@ -86,9 +86,8 @@ export PRIVATE_KEY="<testnet-funded-wallet-key>"
 
 # Run integration test (use the SCOPED package name — bare `--filter=chain-client`
 # does NOT match the workspace package id, which is
-# `@verifiable-agent-execution/chain-client`. Codex P? on PR #19 round 2
-# caught the bare-name form as broken — `vitest` is not a script in
-# package.json, so vitest must be invoked via `exec`):
+# `@verifiable-agent-execution/chain-client`. There is no `vitest`
+# script in package.json, so vitest must be invoked via `exec`):
 pnpm --filter @verifiable-agent-execution/chain-client exec vitest run session-anchor.test.ts
 # Must exit 0
 ```
