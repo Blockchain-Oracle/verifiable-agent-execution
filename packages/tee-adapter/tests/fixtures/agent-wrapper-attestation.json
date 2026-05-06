@@ -1,0 +1,14 @@
+{
+  "_comment": "Captured-from-real-testnet attestation TBD. The story BDD requires this fixture to prove the signing-message reconstruction matches a real agent-wrapper response and that the recovered signer equals the canonical 0G TEE oracle 0x04581d192d22510ced643eaced12ef169644811a. We can only capture this once a live agent-wrapper instance is reachable from the funded testnet wallet (0x3b566583b51DA4da8d95565212C96836f66433A3) — pending Epic 6 deploy. Until then, the test suite uses synthetic Wallet.createRandom() signers + a gated integration test that reads this file when present + non-placeholder.",
+  "_status": "PLACEHOLDER — replace with a real captured attestation before submission",
+  "_capturedFromAgentWrapperVersion": null,
+  "_capturedAt": null,
+  "_responseBody": null,
+  "headers": {
+    "X-Agent-Id": null,
+    "X-Seal-Id": null,
+    "X-Signature": null,
+    "X-Timestamp": null
+  },
+  "expectedRecoveredSigner": "0x04581d192d22510ced643eaced12ef169644811a"
+}
