@@ -1,0 +1,55 @@
+{
+  "id": "verifiable-execution",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "rpcUrl",
+      "indexerUrl",
+      "agenticIdAddress",
+      "verifierAddress",
+      "verifyUrlBase",
+      "chainId",
+      "agentId",
+      "modelId"
+    ],
+    "properties": {
+      "rpcUrl": {
+        "type": "string",
+        "description": "0G Chain RPC endpoint. Galileo testnet: https://evmrpc-testnet.0g.ai. Aristotle mainnet: https://evmrpc.0g.ai."
+      },
+      "indexerUrl": {
+        "type": "string",
+        "description": "0G Storage indexer endpoint. Galileo: https://indexer-storage-testnet-turbo.0g.ai. Mainnet: https://indexer-storage-turbo.0g.ai."
+      },
+      "agenticIdAddress": {
+        "type": "string",
+        "description": "Pre-deployed AgenticID contract address. Galileo: 0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F (per ADR-08)."
+      },
+      "verifierAddress": {
+        "type": "string",
+        "description": "Deployed MockTEEVerifier contract address (set after `pnpm hardhat run contracts/scripts/deploy-mock.ts --network 0g-testnet`)."
+      },
+      "verifyUrlBase": {
+        "type": "string",
+        "description": "Base URL of the verifier dashboard (e.g. https://verify.example.com). Appended to the relative /verify/<chainId>/<tokenId> path returned by SessionAnchor.anchor()."
+      },
+      "chainId": {
+        "type": "number",
+        "description": "EVM chainId for the verifyUrl. 16602 for Galileo testnet, 16661 for Aristotle mainnet. REQUIRED — no Galileo default to prevent silent mainnet-URL leaks on preview deploys."
+      },
+      "agentId": {
+        "type": "string",
+        "description": "0x-prefixed 20-byte address bound to this agent. Used as both the iNFT recipient and the dataDescription identity in `exec-log:<sessionId>:<modelId>` entries."
+      },
+      "modelId": {
+        "type": "string",
+        "description": "Model identifier baked into ADR-08 dataDescription strings (e.g. 'claude-sonnet-4-6'). Bound at plugin-load time so individual sessions don't have to thread it."
+      },
+      "privateKeyEnvVar": {
+        "type": "string",
+        "description": "Name of the environment variable that holds the signer private key (default 'PRIVATE_KEY'). The plugin reads `process.env[<name>]` at session-end time so the key never sits in OpenClaw config files."
+      }
+    }
+  }
+}
