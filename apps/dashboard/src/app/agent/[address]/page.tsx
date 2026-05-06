@@ -15,6 +15,7 @@ import { FeedTable } from "@/components/FeedTable";
 import { Mono } from "@/components/Mono";
 import { TopBar } from "@/components/TopBar";
 import { fetchTokensForAgent, type FeedRow } from "@/lib/feed";
+import { addressUrl } from "@/lib/explorer";
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/u;
 
@@ -57,7 +58,7 @@ export default async function AgentPage({
               )}
             </span>
             <a
-              href={`https://chainscan-galileo.0g.ai/address/${address}`}
+              href={addressUrl(address)}
               target="_blank"
               rel="noreferrer"
               className="text-link hover:underline"

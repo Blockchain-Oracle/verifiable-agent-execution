@@ -284,7 +284,7 @@ function SessionRecord({ proof }: { proof: ProofResponse }) {
           label="On-chain"
           value={
             <Link
-              href={`https://chainscan-galileo.0g.ai/token/0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F?a=${proof.tokenId}`}
+              href={proof.meta.explorer.token}
               className="text-link hover:underline"
               target="_blank"
               rel="noreferrer"

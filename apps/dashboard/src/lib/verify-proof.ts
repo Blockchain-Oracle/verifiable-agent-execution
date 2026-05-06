@@ -60,6 +60,13 @@ import { signingMessageDigestFromString } from "@verifiable-agent-execution/tee-
 import { Indexer } from "@0gfoundation/0g-storage-ts-sdk";
 
 import { loadEnv, type DashboardEnv } from "./env.js";
+import {
+  agenticIdContractUrl,
+  agenticIdTokenUrl,
+  faucetUrl,
+  storageBlobUrl,
+  teeVerifierContractUrl,
+} from "./explorer.js";
 
 // ---------------------------------------------------------------------------
 // TEE verifier ABI — minimal subset of the deployed verifier contract
@@ -133,6 +140,18 @@ export interface ProofResponse {
     chainId: number;
     dataDescription: string;
     storageUrl: string;
+    /**
+     * Pre-computed explorer URLs — server-side resolves these so the
+     * client never needs to know about chain switches. When self-hosting
+     * on mainnet (CHAIN_ID=16661), these auto-route to chainscan.0g.ai.
+     */
+    explorer: {
+      token: string;       // AgenticID iNFT page filtered to this tokenId
+      contract: string;    // AgenticID contract page (no filter)
+      verifierContract: string; // MockTEEVerifier contract page
+    };
+    /** Pre-computed faucet URL (testnet only). */
+    faucetUrl: string;
   };
 }
 
@@ -333,7 +352,13 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
     meta: {
       chainId: env.CHAIN_ID,
       dataDescription: execLogEntry.dataDescription,
-      storageUrl: `${env.ZG_INDEXER_RPC.replace(/\/$/, "")}/file?root=${execLogEntry.dataHash}`,
+      storageUrl: storageBlobUrl(execLogEntry.dataHash),
+      explorer: {
+        token: agenticIdTokenUrl(tokenId),
+        contract: agenticIdContractUrl(),
+        verifierContract: teeVerifierContractUrl(),
+      },
+      faucetUrl: faucetUrl(),
     },
   };
 }
