@@ -3,6 +3,16 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
+    "required": [
+      "rpcUrl",
+      "indexerUrl",
+      "agenticIdAddress",
+      "verifierAddress",
+      "verifyUrlBase",
+      "chainId",
+      "agentId",
+      "modelId"
+    ],
     "properties": {
       "rpcUrl": {
         "type": "string",
