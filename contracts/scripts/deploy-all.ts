@@ -24,7 +24,13 @@ import * as path from "node:path";
 import "dotenv/config";
 import { ethers, network } from "hardhat";
 
-const DEFAULT_TEE_ORACLE = "0x04581d192d22510ced643eaced12ef169644811a";
+// When TEE_ORACLE_ADDRESS is unset, use the deployer's own address as the
+// oracle. This is the demo-friendly default: signatures the deployer's
+// wallet produces will recover to itself, so MockTEEVerifier.verifyTEE
+// Signature(...) returns true. Production / agent-wrapper integration
+// can override with the real TEE seal-key address. Mirrors what the
+// historical testnet MockTEEVerifier (0x6F96f3...8E8CE) was deployed
+// with — see the existing deployments/0g-testnet/MockTEEVerifier.json.
 const DEFAULT_AGENTICID_NAME = "Agentic ID";
 const DEFAULT_AGENTICID_SYMBOL = "AID";
 const DEFAULT_AGENTICID_MINT_FEE = "0";
@@ -92,11 +98,11 @@ async function deployAgenticID(): Promise<DeploymentRecord> {
   };
 }
 
-async function deployMockTEEVerifier(): Promise<DeploymentRecord> {
-  const oracle = process.env.TEE_ORACLE_ADDRESS ?? DEFAULT_TEE_ORACLE;
+async function deployMockTEEVerifier(deployerAddress: string): Promise<DeploymentRecord> {
+  const oracle = process.env.TEE_ORACLE_ADDRESS ?? deployerAddress;
 
   console.log("[deploy-all] === MockTEEVerifier ===");
-  console.log(`[deploy-all]   teeOracleAddress=${oracle}`);
+  console.log(`[deploy-all]   teeOracleAddress=${oracle}${oracle === deployerAddress ? " (deployer)" : ""}`);
 
   const factory = await ethers.getContractFactory("MockTEEVerifier");
   const contract = await factory.deploy(oracle);
@@ -139,7 +145,7 @@ async function main(): Promise<void> {
   }
 
   const agenticIdRecord = await deployAgenticID();
-  const verifierRecord = await deployMockTEEVerifier();
+  const verifierRecord = await deployMockTEEVerifier(deployer.address);
 
   const agenticIdPath = writeRecord("AgenticID", agenticIdRecord);
   const verifierPath = writeRecord("MockTEEVerifier", verifierRecord);
