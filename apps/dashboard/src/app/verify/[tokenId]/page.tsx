@@ -22,6 +22,7 @@ import { Mono } from "@/components/Mono";
 import { RootHashWatermark } from "@/components/RootHashWatermark";
 import { SessionView } from "@/components/SessionView";
 import { TopBar } from "@/components/TopBar";
+import { DEMO_TOKEN_ID } from "@/lib/env";
 import {
   ProofResolutionError,
   resolveProof,
@@ -110,7 +111,7 @@ function ProofError({ cause, tokenId }: { cause: unknown; tokenId: string }) {
         <Link href="/" className="text-text-secondary hover:text-text-primary">
           ← Back to feed
         </Link>
-        <Link href="/verify/98" className="text-link hover:underline">
+        <Link href={`/verify/${DEMO_TOKEN_ID}`} className="text-link hover:underline">
           Try the demo session →
         </Link>
       </div>

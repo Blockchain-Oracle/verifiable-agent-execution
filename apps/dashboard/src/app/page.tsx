@@ -11,6 +11,7 @@ import Link from "next/link";
 
 import { FeedTable } from "@/components/FeedTable";
 import { TopBar } from "@/components/TopBar";
+import { DEMO_TOKEN_ID, loadEnv, shortAddress } from "@/lib/env";
 import { fetchRecentFeed, type FeedRow } from "@/lib/feed";
 
 export const dynamic = "force-dynamic";
@@ -22,22 +23,27 @@ export default async function HomePage() {
   } catch {
     initialRows = [];
   }
+  const env = loadEnv();
 
   return (
     <div className="min-h-screen bg-bg text-text-primary">
       <TopBar />
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
-        <Hero />
+        <Hero agenticIdAddress={env.AGENTICID_ADDRESS} />
         <div className="mt-12">
           <FeedTable initialRows={initialRows} />
         </div>
-        <Footer />
+        <Footer
+          chainId={env.CHAIN_ID}
+          agenticIdAddress={env.AGENTICID_ADDRESS}
+          verifierAddress={env.TEE_VERIFIER_ADDRESS}
+        />
       </main>
     </div>
   );
 }
 
-function Hero() {
+function Hero({ agenticIdAddress }: { agenticIdAddress: string }) {
   return (
     <section className="grid gap-12 border-b border-border pb-12 lg:grid-cols-[1.15fr_0.85fr]">
       <div>
@@ -56,7 +62,7 @@ function Hero() {
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-4">
           <Link
-            href="/verify/98"
+            href={`/verify/${DEMO_TOKEN_ID}`}
             className="group inline-flex items-center gap-2 rounded-md bg-accent-verify px-4 py-2.5 font-sans text-sm font-semibold text-bg transition-transform hover:translate-y-[-1px]"
           >
             Verify the demo session
@@ -110,8 +116,7 @@ function Hero() {
             {
               step: "04",
               title: "ERC-7857 mint",
-              detail:
-                "iNFT anchors {dataDescription, rootHash} on AgenticID at 0x2700F6A3...EF1F",
+              detail: `iNFT anchors {dataDescription, rootHash} on AgenticID at ${shortAddress(agenticIdAddress)}`,
             },
           ].map((item) => (
             <li key={item.step} className="flex gap-4">
@@ -130,20 +135,33 @@ function Hero() {
   );
 }
 
-function Footer() {
+function Footer({
+  chainId,
+  agenticIdAddress,
+  verifierAddress,
+}: {
+  chainId: number;
+  agenticIdAddress: string;
+  verifierAddress: string;
+}) {
+  const networkLabel = chainId === 16661 ? "0G Aristotle (mainnet)" : "0G Galileo (testnet)";
+  const explorerHost =
+    chainId === 16661 ? "https://chainscan.0g.ai" : "https://chainscan-galileo.0g.ai";
+  const explorerLabel = chainId === 16661 ? "Aristotle explorer ↗" : "Galileo explorer ↗";
   return (
     <footer className="mt-16 flex flex-wrap items-baseline justify-between gap-4 border-t border-border pt-6 font-mono text-[10px] uppercase tracking-[0.16em] text-text-secondary">
       <div>
-        Anchored on 0G Galileo · chainId 16602 · AgenticID 0x2700F6A3…EF1F ·
-        MockTEEVerifier 0x6F96f378…3E8CE
+        Anchored on {networkLabel} · chainId {chainId} · AgenticID{" "}
+        {shortAddress(agenticIdAddress)} · MockTEEVerifier{" "}
+        {shortAddress(verifierAddress)}
       </div>
       <a
-        href="https://chainscan-galileo.0g.ai"
+        href={explorerHost}
         target="_blank"
         rel="noreferrer"
         className="hover:text-text-primary"
       >
-        Galileo explorer ↗
+        {explorerLabel}
       </a>
     </footer>
   );

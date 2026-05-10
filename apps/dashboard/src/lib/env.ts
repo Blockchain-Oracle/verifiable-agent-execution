@@ -92,6 +92,40 @@ export interface DashboardEnv {
 }
 
 /**
+ * Token ID of the canonical demo session anchored against the current
+ * AgenticID default. Hero "Verify the demo session" CTA + verify-page
+ * "Try the demo" link + search-bar placeholder all read this so a future
+ * AgenticID swap (mainnet) only needs the address + this constant
+ * updated in one place.
+ *
+ * Current: tokenId 0 on AgenticID 0xd4a5eA…0E38 (Galileo, Epic-7).
+ */
+export const DEMO_TOKEN_ID = 0;
+
+/**
+ * Build a chainscan token URL for the active AgenticID + tokenId. Uses
+ * the testnet explorer host today; when we swap to mainnet via env
+ * override the explorer host should swap too — extend this helper at
+ * that time (or thread CHAIN_ID into a chainscanHost lookup).
+ */
+export function chainscanTokenUrl(env: DashboardEnv, tokenId: string | number): string {
+  const host =
+    env.CHAIN_ID === 16661
+      ? "https://chainscan.0g.ai"
+      : "https://chainscan-galileo.0g.ai";
+  return `${host}/token/${env.AGENTICID_ADDRESS}?a=${tokenId}`;
+}
+
+/**
+ * Truncate an address `0xabc…123` style for compact UI rendering.
+ * Used by the Footer + ERC-7857 mint copy on the landing page.
+ */
+export function shortAddress(address: string): string {
+  if (!address.startsWith("0x") || address.length < 10) return address;
+  return `${address.slice(0, 8)}…${address.slice(-4)}`;
+}
+
+/**
  * Resolve dashboard env. NEVER throws on missing vars — every field
  * has a sensible default. Throws ONLY on MALFORMED override values
  * (e.g., AGENTICID_ADDRESS env set to "garbage").

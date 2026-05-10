@@ -2,7 +2,7 @@
 
 /**
  * SearchBar — intelligent router. Paste anything, jump there:
- *   - Numeric (e.g. "98")     → /verify/98
+ *   - Numeric (e.g. "0")      → /verify/0
  *   - 0x-prefixed 20-byte hex → /agent/0x...
  *   - 0x-prefixed 32-byte hex → /verify-by-hash/0x... (TODO; for now,
  *     unknown — surface a lightweight error toast)
@@ -63,7 +63,7 @@ export function SearchBar() {
             setValue(e.target.value);
             if (error !== null) setError(null);
           }}
-          placeholder="Search by tokenId (98) or agent address (0x...)"
+          placeholder="Search by tokenId (0) or agent address (0x...)"
           className="w-full bg-transparent font-mono text-sm text-text-primary placeholder:text-text-secondary/60 focus:outline-none"
           aria-label="Search by tokenId or agent address"
         />

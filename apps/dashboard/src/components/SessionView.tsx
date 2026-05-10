@@ -301,11 +301,12 @@ function SessionRecord({ proof }: { proof: ProofResponse }) {
             <Link
               // Defensive: older API shapes (before the explorer-meta
               // refactor) may not include `meta.explorer` — fall back to
-              // a hardcoded chainscan URL with the AgenticID address that's
-              // public + immutable per ADR-08.
+              // a chainscan URL with the Epic-7 AgenticID. New verify-proof
+              // shapes ALWAYS include `meta.explorer.token`; this fallback
+              // exists only for cached old responses.
               href={
                 proof.meta.explorer?.token ??
-                `https://chainscan-galileo.0g.ai/token/0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F?a=${proof.tokenId}`
+                `https://chainscan-galileo.0g.ai/token/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38?a=${proof.tokenId}`
               }
               className="text-link hover:underline"
               target="_blank"
