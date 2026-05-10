@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.4",
-  "description": "MockTEEVerifier and ITEEVerifier for verifiable-agent-execution. Solidity 0.8.24, evmVersion cancun, deploys to 0G Galileo (16602) and Aristotle mainnet (16661).",
+  "description": "AgenticID (ERC-7857) + MockTEEVerifier for verifiable-agent-execution. Solidity 0.8.24, evmVersion cancun, deploys to 0G Galileo (16602) and Aristotle mainnet (16661).",
   "scripts": {
     "build": "hardhat compile",
     "compile": "hardhat compile",
@@ -11,7 +11,11 @@
     "test": "hardhat test",
     "typecheck": "tsc --noEmit",
     "deploy:testnet": "hardhat run scripts/deploy-mock.ts --network 0g-testnet",
-    "deploy:mainnet": "hardhat run scripts/deploy-mock.ts --network 0g-mainnet"
+    "deploy:mainnet": "hardhat run scripts/deploy-mock.ts --network 0g-mainnet",
+    "deploy:agenticid:testnet": "hardhat run scripts/deploy-agenticid.ts --network 0g-testnet",
+    "deploy:agenticid:mainnet": "hardhat run scripts/deploy-agenticid.ts --network 0g-mainnet",
+    "deploy:all:testnet": "hardhat run scripts/deploy-all.ts --network 0g-testnet",
+    "deploy:all:mainnet": "hardhat run scripts/deploy-all.ts --network 0g-mainnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
