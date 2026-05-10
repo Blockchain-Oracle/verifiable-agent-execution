@@ -5,7 +5,7 @@ _Updated: 2026-05-05. Managed by sahil-coding-protocol._
 ## What this is
 
 **"Etherscan for AI agents — share a URL, verify any agent run cold."**
-The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw Lab)** — a primitive that lets anyone prove an AI agent ran exactly what it claimed. An OpenClaw plugin captures every tool call inside `agent-wrapper`'s TEE container, the session log is flushed to **0G Storage**, and an **iNFT (ERC-7857)** is minted on **AgenticID at `0x2700F6A3…EF1F`** anchoring the rootHash. A public verifier dashboard lets anyone hit the URL and run the proof chain (no wallet) — three live reads (`getIntelligentDatas` → 0G Storage download → `TEEVerifier.verifyTEESignature`) flip green checkmarks per row.
+The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw Lab)** — a primitive that lets anyone prove an AI agent ran exactly what it claimed. An OpenClaw plugin captures every tool call inside `agent-wrapper`'s TEE container, the session log is flushed to **0G Storage**, and an **iNFT (ERC-7857)** is minted on our **AgenticID at `0xd4a5eA…0E38` (Galileo testnet, Epic-7 OUR deploy)** anchoring the rootHash. A public verifier dashboard lets anyone hit the URL and run the proof chain (no wallet) — three live reads (`getIntelligentDatas` → 0G Storage download → `TEEVerifier.verifyTEESignature`) flip green checkmarks per row.
 
 **Wedge:** GREEN lane in the gallery (no competitor in verifiable-audit-trail) per `context/06-hidden-field.md`. First-mover on 0G Private Computer (TEE), launched April 28. The architecture survived first-principles + SCAMPER passes (see `context/REFERENCE_REPO_AUDIT.md`); the wedge is honestly **TEE-rooted, not trustless** (ADR-10) and **speculative infrastructure for the agent economy emerging in 2026–2027**, framed as a defensible bet rather than a present-day pull.
 
@@ -32,7 +32,10 @@ The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw
 - **Chains:**
   - Galileo testnet — chainId **16602**, RPC `https://evmrpc-testnet.0g.ai`, indexer `https://indexer-storage-testnet-turbo.0g.ai`, faucet `https://faucet.0g.ai` (0.1 0G/day), explorer `https://chainscan-galileo.0g.ai`
   - Mainnet (Aristotle) — chainId **16661**, RPC `https://evmrpc.0g.ai`, indexer `https://indexer-storage-turbo.0g.ai`, explorer `https://chainscan.0g.ai`
-- **Pre-deployed AgenticID:** `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo (it is `agenticID-examples/01/AgenticID.sol` — verified by on-chain reads; ADR-08)
+- **Galileo AgenticID (OURS, Epic-7):** `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` — `contracts/contracts/AgenticID.sol`, 1:1 from `agenticID-examples/01-mint-and-manage`. Deployed 2026-05-10 (block 32602466, tx 0x57802912cc803e0e1cdd8e88b104fba630c628ac62581804961718c1be5071bd). Demo session at tokenId 0.
+- **Galileo MockTEEVerifier (OURS, Epic-7):** `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` — deployed 2026-05-10 with `teeOracleAddress` = deployer wallet (`0x3b56…33A3`). Block 32610650.
+- **0G's pre-deployed example AgenticID (legacy):** `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo — still on-chain, original example contract per ADR-08. We no longer point at it; `lib/env.ts` defaults moved to our deploy in commit 929d6a6.
+- **Mainnet (Aristotle) AgenticID + Verifier:** PENDING — deploy scheduled for Phase 2. We deploy our own (no public 0G mainnet AgenticID exists; verified across 5 sources — see ADR-13 / `memory/project_mainnet_required.md`).
 - **TEE oracle (signing address, not a contract):** `0x04581d192d22510ced643eaced12ef169644811a` (hardcoded in `0g-agent-nft/scripts/deploy/deploy_tee.ts`)
 
 ## Top-3 commands

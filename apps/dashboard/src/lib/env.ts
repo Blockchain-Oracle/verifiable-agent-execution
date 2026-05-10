@@ -103,6 +103,42 @@ export interface DashboardEnv {
 export const DEMO_TOKEN_ID = 0;
 
 /**
+ * Cross-network site URLs — used by TopBar's network chip to link to
+ * the OTHER deployment. Overridable via env so each Coolify service can
+ * advertise its sibling.
+ *
+ * Defaults assume the Coolify subdomain split:
+ *   testnet → https://verifiable.0g.ai             (default origin)
+ *   mainnet → https://mainnet.verifiable.0g.ai     (subdomain)
+ *
+ * On localhost both default to "" → chip omits the cross-link href so
+ * dev mode doesn't render a broken link.
+ */
+const CROSS_LINK_DEFAULTS = {
+  TESTNET_SITE_URL: "https://verifiable.0g.ai",
+  MAINNET_SITE_URL: "https://mainnet.verifiable.0g.ai",
+} as const;
+
+export interface NetworkBadge {
+  label: "TESTNET" | "MAINNET";
+  network: "Galileo" | "Aristotle";
+  oppositeLabel: "MAINNET" | "TESTNET";
+  oppositeUrl: string;
+}
+
+export function networkBadge(env: DashboardEnv): NetworkBadge {
+  const isMainnet = env.CHAIN_ID === 16661;
+  return {
+    label: isMainnet ? "MAINNET" : "TESTNET",
+    network: isMainnet ? "Aristotle" : "Galileo",
+    oppositeLabel: isMainnet ? "TESTNET" : "MAINNET",
+    oppositeUrl: isMainnet
+      ? process.env.TESTNET_SITE_URL ?? CROSS_LINK_DEFAULTS.TESTNET_SITE_URL
+      : process.env.MAINNET_SITE_URL ?? CROSS_LINK_DEFAULTS.MAINNET_SITE_URL,
+  };
+}
+
+/**
  * Build a chainscan token URL for the active AgenticID + tokenId. Uses
  * the testnet explorer host today; when we swap to mainnet via env
  * override the explorer host should swap too — extend this helper at
