@@ -26,20 +26,21 @@
 
 ---
 
-## Pre-deployed contracts (DO NOT redeploy)
+## Pre-deployed contracts (background context only — no longer load-bearing on this repo as of Epic-7)
 
-| Contract | Address | Chain |
-|---|---|---|
-| AgenticID (ERC-7857) | `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` | Galileo (16602) |
-| Default TEE Oracle | `0x04581d192d22510ced643eaced12ef169644811a` | Galileo (signing address, not a contract) |
+| Contract | Address | Chain | Status |
+|---|---|---|---|
+| AgenticID (ERC-7857, 0G's example) | `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` | Galileo (16602) | Still on-chain. We no longer point at it — see ADR-13. |
+| Default TEE Oracle (per `0g-agent-nft`) | `0x04581d192d22510ced643eaced12ef169644811a` | Galileo (signing address, not a contract) | We no longer use this — our verifier is configured with the deployer wallet as oracle. See ADR-13. |
 
 ---
 
-## Contracts to deploy
+## Contracts to deploy (OUR deploys, Epic-7)
 
-| Contract | Purpose |
-|---|---|
-| `MockTEEVerifier.sol` | Accepts any valid ECDSA signature for dev/test. Swap to real oracle at demo time. |
+| Contract | Galileo (16602) | Aristotle mainnet (16661) | Purpose |
+|---|---|---|---|
+| `AgenticID.sol` | `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (block 32602466) | PENDING (Phase 2) | ERC-7857 iNFT for session anchors. 1:1 source from `agenticID-examples/01`. See ADR-13. |
+| `MockTEEVerifier.sol` | `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` (block 32610650) | PENDING (Phase 2) | Verifies ECDSA sigs against the configured `teeOracleAddress` (= deployer wallet on Galileo; same on mainnet). |
 
 ---
 
@@ -119,6 +120,31 @@ The judge walkthrough starts from the verifier's seat, not the agent's seat. Jud
 **ADR-12: Demo task — opinionated, stakes-loaded (DeFi swap simulation)**
 
 The agent's demo task must be *something where verification matters.* A web-search agent demos the proof but not the **need** for the proof — judges intuitively grade higher when the audited action carries weight. We use a multi-step DeFi swap simulation (`quote → liquidity → simulate-swap → final-approval`). Same code as a web-search task; sharper question ("did the agent really execute this?") and clearer market story (autonomous DeFi compliance is a near-future vertical with concrete pull). The agent does NOT submit a real swap — simulation only, so we don't need a funded mainnet vault for the demo.
+
+**ADR-13: Deploy our OWN AgenticID + MockTEEVerifier (Epic-7) — supersedes ADR-03 + ADR-08**
+
+Decided 2026-05-10 in response to two concurrent findings:
+
+1. **Submission rule:** the 0G APAC Hackathon explicitly requires "0G mainnet contract address + 0G Explorer link showing verifiable on-chain activity" (`context/01-prizes-tracks.md:31, 44`). A submission that reads from 0G's testnet AgenticID without owning a mainnet equivalent fails the rule.
+2. **No public mainnet AgenticID exists.** Verified across 5 sources (agenticID-examples repo, 0g-agent-nft repo, AIverse blog, mainnet docs, ERC-7857 docs): 0G has not published a public AgenticID on Aristotle. The example contract `0x2700F6A3…EF1F` is testnet-only.
+
+**Decision:** deploy our own ERC-7857 contract, sourced 1:1 from `agenticID-examples/examples/01-mint-and-manage/contracts/AgenticID.sol`, on both Galileo (testnet) AND Aristotle (mainnet). Pair with our own MockTEEVerifier deploy whose `teeOracleAddress` = deployer wallet (so demo signatures recover correctly without needing access to 0G's reference oracle key).
+
+**What this changes:**
+- ADR-03 ("use the pre-deployed AgenticID") is obsolete — we no longer depend on 0G's testnet contract for ANY chain.
+- ADR-08 ("use the example AgenticID; promote later") becomes "we deploy the example contract OURSELVES on each chain we ship to."
+- ADR-06 ("MockTEEVerifier oracle = canonical 0G TEE oracle 0x04581d…") changes — oracle is now the deployer wallet by default. Honest framing in DEMO.md: "off-chain signer simulating TEE seal key on testnet; agent-wrapper integration is the production upgrade path." Per ADR-10 we already framed this as "TEE-rooted, not trustless."
+
+**Galileo deploys (live):**
+- AgenticID `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (block 32602466)
+- MockTEEVerifier `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` (block 32610650)
+- Demo session: tokenId 0 with 4 signed entries (`scripts/smoke/defi-swap-demo.ts`).
+
+**Mainnet deploys (Phase 2 — pending wallet funding):**
+- Same source contracts, deploy via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet`.
+- `lib/env.ts` defaults swap to mainnet addresses + `CHAIN_ID=16661` per Coolify service env.
+
+**Why this is honest, not a downgrade:** judges see the contract source on chainscan; the contract IS the canonical example; what changes is the deployer + chain. The depth gain (ownership of the on-chain primitive) more than offsets the loss of "we use 0G's official deploy" framing. Phase 0a layered 0G Compute Network on top so the on-chain AgenticID + off-chain TeeML inference both appear in the same anchored session.
 
 ---
 

@@ -11,12 +11,12 @@
   ```bash
   pnpm --filter @verifiable-agent-execution/dashboard dev
   ```
-- [ ] Demo session minted (tokenId 98 OR a fresh one):
+- [ ] Demo session minted (Epic-7 default: **tokenId 0** on AgenticID `0xd4a5eA…0E38`):
   ```bash
   set -a && source .env && set +a
   pnpm exec tsx scripts/smoke/defi-swap-demo.ts
   ```
-- [ ] Browser tab open at `http://localhost:3000/verify/98` (or whatever tokenId)
+- [ ] Browser tab open at `http://localhost:3000/verify/0` (or whatever tokenId)
 - [ ] Galileo block explorer tab ready: `https://chainscan-galileo.0g.ai/tx/<mintTxHash>`
 
 ---
@@ -25,7 +25,7 @@
 
 > "Here's a URL. No setup, no context. Just open it."
 
-**Action:** hand the link `https://verifiable.0g.ai/verify/98` to the judge (or click on a fresh device).
+**Action:** hand the link `https://verifiable.0g.ai/verify/0` to the judge (or click on a fresh device).
 
 **Why this matters:** the entire pitch is "Etherscan for AI agents — open a URL, verify cold." Setup at this step would kill the wedge.
 
@@ -35,7 +35,7 @@
 
 > "This is what an AI agent did. Four tool calls in a session."
 
-**On screen:** the proof page renders the session metadata (`Token #98`, `4 entries`, `0G Storage rootHash`) and FOUR LogEntry cards in sequence:
+**On screen:** the proof page renders the session metadata (`Token #0`, `4 entries`, `0G Storage rootHash`) and FOUR LogEntry cards in sequence:
 
 | Seq | Tool | Decoded params (visible) |
 |---|---|---|
@@ -56,7 +56,7 @@ All four badges are GREY at this point — "not yet verified."
 
 **Action:** click the `Verify on chain` button.
 
-**On screen:** the dashboard fires four `GET /api/verify/98/entry/<seq>` calls in parallel. Each calls `MockTEEVerifier.verifyTEESignature(digest, signature)` against the deployed contract on Galileo (`0x6F96f3789...3E8CE`). As each response lands (~300ms each), its badge flips:
+**On screen:** the dashboard fires four `GET /api/verify/0/entry/<seq>` calls in parallel. Each calls `MockTEEVerifier.verifyTEESignature(digest, signature)` against our deployed contract on Galileo (`0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad`, `teeOracleAddress = deployer wallet`). As each response lands (~300ms each), its badge flips:
 
 ```
 #000 quote                ⚪ → 🟢 TEE Verified
@@ -99,7 +99,7 @@ All four badges are GREY at this point — "not yet verified."
 
 **On screen:** Galileo Explorer page for `0xfd23614f...873313` showing:
 - Mint transaction confirmed
-- iMint method called on AgenticID at `0x2700F6A3...EF1F`
+- iMint method called on **OUR** AgenticID at `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (Epic-7 deploy; same source as 0G's testnet example, different deployer + chain history)
 - IntelligentDataSet event with the rootHash and dataDescription
 
 ---
@@ -128,7 +128,7 @@ All four badges are GREY at this point — "not yet verified."
 | Decoded story not just hashes | ✅ Stage 3 — params + result captured + rendered |
 | Click verify → badges flip sequentially | ✅ Stage 5 — per-entry verify endpoint |
 | No wallet, no login, no setup | ✅ Dashboard zero-config + plugin auto-wallet |
-| Stakes-loaded demo session | ✅ tokenId 98 — DeFi swap simulator |
+| Stakes-loaded demo session | ✅ tokenId 0 — DeFi swap simulator (Epic-7 anchor) |
 | Cryptographically verifiable on-chain | ✅ MockTEEVerifier deployed; verifyTEESignature live |
 | Real 0G integration | ✅ AgenticID + 0G Storage + 0G Chain end-to-end on Galileo |
 
@@ -144,4 +144,4 @@ All four badges are GREY at this point — "not yet verified."
 
 ---
 
-**Last updated:** 2026-05-06 (Stages 1-7 of zero-config UX work)
+**Last updated:** 2026-05-10 (Epic-7 mainnet path: contracts re-anchored to OUR deploys, demo session minted at tokenId 0, 0G Compute integration scripted)

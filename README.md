@@ -34,7 +34,7 @@ Anyone clicks the URL on any device — no wallet, no login, no setup. Etherscan
 
 ## Try it (live, on Galileo testnet)
 
-> **Pre-minted demo session — tokenId 98 — DeFi swap simulator (4 signed steps).**
+> **Pre-minted demo session — tokenId 0 — DeFi swap simulator (4 signed steps), anchored to OUR AgenticID.**
 
 ```bash
 # 1. Clone + install (one shot)
@@ -46,7 +46,7 @@ pnpm install
 pnpm --filter @verifiable-agent-execution/dashboard dev
 
 # 3. Open the demo proof
-open http://localhost:3000/verify/98
+open http://localhost:3000/verify/0
 ```
 
 You'll see the 4-step DeFi swap session, fully decoded (`quote → liquidity → simulate-swap → final-approval`) with green TEE Verified badges flipping in sequence.
@@ -76,8 +76,9 @@ pnpm --filter @verifiable-agent-execution/openclaw-skill exec node -e "import('.
 |---|---|
 | **0G Storage** | Immutable session log blob (rootHash anchored on-chain) |
 | **0G Chain** | EVM-compatible RPC for the AgenticID + verifier contracts |
-| **AgenticID (ERC-7857 iNFT)** | Per-session proof token at `0x2700F6A3...EF1F` (pre-deployed by 0G) |
-| **TEE Verifier (MockTEEVerifier.sol)** | Our deploy at `0x6F96f3789...3E8CE` — verifyTEESignature view function |
+| **AgenticID (ERC-7857 iNFT)** | Per-session proof token. **Galileo: `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (OUR deploy, Epic-7).** Mainnet: see Deployments section below. |
+| **TEE Verifier (MockTEEVerifier.sol)** | Our deploy. **Galileo: `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad`** — `verifyTEESignature(bytes32,bytes)` view function with `teeOracleAddress = deployer wallet`. |
+| **0G Compute Network** (TeeML) | Per-session inference call via `@0gfoundation/0g-compute-ts-sdk`. See `scripts/smoke/defi-swap-demo-with-compute.ts`. |
 | **agent-wrapper signing convention** | `keccak256(agentId\|sealId\|signedAt\|bodyHashHex)` per the upstream Go signSession code |
 
 ---
@@ -118,11 +119,21 @@ pnpm --filter @verifiable-agent-execution/openclaw-skill exec node -e "import('.
                             ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │  0G Galileo testnet (chainId 16602)                                    │
-│  • AgenticID:        0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F       │
-│  • MockTEEVerifier:  0x6F96f3789646C873a939c4F5EB8e6d8D67b3E8CE       │
+│  • AgenticID:        0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38       │
+│  • MockTEEVerifier:  0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad       │
 │  • Storage indexer:  https://indexer-storage-testnet-turbo.0g.ai      │
+│  • Demo session:     tokenId 0 (4 signed entries, all TEE Verified)   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Deployments
+
+| Network | Chain ID | Status | AgenticID | MockTEEVerifier |
+|---|---|---|---|---|
+| **Galileo (testnet)** | 16602 | LIVE | [`0xd4a5eA…0E38`](https://chainscan-galileo.0g.ai/address/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38) | [`0x058fc3…C3AD`](https://chainscan-galileo.0g.ai/address/0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad) |
+| **Aristotle (mainnet)** | 16661 | PENDING (Phase 2) | TBD | TBD |
+
+Mainnet deploy will land both contracts via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet`. See `context/docs/architecture.md` ADR-13 for why we deploy our own AgenticID instead of relying on 0G's testnet example.
 
 ---
 
