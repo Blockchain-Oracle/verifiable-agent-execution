@@ -42,13 +42,24 @@ const DEFAULTS = {
   RPC: "https://evmrpc-testnet.0g.ai",
   // 0G Storage indexer for Galileo. Public.
   INDEXER: "https://indexer-storage-testnet-turbo.0g.ai",
-  // Pre-deployed AgenticID contract (per ADR-08). 0G's example contract,
-  // immutable, public on Galileo.
-  AGENTICID_ADDRESS: "0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F",
-  // TEE verifier contract — deployed 2026-05-06 (block 31847547,
-  // tx 0xdd0bd51c06c336d53fd34c8a971c5bd33d7658fc9bf6c0a280b987dd1e5d2ad4).
-  // Configured with the demo TEE oracle = 0x3b56...33A3.
-  TEE_VERIFIER_ADDRESS: "0x6F96f3789646C873a939c4F5EB8e6d8D67b3E8CE",
+  // Epic-7: AgenticID is now OUR deploy on Galileo (block 32602466,
+  // tx 0x57802912cc803e0e1cdd8e88b104fba630c628ac62581804961718c1be5071bd).
+  // Source: contracts/contracts/AgenticID.sol (1:1 from
+  // 0gfoundation/agenticID-examples/01-mint-and-manage). On mainnet we
+  // deploy our own too because 0G has not published a public mainnet
+  // example. See ADR-13 (to be added) for the deploy-our-own rationale.
+  // Prior testnet default `0x2700F6A3...EF1F` (0G's example) still
+  // resolves on-chain — overridable via AGENTICID_ADDRESS env if needed
+  // for legacy demo asset compatibility.
+  AGENTICID_ADDRESS: "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38",
+  // Epic-7 MockTEEVerifier — deployed 2026-05-10 (block 32610650,
+  // tx 0xb321edfd8676c8d98e21087f90c163187ee214a4a9ecf83abcfc5e9761a63316).
+  // Configured with the deployer wallet (0x3b56...33A3) as the
+  // teeOracleAddress so signatures from our demo signer recover
+  // through verifyTEESignature() correctly. Prior testnet verifier
+  // `0x6F96f3...8E8CE` still on-chain; overridable via
+  // TEE_VERIFIER_ADDRESS env.
+  TEE_VERIFIER_ADDRESS: "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
   CHAIN_ID: 16602,
 } as const;
 

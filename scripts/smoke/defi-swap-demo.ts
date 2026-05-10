@@ -171,14 +171,23 @@ async function main(): Promise<void> {
   const containerHash = `0x${"d".repeat(64)}`;
   const agentId = signer.address;
 
-  // Build storage + agenticID clients
+  // Build storage + agenticID clients.  Demo runs sometimes hit
+  // testnet indexer sync latency > 30s — the SessionLogger's BDD
+  // upload bound rejects too aggressively for live demo mints.  Allow
+  // STORAGE_UPLOAD_TIMEOUT_MS env override (default 120s for demo
+  // scripts vs the 30s BDD ceiling for production code paths).
+  const uploadTimeoutMs = Number(
+    process.env.STORAGE_UPLOAD_TIMEOUT_MS ?? "120000",
+  );
   const indexer = new Indexer(INDEXER_URL);
   const storageClient = new StorageClient({
     rpcUrl: RPC,
     indexerUrl: INDEXER_URL,
     signer,
     indexer: indexer as unknown as IndexerLike,
+    uploadTimeoutMs,
   });
+  console.log(`[defi-swap-demo] StorageClient uploadTimeoutMs=${uploadTimeoutMs}`);
   const logger = new SessionLogger(sessionId, storageClient);
 
   // Append all 4 signed entries with FULL DECODED CONTENT
