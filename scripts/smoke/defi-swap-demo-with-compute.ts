@@ -103,12 +103,22 @@ const MODEL_ID_LOG = "0g-compute/qwen-2.5-7b-instruct";
 // self-contained and the two demos can diverge independently.)
 // ---------------------------------------------------------------------------
 
-const SWAP_STEPS: Array<{
+interface SwapStep {
   tool: string;
   params: Record<string, unknown>;
   result: Record<string, unknown>;
   delayMs: number;
-}> = [
+}
+
+/**
+ * Build the 4-step DeFi swap arc with `operatorAddress` threaded from
+ * the actual signer. Previously the operator field was a fixed literal
+ * `0x3b56…33A3`, which made the anchored proof falsely claim approval
+ * from one specific wallet regardless of who actually ran the script.
+ * Closes Codex round-6 logic finding on PR #23.
+ */
+function buildSwapSteps(operatorAddress: string): SwapStep[] {
+  return [
   {
     tool: "quote",
     params: { from: "USDC", to: "ETH", amount: 1000, slippageMaxBps: 50 },
@@ -149,7 +159,7 @@ const SWAP_STEPS: Array<{
   {
     tool: "final-approval",
     params: {
-      operatorAddress: "0x3b566583b51DA4da8d95565212C96836f66433A3",
+      operatorAddress,
       proposedSwap: { from: "USDC", to: "ETH", amount: 1000 },
       reason: "Above $500 threshold — human approval required",
     },
@@ -160,7 +170,8 @@ const SWAP_STEPS: Array<{
     },
     delayMs: 90,
   },
-];
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -247,35 +258,52 @@ async function callComputeProvider(opts: {
   // Step 2 — find provider. Enforced contract (story-epic-07 Scenario 3):
   //   - model name MUST match /qwen|chat|instruct/i
   //   - verifiability MUST be TeeML
-  //   - if no provider satisfies BOTH, hard-fail BEFORE inference. The
-  //     prior version fell back to "first provider" which could mint
-  //     an anchored proof under a non-TeeML model — silently violating
-  //     the BDD's TEE-verified-inference claim.
-  // PINNED_PROVIDER (COMPUTE_PROVIDER_ADDRESS env) is treated as
-  // operator override: pinning skips the model/verifiability check
-  // because the operator vouched for the choice.
+  //   - if no provider satisfies BOTH, hard-fail BEFORE inference.
+  // Pinned providers (COMPUTE_PROVIDER_ADDRESS env) MUST also pass
+  // the same gate — the gate is what makes the anchored proof's
+  // "TEE-verified inference" claim honest. Operator override does
+  // not unlock the demo's TeeML invariant. (Codex round-6 P1 on PR
+  // #23: pinned bypass let a non-conforming provider through.)
   const MODEL_REGEX = /qwen|chat|instruct/i;
   const REQUIRED_VERIFIABILITY = "TeeML";
-  let providerAddress = PINNED_PROVIDER;
-  let modelName: string = "";
-  let verificationType: string = "";
 
-  if (providerAddress) {
-    // Operator pinned a provider. Read its metadata for log fidelity
-    // but don't gate on the regex/verifiability — pin is trust-us.
-    try {
-      const meta = (await broker.inference.getServiceMetadata(providerAddress)) as {
-        model?: string;
-        verifiability?: string;
-      };
-      modelName = meta.model ?? "(unknown — pinned provider)";
-      verificationType = meta.verifiability ?? "(unknown — pinned provider)";
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(`[demo-compute]   pinned-provider metadata fetch failed (continuing): ${msg.slice(0, 200)}`);
-      modelName = "(unknown — metadata fetch failed)";
-      verificationType = "(unknown — metadata fetch failed)";
+  /** Throws if the candidate doesn't satisfy the TeeML/model gate. */
+  function assertProviderConforms(candidate: {
+    address: string;
+    model: string;
+    verifiability: string;
+    source: "pinned" | "listed";
+  }): void {
+    if (!MODEL_REGEX.test(candidate.model) || candidate.verifiability !== REQUIRED_VERIFIABILITY) {
+      throw new Error(
+        `[demo-compute] ${candidate.source} provider ${candidate.address} fails the ` +
+          `Epic-7 TeeML/model gate: ` +
+          `model="${candidate.model}" (must match ${MODEL_REGEX}), ` +
+          `verifiability="${candidate.verifiability}" (must equal "${REQUIRED_VERIFIABILITY}"). ` +
+          `Refusing to anchor a non-TeeML inference as TEE-verified.`,
+      );
     }
+  }
+
+  let providerAddress: string;
+  let modelName: string;
+  let verificationType: string;
+
+  if (PINNED_PROVIDER) {
+    // Operator pinned a provider — STILL fetch metadata + STILL gate.
+    const meta = (await broker.inference.getServiceMetadata(PINNED_PROVIDER)) as {
+      model?: string;
+      verifiability?: string;
+    };
+    assertProviderConforms({
+      address: PINNED_PROVIDER,
+      model: meta.model ?? "",
+      verifiability: meta.verifiability ?? "",
+      source: "pinned",
+    });
+    providerAddress = PINNED_PROVIDER;
+    modelName = meta.model!;
+    verificationType = meta.verifiability!;
   } else {
     console.log("[demo-compute]   listing providers…");
     const services = (await broker.inference.listService()) as Array<{
@@ -285,26 +313,28 @@ async function callComputeProvider(opts: {
       verifiability?: string;
     }>;
     console.log(`[demo-compute]   found ${services.length} providers`);
+    let match: { address: string; model: string; verifiability: string } | null = null;
     for (const svc of services) {
       const addr = svc.provider ?? svc.providerAddress ?? "";
       if (!addr) continue;
       const model = svc.model ?? "";
       const verify = svc.verifiability ?? "";
       if (MODEL_REGEX.test(model) && verify === REQUIRED_VERIFIABILITY) {
-        providerAddress = addr;
-        modelName = model;
-        verificationType = verify;
+        match = { address: addr, model, verifiability: verify };
         break;
       }
     }
-    if (!providerAddress) {
+    if (match === null) {
       throw new Error(
         `[demo-compute] No 0G Compute provider matched the required contract ` +
           `(model ~ ${MODEL_REGEX} AND verifiability === "${REQUIRED_VERIFIABILITY}"). ` +
           `Scanned ${services.length} providers. ` +
-          `Override via COMPUTE_PROVIDER_ADDRESS to pin a specific one.`,
+          `Override via COMPUTE_PROVIDER_ADDRESS to pin a specific one (the same gate applies).`,
       );
     }
+    providerAddress = match.address;
+    modelName = match.model;
+    verificationType = match.verifiability;
   }
   console.log(`[demo-compute]   provider: ${providerAddress}`);
   console.log(`[demo-compute]   model:    ${modelName}`);
@@ -557,8 +587,13 @@ async function main(): Promise<void> {
   }
 
   // ─── Tool entries (seq 1-4) ─────────────────────────────────────────
-  for (let i = 0; i < SWAP_STEPS.length; i++) {
-    const step = SWAP_STEPS[i];
+  // Build SWAP_STEPS NOW with the actual signer.address threaded into
+  // the final-approval step's operatorAddress. Module-scoped const
+  // would have to literal-encode one wallet; this builder makes the
+  // anchored proof faithful to whoever ran the script.
+  const swapSteps = buildSwapSteps(signer.address);
+  for (let i = 0; i < swapSteps.length; i++) {
+    const step = swapSteps[i]!;
     baseTs += step.delayMs;
     const inputHash = sha256HexNoPrefix(step.params);
     const outputHash = sha256HexNoPrefix(step.result);
@@ -617,8 +652,8 @@ async function main(): Promise<void> {
   console.log("");
   console.log("  Entries (seq → type/tool):");
   console.log(`    0 → inference (0G Compute / ${inferenceResult.modelName})`);
-  for (let i = 0; i < SWAP_STEPS.length; i++) {
-    console.log(`    ${i + 1} → tool_call (${SWAP_STEPS[i].tool})`);
+  for (let i = 0; i < swapSteps.length; i++) {
+    console.log(`    ${i + 1} → tool_call (${swapSteps[i]!.tool})`);
   }
   console.log("");
   console.log("  Dashboard (local dev):");

@@ -196,7 +196,7 @@ async function binarySearchLatestTokenId(contract: Contract): Promise<bigint> {
   let lo = 0n;
   let hi = 64n;
   // Phase 1: exponential probe. Bound by PROBE_SAFETY_CEILING — not
-  // a hardcoded iteration count — so a real high-volume contract
+  // a fixed iteration count — so a real high-volume contract
   // doesn't get silently truncated. The loop exits the FIRST time
   // tokenExists(hi) returns false.
   while (hi < PROBE_SAFETY_CEILING) {
