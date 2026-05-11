@@ -126,6 +126,50 @@ const CROSS_LINK_DEFAULTS = {
   MAINNET_SITE_URL: "https://mainnet.verifiable.0g.ai",
 } as const;
 
+// ---------------------------------------------------------------------------
+// Network helpers — the single source of truth for "is this mainnet?"
+// and "what label/host/explorer goes with this chainId?" used across
+// the dashboard, smoke scripts, and plugin output. EVERY chainId
+// branch in app code SHOULD go through one of these so adding a third
+// network (e.g., a private devnet) is a single-file change here, not
+// a grep-and-pray sweep.
+// ---------------------------------------------------------------------------
+
+const MAINNET_CHAIN_ID = 16661;
+const TESTNET_CHAIN_ID = 16602;
+
+/** Pure predicate: is this chainId 0G's Aristotle mainnet? */
+export function isMainnet(chainId: number): boolean {
+  return chainId === MAINNET_CHAIN_ID;
+}
+
+/** "Aristotle" (mainnet) vs "Galileo" (any non-mainnet chainId). */
+export function networkName(chainId: number): "Aristotle" | "Galileo" {
+  return isMainnet(chainId) ? "Aristotle" : "Galileo";
+}
+
+/** "MAINNET" / "TESTNET" — uppercase short label for badges/chips. */
+export function networkShortLabel(chainId: number): "MAINNET" | "TESTNET" {
+  return isMainnet(chainId) ? "MAINNET" : "TESTNET";
+}
+
+/** "Aristotle mainnet" / "Galileo testnet" — title-case long label for prose. */
+export function networkLongLabel(chainId: number): string {
+  return isMainnet(chainId) ? "Aristotle mainnet" : "Galileo testnet";
+}
+
+/** Chainscan explorer HOST (no trailing slash) for the active chain. */
+export function chainscanHost(chainId: number): string {
+  return isMainnet(chainId)
+    ? "https://chainscan.0g.ai"
+    : "https://chainscan-galileo.0g.ai";
+}
+
+/** "Aristotle explorer ↗" / "Galileo explorer ↗" — UI link label. */
+export function chainscanLinkLabel(chainId: number): string {
+  return `${networkName(chainId)} explorer ↗`;
+}
+
 export interface NetworkBadge {
   label: "TESTNET" | "MAINNET";
   network: "Galileo" | "Aristotle";
@@ -134,29 +178,24 @@ export interface NetworkBadge {
 }
 
 export function networkBadge(env: DashboardEnv): NetworkBadge {
-  const isMainnet = env.CHAIN_ID === 16661;
+  const mainnet = isMainnet(env.CHAIN_ID);
   return {
-    label: isMainnet ? "MAINNET" : "TESTNET",
-    network: isMainnet ? "Aristotle" : "Galileo",
-    oppositeLabel: isMainnet ? "TESTNET" : "MAINNET",
-    oppositeUrl: isMainnet
+    label: networkShortLabel(env.CHAIN_ID),
+    network: networkName(env.CHAIN_ID),
+    oppositeLabel: mainnet ? "TESTNET" : "MAINNET",
+    oppositeUrl: mainnet
       ? process.env.TESTNET_SITE_URL ?? CROSS_LINK_DEFAULTS.TESTNET_SITE_URL
       : process.env.MAINNET_SITE_URL ?? CROSS_LINK_DEFAULTS.MAINNET_SITE_URL,
   };
 }
 
 /**
- * Build a chainscan token URL for the active AgenticID + tokenId. Uses
- * the testnet explorer host today; when we swap to mainnet via env
- * override the explorer host should swap too — extend this helper at
- * that time (or thread CHAIN_ID into a chainscanHost lookup).
+ * Build a chainscan token URL for the active AgenticID + tokenId. Reads
+ * chainId → host via `chainscanHost`, AgenticID address from env, so a
+ * mainnet env override automatically points at chainscan.0g.ai.
  */
 export function chainscanTokenUrl(env: DashboardEnv, tokenId: string | number): string {
-  const host =
-    env.CHAIN_ID === 16661
-      ? "https://chainscan.0g.ai"
-      : "https://chainscan-galileo.0g.ai";
-  return `${host}/token/${env.AGENTICID_ADDRESS}?a=${tokenId}`;
+  return `${chainscanHost(env.CHAIN_ID)}/token/${env.AGENTICID_ADDRESS}?a=${tokenId}`;
 }
 
 /**

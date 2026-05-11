@@ -11,7 +11,14 @@ import Link from "next/link";
 
 import { FeedTable } from "@/components/FeedTable";
 import { TopBar } from "@/components/TopBar";
-import { DEMO_TOKEN_ID, loadEnv, shortAddress } from "@/lib/env";
+import {
+  DEMO_TOKEN_ID,
+  chainscanHost,
+  chainscanLinkLabel,
+  loadEnv,
+  networkLongLabel,
+  shortAddress,
+} from "@/lib/env";
 import { fetchRecentFeed, type FeedRow } from "@/lib/feed";
 
 export const dynamic = "force-dynamic";
@@ -53,8 +60,7 @@ function Hero({
   agenticIdAddress: string;
   chainId: number;
 }) {
-  const heroNetworkLabel =
-    chainId === 16661 ? "Live on Aristotle mainnet" : "Live on Galileo testnet";
+  const heroNetworkLabel = `Live on ${networkLongLabel(chainId)}`;
   return (
     <section className="grid gap-12 border-b border-border pb-12 lg:grid-cols-[1.15fr_0.85fr]">
       <div>
@@ -155,10 +161,12 @@ function Footer({
   agenticIdAddress: string;
   verifierAddress: string;
 }) {
-  const networkLabel = chainId === 16661 ? "0G Aristotle (mainnet)" : "0G Galileo (testnet)";
-  const explorerHost =
-    chainId === 16661 ? "https://chainscan.0g.ai" : "https://chainscan-galileo.0g.ai";
-  const explorerLabel = chainId === 16661 ? "Aristotle explorer ↗" : "Galileo explorer ↗";
+  // networkLongLabel returns "Aristotle mainnet" / "Galileo testnet";
+  // Footer prefixes with "0G " and parenthesises the env qualifier so
+  // the chip reads e.g. "0G Aristotle (mainnet)" / "0G Galileo (testnet)".
+  const networkLabel = `0G ${networkLongLabel(chainId).replace(/ (mainnet|testnet)$/, " ($1)")}`;
+  const explorerHost = chainscanHost(chainId);
+  const explorerLabel = chainscanLinkLabel(chainId);
   return (
     <footer className="mt-16 flex flex-wrap items-baseline justify-between gap-4 border-t border-border pt-6 font-mono text-[10px] uppercase tracking-[0.16em] text-text-secondary">
       <div>

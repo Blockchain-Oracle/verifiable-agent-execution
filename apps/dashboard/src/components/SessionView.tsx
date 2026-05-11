@@ -28,6 +28,7 @@ import Link from "next/link";
 import { EntryCard, type EntryStatus } from "./EntryCard";
 import { Mono } from "./Mono";
 import { VerificationTicker } from "./VerificationTicker";
+import { chainscanLinkLabel, networkLongLabel } from "@/lib/env";
 import type { ProofResponse } from "@/lib/verify-proof";
 
 const SEQUENTIAL_DELAY_MS = 220; // gap between per-entry verify fires
@@ -177,8 +178,7 @@ function NumericHero({
           {proof.tokenId}
         </div>
         <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
-          AgenticID iNFT ·{" "}
-          {proof.meta.chainId === 16661 ? "Aristotle mainnet" : "Galileo testnet"} ·
+          AgenticID iNFT · {networkLongLabel(proof.meta.chainId)} ·
           chainId {proof.meta.chainId}
         </div>
       </div>
@@ -314,7 +314,7 @@ function SessionRecord({ proof }: { proof: ProofResponse }) {
               target="_blank"
               rel="noreferrer"
             >
-              {proof.meta.chainId === 16661 ? "Aristotle explorer ↗" : "Galileo explorer ↗"}
+              {chainscanLinkLabel(proof.meta.chainId)}
             </Link>
           }
           sub="ERC-7857 · IntelligentDataSet"
