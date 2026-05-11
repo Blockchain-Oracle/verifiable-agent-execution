@@ -35,7 +35,9 @@ The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw
 - **Galileo AgenticID (OURS, Epic-7):** `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` — `contracts/contracts/AgenticID.sol`, 1:1 from `agenticID-examples/01-mint-and-manage`. Deployed 2026-05-10 (block 32602466, tx 0x57802912cc803e0e1cdd8e88b104fba630c628ac62581804961718c1be5071bd). Demo session at tokenId 0.
 - **Galileo MockTEEVerifier (OURS, Epic-7):** `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` — deployed 2026-05-10 with `teeOracleAddress` = deployer wallet (`0x3b56…33A3`). Block 32610650.
 - **0G's pre-deployed example AgenticID (legacy):** `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo — still on-chain, original example contract per ADR-08. We no longer point at it; `lib/env.ts` defaults moved to our deploy in commit 929d6a6.
-- **Mainnet (Aristotle) AgenticID + Verifier:** PENDING — deploy scheduled for Phase 2. We deploy our own (no public 0G mainnet AgenticID exists; verified across 5 sources — see ADR-13 / `memory/project_mainnet_required.md`).
+- **Mainnet (Aristotle) AgenticID:** `0xC6f7fB1511a7483C6e14258c70529e37ec698937` — deployed 2026-05-11 (block 32907005, tx 0x2f125874f4ef56a7e555baa0e8736f2b13cd7cdf03118b80e3f770ae16c5e636).
+- **Mainnet (Aristotle) MockTEEVerifier:** `0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2` — deployed 2026-05-11 (block 32907019), oracle rotated to deployer wallet via `updateOracleAddress` (block 32907160).
+- **Mainnet demo session:** tokenId 0, 5 entries (1 × 0G Compute TeeML inference + 4 × DeFi swap tool calls), rootHash 0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c, mint tx 0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152.
 - **TEE oracle (signing address, not a contract):** `0x04581d192d22510ced643eaced12ef169644811a` (hardcoded in `0g-agent-nft/scripts/deploy/deploy_tee.ts`)
 
 ## Top-3 commands

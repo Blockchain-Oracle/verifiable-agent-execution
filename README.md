@@ -131,7 +131,13 @@ pnpm --filter @verifiable-agent-execution/openclaw-skill exec node -e "import('.
 | Network | Chain ID | Status | AgenticID | MockTEEVerifier |
 |---|---|---|---|---|
 | **Galileo (testnet)** | 16602 | LIVE | [`0xd4a5eA…0E38`](https://chainscan-galileo.0g.ai/address/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38) | [`0x058fc3…C3AD`](https://chainscan-galileo.0g.ai/address/0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad) |
-| **Aristotle (mainnet)** | 16661 | PENDING (Phase 2) | TBD | TBD |
+| **Aristotle (mainnet)** | 16661 | **LIVE** | [`0xC6f7fB…8937`](https://chainscan.0g.ai/address/0xC6f7fB1511a7483C6e14258c70529e37ec698937) | [`0x4fffB5…58D2`](https://chainscan.0g.ai/address/0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2) |
+
+**Mainnet demo session:** tokenId 0 on [`0xC6f7fB…8937`](https://chainscan.0g.ai/token/0xC6f7fB1511a7483C6e14258c70529e37ec698937?a=0). Five anchored entries:
+- `seq 0` — REAL 0G Compute TeeML inference (qwen3.6-plus, provider `0x992e6396…`, verifiability `TeeML`)
+- `seq 1-4` — signed DeFi swap tool calls (quote, liquidity, simulate-swap, final-approval)
+- Mint tx: [`0xd1b14b30…dfb6d152`](https://chainscan.0g.ai/tx/0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152)
+- 0G Storage rootHash: `0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c`
 
 Mainnet deploy will land both contracts via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet`. See `context/docs/architecture.md` ADR-13 for why we deploy our own AgenticID instead of relying on 0G's testnet example.
 
