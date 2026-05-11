@@ -68,8 +68,10 @@
 **ADR-02: Sidecar approach — zero agent-wrapper modification**  
 Execution logger is an OpenClaw skill, not a fork of agent-wrapper. The skill reads `X-Agent-Id`, `X-Seal-Id`, `X-Signature`, `X-Timestamp` headers that agent-wrapper already adds to every proxied response. Entirely additive — upstream repo stays clean.
 
-**ADR-03: Pre-deployed AgenticID contract**  
-Official 0G deployment at `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo. No need to redeploy ERC-7857. Our only deploy is MockTEEVerifier for dev.
+**ADR-03: Pre-deployed AgenticID contract** — **SUPERSEDED BY ADR-13 (2026-05-10)**
+~~Official 0G deployment at `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo. No need to redeploy ERC-7857. Our only deploy is MockTEEVerifier for dev.~~
+
+**Current state:** we deploy our OWN AgenticID on both Galileo + Aristotle per ADR-13. 0G's example contract at `0x2700F6A3…EF1F` remains on-chain but is no longer load-bearing for this repo (the 0G APAC submission rule requires a mainnet contract address WE own).
 
 **ADR-04: One iNFT per session**  
 Each completed OpenClaw session gets one `iMint()` call producing one token. The token's single `IntelligentData` entry points to the session log blob in 0G Storage. No state accumulation, no update() call — each session is self-contained.
@@ -77,8 +79,8 @@ Each completed OpenClaw session gets one `iMint()` call producing one token. The
 **ADR-05: Session-flush storage model**  
 Log is accumulated in-process during the session and flushed as a single JSON blob to 0G Storage at session end. Crash mitigation: write a minimal `{sessionId, startedAt}` checkpoint blob at session start.
 
-**ADR-06: MockTEEVerifier for dev, real TEE for demo**  
-Official 0G docs recommend MockOracle for testnet dev. MockTEEVerifier accepts any 65-byte ECDSA sig over a `bytes32` dataHash. For the demo we point the verifier's `teeOracleAddress` storage slot at the canonical 0G TEE oracle `0x04581d192d22510ced643eaced12ef169644811a` (hardcoded in `0gfoundation/0g-agent-nft/scripts/deploy/deploy_tee.ts`). Production verifier source: `0gfoundation/0g-agent-nft/contracts/TeeVerifier.sol` — implements `verifyTEESignature(bytes32, bytes calldata) → bool` via OpenZeppelin `ECDSA.recover`.
+**ADR-06: MockTEEVerifier for dev, real TEE for demo** — **AMENDED BY ADR-13 (2026-05-10)**
+MockTEEVerifier still accepts any 65-byte ECDSA sig over a `bytes32` dataHash via OpenZeppelin `ECDSA.recover`. The **`teeOracleAddress`** is no longer the canonical 0G `0x04581d…811a` — it's now the **deployer wallet** by default (so signatures the demo produces with our wallet recover correctly without needing access to 0G's reference oracle key). Production verifier source remains `0gfoundation/0g-agent-nft/contracts/TeeVerifier.sol`; deployments + oracle rotation flow live in `contracts/scripts/{deploy-all,update-oracle}.ts`.
 
 **ADR-07: TEE proof source — agent-wrapper headers (PRIMARY) and Compute SDK chatID (FALLBACK)**
 
@@ -99,19 +101,19 @@ Adapter layer: reconstruct the signing message (`sealId + "|" + agentId + "|" + 
 
 **Why agent-wrapper wins for our spec:** the X-* headers are inline, raw, and shaped exactly like `TEEVerifier.verifyTEESignature(bytes32, bytes)` expects. Off-chain `processResponse` is fine for the dashboard's "TEE Verified" badge but does not produce a chain-anchored proof.
 
-**ADR-08: Use the example AgenticID contract; promote later**
+**ADR-08: Use the example AgenticID contract; promote later** — **SUPERSEDED BY ADR-13 (2026-05-10)**
 
-The deployed `AgenticID` at `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo is the simplified `agenticID-examples/01-mint-and-manage/AgenticID.sol` (verified by `name()` + `symbol()` + `mintFee()` reads and confirmed against the source-of-truth audit). It does **not** enforce a schema on `IntelligentData[]` — we mint a single entry shaped `{ dataDescription: "exec-log:<sessionId>:<modelId>", dataHash: rootHash }` per session. A live read of token 0 shows the contract has been used "as designed" by the deployer (entries `agent_name`, `model`, `capabilities`, `system_prompt`); our `exec-log:*` shape is a different convention on the same primitive.
+~~The deployed `AgenticID` at `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo is the simplified `agenticID-examples/01-mint-and-manage/AgenticID.sol`...~~
 
-For the hackathon scope this is fine. Production migration to `0gfoundation/0g-agent-nft/AgentNFT.sol` (which adds a real `verifier()` getter, an `intelligentDatasOf` accessor instead of `getIntelligentDatas`, and may add schema validation) is **post-hackathon work**. If we ever switch, the call sites change but the wedge does not.
+**Current state (ADR-13):** we ship the same `agenticID-examples/01-mint-and-manage/AgenticID.sol` source — but as **our own deploy** on both Galileo (`0xd4a5eA…0E38`) and Aristotle (`0xC6f7fB…8937`). The "same primitive, different deployer" framing from this ADR still holds; the IntelligentData shape is unchanged (`{ dataDescription: "exec-log:<sessionId>:<modelId>", dataHash: rootHash }`). Production migration to `0gfoundation/0g-agent-nft/AgentNFT.sol` remains post-hackathon work.
 
 **ADR-09: 0G Chain compiler settings — `evmVersion: "cancun"` is mandatory**
 
 Per `0gfoundation/0g-agent-skills/patterns/CHAIN.md`, all 0G Chain Solidity must be compiled with `evmVersion: "cancun"`. Skipping this produces a contract that deploys cleanly and reverts at runtime with "invalid opcode" because OpenZeppelin's `ECDSA.recover` uses opcodes that need cancun. Story `story-tee-verifier-contract` carries this requirement in its `hardhat.config.ts` template; do not strip it.
 
-**ADR-10: Trust boundary — TEE-rooted, not trustless**
+**ADR-10: Trust boundary — TEE-rooted, not trustless** — **AMENDED BY ADR-13 (2026-05-10)**
 
-The verification chain only proves attribution and integrity, not correctness. Every receipt is rooted in trust that 0G's TEE oracle (`0x04581d192d22510ced643eaced12ef169644811a`) was generated inside a real, attested Trusted Execution Environment and that its private key has not been compromised. We pitch this as **"TEE-rooted verification"** rather than "trustless verification" — the precision is a feature, not a weakness, because a competent judge can tell the difference. Pitching trustlessness when the trust root is a single oracle key would mislead the audience and lose more points than it would win.
+The verification chain only proves attribution and integrity, not correctness. Every receipt is rooted in trust that the verifier's configured **`teeOracleAddress`** holds the seal key that signed the response — and that the seal key was generated inside an attested TEE. **Per ADR-13 the configured oracle is now the deployer wallet** (`0x3b56…33A3`) on both our Galileo + Aristotle deploys, NOT the historical 0G reference oracle `0x04581d…811a` — so for the hackathon the trust root is "Abu's off-chain signer simulating a TEE seal key" rather than "0G's TDX-attested oracle." This is honest about scope: pitching trustlessness would mislead; pitching TEE-rooted-via-real-TDX would over-claim. Production upgrade is straightforward — call `updateOracleAddress` (an `onlyOwner` tx, see `contracts/scripts/update-oracle.ts`) once 0G ships a public TDX-attested oracle endpoint for our network.
 
 **ADR-11: Demo arc — REVERSE order (verifier first, agent second)**
 

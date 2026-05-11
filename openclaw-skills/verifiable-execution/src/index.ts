@@ -139,7 +139,10 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
   // path. First run generates + persists to ~/.openclaw/verifiable-execution/wallet.json.
   // Subsequent runs read from disk. PRIVATE_KEY env still works as
   // an advanced override.
-  const wallet = resolveWallet();
+  // Honor config.privateKeyEnvVar so operators running multiple agents
+  // on one host can keep their keys in different env vars.
+  // (Codex P2 on PR #23: previously the env-var name was fixed at PRIVATE_KEY.)
+  const wallet = resolveWallet({ envVarName: config.privateKeyEnvVar });
   printFirstRunBanner(wallet);
   structuredLog("INFO", "wallet", "Wallet resolved", {
     address: wallet.address,

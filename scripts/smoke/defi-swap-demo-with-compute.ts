@@ -202,8 +202,13 @@ interface ComputeInferenceResult {
    * chatID header) and we don't claim either outcome.
    */
   teeVerified: boolean | null;
-  /** chatID parsed from the `ZG-Res-Key` response header. */
-  chatID: string | null;
+  /**
+   * chatID parsed from the `ZG-Res-Key` response header. Guaranteed
+   * non-empty — callComputeProvider hard-fails before returning if
+   * the provider didn't emit the header (ADR-07 verification
+   * impossible without it).
+   */
+  chatID: string;
 }
 
 /**
@@ -337,9 +342,21 @@ async function callComputeProvider(opts: {
   }
 
   // Extract chatID from the ZG-Res-Key header per ADR-07. The header is
-  // emitted by 0G Compute provider responses; processResponse() uses it
-  // to fetch the TeeML attestation chain off-chain and return a verdict.
+  // REQUIRED — 0G Compute providers MUST emit it so processResponse can
+  // pull the TeeML attestation. A response missing this header cannot
+  // be ADR-07-verified and therefore can't be honestly anchored as a
+  // TEE-verified inference. Hard-fail BEFORE touching SessionAnchor so
+  // we never mint with `chatID: null` in the log entry (story-epic-07
+  // Scenario 3 acceptance line: "the ZG-Res-Key response header is
+  // captured as chatID").
   const chatID = httpRes.headers.get("zg-res-key");
+  if (!chatID || chatID.length === 0) {
+    throw new Error(
+      "[demo-compute] Provider response missing ZG-Res-Key header — " +
+        "ADR-07 processResponse verification impossible. Refusing to " +
+        "anchor an inference entry that can't be off-chain verified.",
+    );
+  }
   const json = (await httpRes.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
@@ -354,26 +371,23 @@ async function callComputeProvider(opts: {
   // boolean. We log + record both the verdict and the chatID so the
   // anchored proof carries the verification record alongside the raw
   // response.
+  // chatID is guaranteed non-empty here (hard-failed above if header
+  // was missing). teeVerified can still be `null` if processResponse
+  // itself errors on transport — distinct from a `false` verdict.
   let teeVerified: boolean | null = null;
-  if (chatID) {
-    try {
-      console.log("[demo-compute] === processResponse (TeeML verify) ===");
-      const verdict = (await (
-        broker.inference as unknown as {
-          processResponse: (provider: string, chatID: string) => Promise<boolean>;
-        }
-      ).processResponse(providerAddress, chatID)) as boolean;
-      teeVerified = Boolean(verdict);
-      console.log(`[demo-compute]   processResponse → ${teeVerified}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(`[demo-compute]   processResponse failed: ${msg.slice(0, 200)}`);
-      // teeVerified stays null — distinct from a `false` verdict, so the
-      // anchored proof reflects "verification path unreachable" rather
-      // than "verification ran and rejected the response."
-    }
-  } else {
-    console.log("[demo-compute]   no ZG-Res-Key header — skipping processResponse");
+  try {
+    console.log("[demo-compute] === processResponse (TeeML verify) ===");
+    const verdict = (await (
+      broker.inference as unknown as {
+        processResponse: (provider: string, chatID: string) => Promise<boolean>;
+      }
+    ).processResponse(providerAddress, chatID)) as boolean;
+    teeVerified = Boolean(verdict);
+    console.log(`[demo-compute]   processResponse → ${teeVerified}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[demo-compute]   processResponse failed: ${msg.slice(0, 200)}`);
+    // teeVerified stays null — distinct from a `false` verdict.
   }
 
   return {

@@ -68,27 +68,32 @@ async function main(): Promise<void> {
   }).teeOracleAddress()) as string;
   console.log(`[update-oracle] Current oracle: ${currentOracle}`);
 
+  let onChainOracle = currentOracle;
   if (currentOracle.toLowerCase() === newOracle.toLowerCase()) {
-    console.log("[update-oracle] Oracle already matches; nothing to do.");
-    return;
+    console.log("[update-oracle] On-chain oracle already matches — skipping tx.");
+  } else {
+    const tx = await (verifier as unknown as {
+      updateOracleAddress: (
+        addr: string,
+      ) => Promise<import("ethers").ContractTransactionResponse>;
+    }).updateOracleAddress(newOracle);
+    console.log(`[update-oracle] Tx sent:        ${tx.hash}`);
+    const receipt = await tx.wait();
+    console.log(`[update-oracle] Tx confirmed in block ${receipt?.blockNumber ?? "(unknown)"}`);
+
+    onChainOracle = (await (verifier as unknown as {
+      teeOracleAddress: () => Promise<string>;
+    }).teeOracleAddress()) as string;
+    console.log(`[update-oracle] New oracle on-chain: ${onChainOracle}`);
   }
 
-  const tx = await (verifier as unknown as {
-    updateOracleAddress: (
-      addr: string,
-    ) => Promise<import("ethers").ContractTransactionResponse>;
-  }).updateOracleAddress(newOracle);
-  console.log(`[update-oracle] Tx sent:        ${tx.hash}`);
-  const receipt = await tx.wait();
-  console.log(`[update-oracle] Tx confirmed in block ${receipt?.blockNumber ?? "(unknown)"}`);
-
-  const updatedOracle = (await (verifier as unknown as {
-    teeOracleAddress: () => Promise<string>;
-  }).teeOracleAddress()) as string;
-  console.log(`[update-oracle] New oracle on-chain: ${updatedOracle}`);
-
-  // Persist the change to the deployment record so future scripts read
-  // the correct oracle without on-chain reads.
+  // ALWAYS reconcile the deployment record with the on-chain oracle
+  // (even when no tx was sent). The no-op-on-tx path used to skip this
+  // step, which left local JSON state stale whenever someone re-ran the
+  // script after a successful rotation — Codex caught it on PR #23.
+  // Idempotency rule: after this script returns successfully,
+  // deployments/<network>/MockTEEVerifier.json.teeOracleAddress MUST
+  // match the live on-chain teeOracleAddress() value.
   const deploymentPath = path.resolve(
     __dirname,
     "..",
@@ -96,12 +101,19 @@ async function main(): Promise<void> {
     network.name,
     "MockTEEVerifier.json",
   );
-  if (fs.existsSync(deploymentPath)) {
-    const record = JSON.parse(fs.readFileSync(deploymentPath, "utf8")) as Record<string, unknown>;
-    record.teeOracleAddress = updatedOracle;
-    fs.writeFileSync(deploymentPath, `${JSON.stringify(record, null, 2)}\n`);
-    console.log(`[update-oracle] Updated deployment record: ${deploymentPath}`);
+  if (!fs.existsSync(deploymentPath)) {
+    console.log(`[update-oracle] No deployment record at ${deploymentPath} — skipping JSON sync.`);
+    return;
   }
+  const record = JSON.parse(fs.readFileSync(deploymentPath, "utf8")) as Record<string, unknown>;
+  const recordOracle = typeof record.teeOracleAddress === "string" ? record.teeOracleAddress : "";
+  if (recordOracle.toLowerCase() === onChainOracle.toLowerCase()) {
+    console.log(`[update-oracle] Deployment record already in sync: ${deploymentPath}`);
+    return;
+  }
+  record.teeOracleAddress = onChainOracle;
+  fs.writeFileSync(deploymentPath, `${JSON.stringify(record, null, 2)}\n`);
+  console.log(`[update-oracle] Reconciled deployment record (${recordOracle || "<missing>"} → ${onChainOracle}): ${deploymentPath}`);
 }
 
 main().catch((err) => {

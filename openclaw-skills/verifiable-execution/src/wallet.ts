@@ -60,16 +60,25 @@ export interface ResolvedWallet {
 /**
  * Resolve the plugin's signing wallet. Three sources, checked in order:
  *
- *   1. process.env.PRIVATE_KEY  → highest priority (advanced override)
+ *   1. process.env[envVarName]  → highest priority (advanced override)
+ *      Default envVarName is "PRIVATE_KEY"; the plugin's
+ *      `config.privateKeyEnvVar` can override it so operators with
+ *      multiple agents on one host can keep their keys in different
+ *      env vars (e.g. PRIVATE_KEY_AGENT_A, PRIVATE_KEY_AGENT_B).
  *   2. ~/.openclaw/verifiable-execution/wallet.json  → auto-managed
  *   3. Generate a fresh wallet  → first-run path
  *
  * Returns synchronously — no network calls. Funding is the user's
  * responsibility (we surface the faucet URL on first-run).
  */
-export function resolveWallet(): ResolvedWallet {
-  // 1. Env override
-  const envKey = process.env.PRIVATE_KEY;
+export function resolveWallet(opts?: { envVarName?: string }): ResolvedWallet {
+  // 1. Env override — read from the configured env-var name, defaulting
+  //    to PRIVATE_KEY. (Codex P2 on PR #23: prior version always read
+  //    process.env.PRIVATE_KEY directly and silently ignored
+  //    config.privateKeyEnvVar, regressing the documented schema
+  //    semantics.)
+  const envVarName = opts?.envVarName ?? "PRIVATE_KEY";
+  const envKey = process.env[envVarName];
   if (typeof envKey === "string" && envKey.length > 0) {
     const w = new Wallet(envKey);
     return { privateKey: envKey, address: w.address, source: "env" };
