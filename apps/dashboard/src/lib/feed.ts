@@ -224,12 +224,50 @@ async function binarySearchLatestTokenId(contract: Contract): Promise<bigint> {
   return lo;
 }
 
+/**
+ * Heuristic: does a thrown error correspond to "the token simply does
+ * not exist on this contract" (a known revert path with a specific
+ * require-string), as opposed to a network/transport/decoding failure?
+ *
+ * AgenticID.sol's `getIntelligentDatas` reverts with the require-string
+ * `"Token does not exist"` when `_ownerOf(tokenId) == address(0)`. Anything
+ * else — RPC timeout, indexer 5xx, ABI decode mismatch — is a real
+ * problem that should propagate so the caller can fail loudly instead
+ * of mistaking infrastructure flakiness for an empty token slot.
+ * Closes Codex round-9 P1 finding on PR #23.
+ */
+function isTokenDoesNotExistRevert(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const e = err as {
+    code?: string;
+    reason?: string;
+    shortMessage?: string;
+    message?: string;
+    revert?: { args?: unknown[] };
+  };
+  // ethers v6 normalizes `require(false, "Token does not exist")` to
+  // {code: "CALL_EXCEPTION", reason: "Token does not exist", revert: {…}}.
+  if (e.code === "CALL_EXCEPTION") {
+    if (typeof e.reason === "string" && e.reason.includes("Token does not exist")) {
+      return true;
+    }
+    // Some providers surface the message but not `.reason`; check shortMessage/message too.
+    const combined = `${e.shortMessage ?? ""} ${e.message ?? ""}`;
+    if (combined.includes("Token does not exist")) return true;
+  }
+  return false;
+}
+
 async function tokenExists(contract: Contract, id: bigint): Promise<boolean> {
   try {
     await contract.getIntelligentDatas(id);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (isTokenDoesNotExistRevert(err)) return false;
+    // Real failure (RPC down, indexer 5xx, malformed response). Propagate
+    // so the binary-search caller surfaces an error instead of silently
+    // narrowing toward 0 and reporting an empty feed.
+    throw err;
   }
 }
 
@@ -237,18 +275,31 @@ async function fetchOneRow(contract: Contract, id: bigint): Promise<FeedRow | nu
   let datas: ReadonlyArray<{ dataDescription: string; dataHash: string }>;
   try {
     datas = await contract.getIntelligentDatas(id);
-  } catch {
-    // Token doesn't exist (contract reverts) → skip.
-    return null;
+  } catch (err) {
+    // Distinguish "this token doesn't exist on the contract" (a normal
+    // miss during the backward walk — skip the row) from any other
+    // failure (RPC down, ABI mismatch — propagate so the caller knows
+    // the feed is incomplete).
+    if (isTokenDoesNotExistRevert(err)) return null;
+    throw err;
   }
   const exec = datas.find((d) => d.dataDescription?.startsWith?.("exec-log:"));
   if (exec === undefined) return null;
 
-  let owner = "0x0000000000000000000000000000000000000000";
+  // ownerOf failure is NOT silently masked anymore. Burned tokens are
+  // the only case where this should revert on a token that
+  // `getIntelligentDatas` accepted, and we don't burn tokens — so a
+  // miss here is more likely an RPC blip and surfacing it is honest
+  // (per Codex round-9 P2). The whole row is skipped on failure
+  // rather than emitting a synthetic 0x000…000 "owner."
+  let owner: string;
   try {
     owner = (await contract.ownerOf(id)) as string;
-  } catch {
-    // ownerOf can revert on burned tokens; non-fatal for the feed row.
+  } catch (err) {
+    // Bubble so the caller can decide. fetchRecentFeed / fetchTokensForAgent
+    // can drop the row (return null) here — they already filter null.
+    if (isTokenDoesNotExistRevert(err)) return null;
+    throw err;
   }
 
   const parts = exec.dataDescription.split(":");
