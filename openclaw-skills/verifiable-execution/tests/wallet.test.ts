@@ -103,27 +103,34 @@ describe("resolveWallet — env override", () => {
   });
 });
 
-describe("resolveWallet — corrupt on-disk wallet recovery", () => {
-  it("regenerates a fresh wallet when the on-disk file is unparseable JSON", () => {
+describe("resolveWallet — corrupt on-disk wallet HARD-FAILS (no silent regen)", () => {
+  // Behavior pinned by Codex bot round-10 P1 on PR #23:
+  // silent fallback to fresh-gen on a corrupt wallet file would
+  // orphan a previously-funded keypair without any operator signal,
+  // breaking session-identity continuity. Throw with a recovery hint
+  // instead; force the operator to deliberately move/delete the file
+  // to force fresh generation.
+
+  it("throws when the on-disk file is unparseable JSON (does NOT regenerate silently)", () => {
     const dir = join(tempHome, ".openclaw", "verifiable-execution");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "wallet.json"), "this is not json");
-    const result = walletModule.resolveWallet();
-    expect(result.source).toBe("fresh");
-    // The new wallet was persisted, overwriting the corrupt file
-    const fresh = JSON.parse(readFileSync(join(dir, "wallet.json"), "utf8"));
-    expect(fresh.address).toBe(result.address);
+    expect(() => walletModule.resolveWallet()).toThrow(/not valid JSON/);
+    // Recovery hint: the error message should tell the operator how to fix it.
+    expect(() => walletModule.resolveWallet()).toThrow(/Move\/delete the file/);
+    // The corrupt file is preserved (NOT overwritten) so the operator can inspect it.
+    expect(readFileSync(join(dir, "wallet.json"), "utf8")).toBe("this is not json");
   });
 
-  it("regenerates when the file is missing privateKey field", () => {
+  it("throws when the file is missing privateKey field (does NOT regenerate silently)", () => {
     const dir = join(tempHome, ".openclaw", "verifiable-execution");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "wallet.json"),
       JSON.stringify({ address: "0xabc", createdAt: "..." }),
     );
-    const result = walletModule.resolveWallet();
-    expect(result.source).toBe("fresh");
+    expect(() => walletModule.resolveWallet()).toThrow(/missing a valid privateKey/);
+    expect(() => walletModule.resolveWallet()).toThrow(/Move\/delete the file/);
   });
 });
 

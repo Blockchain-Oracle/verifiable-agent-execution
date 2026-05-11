@@ -86,24 +86,52 @@ export function resolveWallet(opts?: { envVarName?: string }): ResolvedWallet {
 
   // 2. Disk fast-path
   if (existsSync(CONFIG_PATH)) {
+    // If the file EXISTS but is unreadable/malformed, FAIL LOUDLY
+    // instead of silently regenerating. Silent regen would orphan a
+    // previously-funded wallet — the operator wouldn't know their
+    // session identity changed, and the new wallet would have no
+    // funds to mint with. (Codex bot round-10 P1 on PR #23.)
+    //
+    // Recovery: deliberately delete or move the file aside and re-run
+    // (which falls through to fresh-gen below), or restore from a
+    // backup if the wallet was funded.
+    let raw: string;
     try {
-      const raw = readFileSync(CONFIG_PATH, "utf8");
-      const persisted = JSON.parse(raw) as PersistedWallet;
-      // Sanity: ensure the persisted file is well-formed. If a user
-      // hand-edited the file and broke it, fall through to fresh-gen
-      // rather than crashing the plugin.
-      if (typeof persisted.privateKey === "string" && persisted.privateKey.length > 0) {
-        return {
-          privateKey: persisted.privateKey,
-          address: persisted.address ?? new Wallet(persisted.privateKey).address,
-          source: "auto",
-        };
-      }
-    } catch {
-      // Corrupt / unreadable → regenerate. Don't lose the chance to
-      // bring the plugin up; the worst case is the user has to
-      // re-fund a new address.
+      raw = readFileSync(CONFIG_PATH, "utf8");
+    } catch (cause) {
+      throw new Error(
+        `Wallet file at ${CONFIG_PATH} exists but is unreadable: ` +
+          `${(cause as Error).message ?? String(cause)}. ` +
+          `Refusing to regenerate silently — that would orphan any ` +
+          `funded keypair. Move/delete the file deliberately to force ` +
+          `fresh generation, or restore from backup.`,
+      );
     }
+    let persisted: PersistedWallet;
+    try {
+      persisted = JSON.parse(raw) as PersistedWallet;
+    } catch (cause) {
+      throw new Error(
+        `Wallet file at ${CONFIG_PATH} is not valid JSON: ` +
+          `${(cause as Error).message ?? String(cause)}. ` +
+          `Refusing to regenerate silently — that would orphan any ` +
+          `funded keypair. Move/delete the file deliberately to force ` +
+          `fresh generation, or restore from backup.`,
+      );
+    }
+    if (typeof persisted.privateKey !== "string" || persisted.privateKey.length === 0) {
+      throw new Error(
+        `Wallet file at ${CONFIG_PATH} is missing a valid privateKey ` +
+          `field. Refusing to regenerate silently — that would orphan ` +
+          `any funded keypair. Move/delete the file deliberately to ` +
+          `force fresh generation, or restore from backup.`,
+      );
+    }
+    return {
+      privateKey: persisted.privateKey,
+      address: persisted.address ?? new Wallet(persisted.privateKey).address,
+      source: "auto",
+    };
   }
 
   // 3. Fresh generation + persist
