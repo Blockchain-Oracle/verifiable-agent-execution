@@ -12,7 +12,13 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@verifiable-agent-execution/logger": ["packages/logger/src/index.ts"],
+      "@verifiable-agent-execution/chain-client": ["packages/chain-client/src/index.ts"],
+      "@verifiable-agent-execution/tee-adapter": ["packages/tee-adapter/src/index.ts"]
+    }
   },
   "include": [
     "playwright.config.ts",

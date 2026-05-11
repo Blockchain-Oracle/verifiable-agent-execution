@@ -293,10 +293,13 @@ async function callComputeProvider(opts: {
   }
   console.log(`[demo-compute]   endpoint: ${endpoint}`);
 
-  const headers = (await broker.inference.getRequestHeaders(providerAddress)) as Record<
-    string,
-    string
-  >;
+  // ServingRequestHeaders from the 0G SDK is a structural type with
+  // specific keys (Address, Service, Input-Fee, etc.) — fetch alone
+  // requires a plain string-keyed record. Cast through unknown to
+  // bridge the two without losing type safety on what the SDK exposes.
+  const headers = (await broker.inference.getRequestHeaders(
+    providerAddress,
+  )) as unknown as Record<string, string>;
 
   const requestBody = {
     model: apiModel,

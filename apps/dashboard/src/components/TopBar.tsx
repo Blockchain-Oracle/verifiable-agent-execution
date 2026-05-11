@@ -62,11 +62,20 @@ function NetworkChip({
   badge: ReturnType<typeof networkBadge>;
   isMainnet: boolean;
 }) {
-  // Static label (left half) styled per network; cross-link (right half)
-  // links to the sibling deployment when a URL is configured. On
-  // localhost the default URLs aren't reachable — render the chip without
-  // the link so we don't paint a 404.
-  const labelClasses = isMainnet
+  // LIVE pulsing dot + network label (Etherscan-style live indicator).
+  // The dot color signals network: mainnet uses accent-verify (#10B981);
+  // testnet uses muted (text-secondary). The pulse animation comes from
+  // Tailwind's built-in `animate-ping` overlaid on a solid core dot so
+  // the indicator is legible on the dark surface.
+  //
+  // Cross-link (right half) jumps to the sibling deployment when a URL
+  // is configured. On localhost the default URLs aren't reachable —
+  // render the chip without the link so we don't paint a 404.
+  const dotCore = isMainnet ? "bg-accent-verify" : "bg-text-secondary";
+  const dotPing = isMainnet
+    ? "bg-accent-verify/60"
+    : "bg-text-secondary/60";
+  const chipClasses = isMainnet
     ? "border-accent-verify/40 bg-accent-verify/10 text-accent-verify"
     : "border-border bg-surface text-text-secondary";
 
@@ -76,12 +85,22 @@ function NetworkChip({
   return (
     <div
       className="hidden items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] md:flex"
-      aria-label={`Active network: ${badge.label}`}
+      aria-label={`Live on ${badge.label}`}
     >
       <span
-        className={`rounded-sm border px-2 py-1 ${labelClasses}`}
+        className={`flex items-center gap-1.5 rounded-sm border px-2 py-1 ${chipClasses}`}
       >
-        {badge.label}
+        <span className="relative inline-flex h-1.5 w-1.5">
+          <span
+            className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${dotPing}`}
+            aria-hidden="true"
+          />
+          <span
+            className={`relative inline-flex h-1.5 w-1.5 rounded-full ${dotCore}`}
+            aria-hidden="true"
+          />
+        </span>
+        <span>Live · {badge.label}</span>
       </span>
       {showCrossLink ? (
         <a

@@ -32,41 +32,107 @@ Anyone clicks the URL on any device — no wallet, no login, no setup. Etherscan
 
 ---
 
-## Try it (live, on Galileo testnet)
+## Plug-and-play (the canonical UX)
 
-> **Pre-minted demo session — tokenId 0 — DeFi swap simulator (4 signed steps), anchored to OUR AgenticID.**
+The product is an **OpenClaw plugin**, not a script. Install it once in your OpenClaw config; from that point every agent session auto-anchors to 0G with zero per-session friction.
 
-```bash
-# 1. Clone + install (one shot)
-git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
-cd verifiable-agent-execution
-pnpm install
-
-# 2. Start the dashboard (zero env vars needed — constants baked in)
-pnpm --filter @verifiable-agent-execution/dashboard dev
-
-# 3. Open the demo proof
-open http://localhost:3000/verify/0
+```jsonc
+// ~/.openclaw/config.json  →  plugins block
+{
+  "plugins": [
+    {
+      "path": "<path-to-this-repo>/openclaw-skills/verifiable-execution",
+      "config": {
+        // Galileo testnet (default, recommended for first run):
+        "rpcUrl": "https://evmrpc-testnet.0g.ai",
+        "indexerUrl": "https://indexer-storage-testnet-turbo.0g.ai",
+        "agenticIdAddress": "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38",
+        "verifierAddress": "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
+        "chainId": 16602,
+        "verifyUrlBase": "https://verifiable.0g.ai",
+        "agentId": "<your-0x-address>",
+        "modelId": "claude-sonnet-4-6"
+      }
+    }
+  ]
+}
 ```
 
-You'll see the 4-step DeFi swap session, fully decoded (`quote → liquidity → simulate-swap → final-approval`) with green TEE Verified badges flipping in sequence.
+### First-run flow (testnet, fully automatic)
+
+1. **Plugin auto-creates a wallet** on first load and persists it to `~/.openclaw/verifiable-execution/wallet.json` (mode 0o600). No `PRIVATE_KEY` env var to manage. (Override via env if you want — see `privateKeyEnvVar` in the schema.)
+2. The plugin prints a banner to stderr the FIRST time:
+   ```
+   ═══════════════════════════════════════════════════════════════
+     Verifiable Execution — First Run Setup
+     Wallet:    0xABC...                              ← YOUR address
+     Saved to:  ~/.openclaw/verifiable-execution/wallet.json
+     Network:   0G Galileo testnet (chainId 16602)
+
+     Fund this wallet ONCE so the plugin can mint proofs:
+       1. Visit https://faucet.0g.ai
+       2. Paste:  0xABC...
+       3. Claim 0.1 0G (free, daily limit)
+   ═══════════════════════════════════════════════════════════════
+   ```
+3. **Claim from the faucet once.** That's the only setup.
+4. **Run OpenClaw normally.** Every session you complete auto-anchors at session-end and the plugin emits a structured log line with the verify URL:
+   ```json
+   {"level":"INFO","component":"session_end","msg":"Session anchored on-chain",
+    "data":{"tokenId":"123","verifyUrl":"https://verifiable.0g.ai/verify/16602/123"}}
+   ```
+
+### Switching to mainnet
+
+Swap the testnet block in `config` for these values — wallet, faucet flow, everything else stays the same. Mainnet has no faucet, so fund the wallet via a CEX withdrawal to native 0G chain (Aristotle, chainId 16661).
+
+```jsonc
+{
+  "rpcUrl": "https://evmrpc.0g.ai",
+  "indexerUrl": "https://indexer-storage-turbo.0g.ai",
+  "agenticIdAddress": "0xC6f7fB1511a7483C6e14258c70529e37ec698937",
+  "verifierAddress":  "0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2",
+  "chainId": 16661,
+  // ... other fields unchanged
+}
+```
 
 ---
 
-## Mint your own session
+## Verify the pre-minted demo (no install needed)
+
+If you just want to SEE a proof — no setup, no wallet — run the dashboard locally and open the canonical demo:
 
 ```bash
-# Set up your wallet — first run AUTO-creates one
-pnpm --filter @verifiable-agent-execution/openclaw-skill exec node -e "import('./src/wallet.js').then(m => m.printFirstRunBanner(m.resolveWallet()))"
-
-# It prints something like:
-#   Wallet:    0xABC...
-#   Saved to:  ~/.openclaw/verifiable-execution/wallet.json
-#   Fund:      Visit https://faucet.0g.ai → paste 0xABC... → claim 0.1 0G
-
-# After funding (one-time), every OpenClaw session you run with this
-# plugin enabled will auto-anchor and print a /verify/<tokenId> URL.
+git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
+cd verifiable-agent-execution
+pnpm install
+pnpm --filter @verifiable-agent-execution/dashboard dev    # zero env vars
+open http://localhost:3000/verify/0                         # the demo proof
 ```
+
+Or skip the dashboard entirely and read the iNFT on-chain:
+- Galileo: https://chainscan-galileo.0g.ai/token/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38?a=0
+- Aristotle: https://chainscan.0g.ai/token/0xC6f7fB1511a7483C6e14258c70529e37ec698937?a=0
+
+You'll see the multi-step session, fully decoded, with green TEE Verified badges flipping in sequence.
+
+---
+
+## Dev scripts (internals)
+
+Smoke scripts under `scripts/smoke/` exercise the same code path as the plugin but as one-shot programs — useful for re-minting the demo session against a fresh contract, debugging the SDK surface, or sanity-checking new deploys.
+
+```bash
+# Re-mint the 4-entry DeFi swap demo on testnet (idempotent; produces a NEW tokenId)
+set -a && source .env && set +a
+pnpm exec tsx scripts/smoke/defi-swap-demo.ts
+
+# 5-entry version: prepends a REAL 0G Compute TeeML inference call (requires ≥4 0G in wallet on mainnet for ledger bootstrap)
+pnpm exec tsx scripts/smoke/defi-swap-demo-with-compute.ts
+```
+
+These are the same scripts the deploy walkthrough in `DEMO.md` uses; they're not the recommended UX for shipping an agent, just for repo maintainers.
 
 ---
 

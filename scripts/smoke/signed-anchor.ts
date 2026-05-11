@@ -60,8 +60,11 @@ if (!RPC || !INDEXER_URL || !AGENTICID_ADDRESS || !PRIVATE_KEY) {
 }
 
 async function main(): Promise<void> {
+  // Early-exit above narrows these at runtime; TS can't carry the
+  // narrowing across the function boundary because they're module-
+  // scoped. Non-null assertion is safe given the explicit guard.
   const provider = new JsonRpcProvider(RPC);
-  const signer = new Wallet(PRIVATE_KEY, provider);
+  const signer = new Wallet(PRIVATE_KEY!, provider);
   console.log(`[signed-anchor] Signer (TEE oracle): ${signer.address}`);
 
   const network = await provider.getNetwork();
@@ -95,10 +98,10 @@ async function main(): Promise<void> {
   console.log(`[signed-anchor] signature: ${sig}`);
 
   // 2. Allocate SessionLogger + StorageClient, append the entry.
-  const indexer = new Indexer(INDEXER_URL);
+  const indexer = new Indexer(INDEXER_URL!);
   const storageClient = new StorageClient({
-    rpcUrl: RPC,
-    indexerUrl: INDEXER_URL,
+    rpcUrl: RPC!,
+    indexerUrl: INDEXER_URL!,
     signer,
     indexer: indexer as unknown as IndexerLike,
   });
@@ -117,7 +120,7 @@ async function main(): Promise<void> {
   });
 
   // 3. Mint via SessionAnchor.
-  const agenticIdClient = new AgenticIDClient(AGENTICID_ADDRESS, provider, signer);
+  const agenticIdClient = new AgenticIDClient(AGENTICID_ADDRESS!, provider, signer);
   const anchor = new SessionAnchor(logger, agenticIdClient, agentId, modelId, {
     chainId: 16602,
   });
