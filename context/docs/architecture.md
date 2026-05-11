@@ -157,12 +157,23 @@ Decided 2026-05-10 in response to two concurrent findings:
 ```
 verifiable-agent-execution/
 ├── contracts/
-│   ├── MockTEEVerifier.sol          # Dev verifier — accepts any valid sig
-│   └── interfaces/
-│       └── ITEEVerifier.sol          # Shared interface
-├── scripts/
-│   └── deploy-mock.ts               # Hardhat deploy: MockTEEVerifier
-├── hardhat.config.ts
+│   ├── contracts/
+│   │   ├── MockTEEVerifier.sol       # Dev verifier — OZ ECDSA.recover
+│   │   ├── AgenticID.sol             # Epic-7 ERC-7857 (1:1 agenticID-examples/01)
+│   │   └── interfaces/
+│   │       ├── IERC7857.sol          # ERC-7857 + IntelligentData struct
+│   │       ├── IERC7857Authorize.sol # Authorization extension
+│   │       └── IERC7857Cloneable.sol # Cloning extension
+│   ├── scripts/
+│   │   ├── deploy-mock.ts            # MockTEEVerifier only (legacy)
+│   │   ├── deploy-agenticid.ts       # AgenticID only
+│   │   ├── deploy-all.ts             # Orchestrator: both contracts + JSONs
+│   │   └── update-oracle.ts          # Rotate teeOracleAddress + JSON sync
+│   ├── test/
+│   │   ├── MockTEEVerifier.test.ts   # 9 unit tests
+│   │   ├── AgenticID.test.ts         # 14 unit tests (Epic-7)
+│   │   └── update-oracle.test.ts     # 5 JSON-reconciliation tests (Epic-7)
+│   └── hardhat.config.ts             # evmVersion: "cancun"; 0g-testnet + 0g-mainnet networks
 ├── packages/
 │   ├── logger/                      # Core log capture library
 │   │   ├── src/

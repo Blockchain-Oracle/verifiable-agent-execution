@@ -116,6 +116,13 @@ interface SwapStep {
  * `0x3b56…33A3`, which made the anchored proof falsely claim approval
  * from one specific wallet regardless of who actually ran the script.
  * Closes Codex round-6 logic finding on PR #23.
+ *
+ * Timestamps are also FIXED LITERALS (synthetic demo data) — they used
+ * to be `new Date().toISOString()`, which made the signed output hash
+ * non-deterministic across runs. The whole point of the "deterministic
+ * tool calls" framing in the BDD is that re-running the demo produces
+ * identical signed entries. Fixed timestamps preserve that.
+ * (Closes Codex round-8 logic finding on PR #23.)
  */
 function buildSwapSteps(operatorAddress: string): SwapStep[] {
   return [
@@ -127,7 +134,7 @@ function buildSwapSteps(operatorAddress: string): SwapStep[] {
       ethOut: 0.42,
       priceImpactBps: 8,
       route: ["USDC", "WETH"],
-      quotedAt: new Date().toISOString(),
+      quotedAt: "2026-05-06T10:14:32Z",
     },
     delayMs: 120,
   },
@@ -139,7 +146,7 @@ function buildSwapSteps(operatorAddress: string): SwapStep[] {
       depthUsd: 1_237_842.55,
       slippageAtSize: 0.42,
       sufficientForSize: true,
-      observedAt: new Date().toISOString(),
+      observedAt: "2026-05-06T10:14:33Z",
     },
     delayMs: 180,
   },
@@ -152,7 +159,7 @@ function buildSwapSteps(operatorAddress: string): SwapStep[] {
       gasPriceGwei: 0.05,
       ethOut: 0.4198,
       slippageActualBps: 5,
-      simulatedAt: new Date().toISOString(),
+      simulatedAt: "2026-05-06T10:14:34Z",
     },
     delayMs: 220,
   },
@@ -166,7 +173,7 @@ function buildSwapSteps(operatorAddress: string): SwapStep[] {
     result: {
       approved: false,
       reason: "Demo mode — no live execution; returning safe-no",
-      approvalRequestedAt: new Date().toISOString(),
+      approvalRequestedAt: "2026-05-06T10:14:35Z",
     },
     delayMs: 90,
   },

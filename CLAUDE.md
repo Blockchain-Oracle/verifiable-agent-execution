@@ -28,7 +28,7 @@ The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw
 - **Styling:** Tailwind CSS + shadcn/ui (Trigger.dev anchor, see `context/docs/ux-spec.md`)
 - **Testing:** Vitest (unit), Playwright @ 2% odiff (visual), Hardhat + chai (contracts)
 - **Validation:** zod at I/O edges
-- **Deploy target:** Vercel for `apps/dashboard/` (preview-on-PR via `vercel:bootstrap`); mainnet contract deploy via `pnpm hardhat run scripts/deploy-mock.ts --network 0g-mainnet`
+- **Deploy target:** Coolify with `nixpacks.toml` at repo root (subdomain split — testnet at root, mainnet at subdomain). Mainnet contract deploy via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet` (orchestrator — deploys BOTH AgenticID + MockTEEVerifier per ADR-13). Per-contract scripts also exist (`deploy:agenticid:mainnet`, `deploy:testnet`) plus `pnpm hardhat run scripts/update-oracle.ts --network 0g-mainnet` for owner-only oracle rotation.
 - **Chains:**
   - Galileo testnet — chainId **16602**, RPC `https://evmrpc-testnet.0g.ai`, indexer `https://indexer-storage-testnet-turbo.0g.ai`, faucet `https://faucet.0g.ai` (0.1 0G/day), explorer `https://chainscan-galileo.0g.ai`
   - Mainnet (Aristotle) — chainId **16661**, RPC `https://evmrpc.0g.ai`, indexer `https://indexer-storage-turbo.0g.ai`, explorer `https://chainscan.0g.ai`

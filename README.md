@@ -205,7 +205,7 @@ These are the same scripts the deploy walkthrough in `DEMO.md` uses; they're not
 - Mint tx: [`0xd1b14b30…dfb6d152`](https://chainscan.0g.ai/tx/0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152)
 - 0G Storage rootHash: `0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c`
 
-Mainnet deploy will land both contracts via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet`. See `context/docs/architecture.md` ADR-13 for why we deploy our own AgenticID instead of relying on 0G's testnet example.
+Both mainnet contracts deployed via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet` (orchestrator script — deploys AgenticID then MockTEEVerifier and writes both deployment records under `contracts/deployments/0g-mainnet/`). See `context/docs/architecture.md` ADR-13 for why we deploy our own AgenticID instead of relying on 0G's testnet example.
 
 ---
 
@@ -279,7 +279,10 @@ apps/
   dashboard/              Next.js 14 verifier dashboard
 contracts/
   contracts/MockTEEVerifier.sol   verifyTEESignature view function
-  scripts/deploy-mock.ts          deploy + persist deployment record
+  scripts/deploy-mock.ts          deploy MockTEEVerifier only (legacy entrypoint)
+  scripts/deploy-agenticid.ts     deploy AgenticID only
+  scripts/deploy-all.ts           orchestrator — deploys BOTH + writes deployment JSONs
+  scripts/update-oracle.ts        rotate MockTEEVerifier.teeOracleAddress (onlyOwner)
 openclaw-skills/
   verifiable-execution/   OpenClaw plugin (register, hooks, wallet, hash)
 packages/
