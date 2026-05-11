@@ -52,8 +52,14 @@ const INDEXER_URL =
   process.env.ZG_INDEXER_RPC ??
   process.env.ZG_TESTNET_INDEXER ??
   "https://indexer-storage-testnet-turbo.0g.ai";
+// Fallback to the Epic-7 testnet AgenticID (matches the dashboard's
+// `lib/env.ts` DEFAULTS so a no-env-vars demo run mints to the SAME
+// contract the dashboard reads from). Previously fell back to 0G's
+// example contract `0x2700F6A3…EF1F` which is no longer wired into
+// the dashboard — that produced freshly-minted tokens the dashboard
+// couldn't find. (Codex bot round-12 P2 on PR #23.)
 const AGENTICID_ADDRESS =
-  process.env.AGENTICID_ADDRESS ?? "0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F";
+  process.env.AGENTICID_ADDRESS ?? "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
 if (!PRIVATE_KEY) {
