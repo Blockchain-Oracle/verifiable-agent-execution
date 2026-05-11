@@ -339,6 +339,8 @@ export async function handleSessionEnd(
       entryCount: result.entryCount,
       verifyUrl: fullVerifyUrl,
     });
+    // Anchor succeeded → flush already sealed the logger; safe to release.
+    state.sessions.release(sessionKey);
   } catch (cause) {
     // Surface as a STRUCTURED failure (per BDD: "the error is caught
     // and surfaced as a structured failure"). The recovery path
@@ -354,13 +356,22 @@ export async function handleSessionEnd(
       failureFields.entryCount = cause.entryCount;
       failureFields.dataDescription = cause.dataDescription;
       failureFields.recovery = "Call SessionAnchor.retryMint({rootHash, entryCount, sessionId}) to retry mint without re-flushing.";
+      // Flush succeeded → logger is sealed; rootHash is on 0G Storage
+      // and survives a release. Operator retries mint independently.
+      structuredLog("ERROR", "session_end", "Anchor failed", failureFields);
+      state.sessions.release(sessionKey);
+    } else {
+      // Flush itself failed (or some pre-flush error). The SessionLogger
+      // still holds the collected entries in memory — DO NOT release,
+      // or those entries are lost and the proof is unrecoverable. Leave
+      // the logger in the SessionManager map so the operator (or a
+      // retry hook) can re-attempt anchor.anchor() on the same logger.
+      // (Codex bot round-13 P1 on PR #23.)
+      failureFields.recovery =
+        "Flush failed before mint; SessionLogger retained in-memory. " +
+        "Re-run anchor() with the same sessionKey to retry from flush.";
+      structuredLog("ERROR", "session_end", "Anchor failed (pre-flush)", failureFields);
     }
-    structuredLog("ERROR", "session_end", "Anchor failed", failureFields);
-  } finally {
-    // Always release — even on failure, the SessionLogger is sealed
-    // (flush either succeeded or threw) and shouldn't sit in the
-    // SessionManager map across long-running OpenClaw processes.
-    state.sessions.release(sessionKey);
   }
 }
 
