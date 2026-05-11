@@ -244,45 +244,67 @@ async function callComputeProvider(opts: {
     console.log(`[demo-compute]   deposit skipped/failed: ${msg.slice(0, 120)}`);
   }
 
-  // Step 2 — find provider. Pinned first; otherwise list + pick first
-  // entry whose model is qwen-2.5-7b-instruct.
+  // Step 2 — find provider. Enforced contract (story-epic-07 Scenario 3):
+  //   - model name MUST match /qwen|chat|instruct/i
+  //   - verifiability MUST be TeeML
+  //   - if no provider satisfies BOTH, hard-fail BEFORE inference. The
+  //     prior version fell back to "first provider" which could mint
+  //     an anchored proof under a non-TeeML model — silently violating
+  //     the BDD's TEE-verified-inference claim.
+  // PINNED_PROVIDER (COMPUTE_PROVIDER_ADDRESS env) is treated as
+  // operator override: pinning skips the model/verifiability check
+  // because the operator vouched for the choice.
+  const MODEL_REGEX = /qwen|chat|instruct/i;
+  const REQUIRED_VERIFIABILITY = "TeeML";
   let providerAddress = PINNED_PROVIDER;
-  let modelName = "qwen-2.5-7b-instruct";
-  let verificationType = "TeeML";
-  if (!providerAddress) {
+  let modelName: string = "";
+  let verificationType: string = "";
+
+  if (providerAddress) {
+    // Operator pinned a provider. Read its metadata for log fidelity
+    // but don't gate on the regex/verifiability — pin is trust-us.
+    try {
+      const meta = (await broker.inference.getServiceMetadata(providerAddress)) as {
+        model?: string;
+        verifiability?: string;
+      };
+      modelName = meta.model ?? "(unknown — pinned provider)";
+      verificationType = meta.verifiability ?? "(unknown — pinned provider)";
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[demo-compute]   pinned-provider metadata fetch failed (continuing): ${msg.slice(0, 200)}`);
+      modelName = "(unknown — metadata fetch failed)";
+      verificationType = "(unknown — metadata fetch failed)";
+    }
+  } else {
     console.log("[demo-compute]   listing providers…");
-    const services = await broker.inference.listService();
-    console.log(`[demo-compute]   found ${services.length} providers`);
-    for (const svc of services as Array<{
+    const services = (await broker.inference.listService()) as Array<{
       provider?: string;
       providerAddress?: string;
       model?: string;
       verifiability?: string;
-    }>) {
-      const m = (svc.model ?? "").toLowerCase();
-      if (m.includes("qwen") || m.includes("chat") || m.includes("instruct")) {
-        providerAddress = svc.provider ?? svc.providerAddress ?? "";
-        modelName = svc.model ?? modelName;
-        verificationType = svc.verifiability ?? verificationType;
-        if (providerAddress) break;
+    }>;
+    console.log(`[demo-compute]   found ${services.length} providers`);
+    for (const svc of services) {
+      const addr = svc.provider ?? svc.providerAddress ?? "";
+      if (!addr) continue;
+      const model = svc.model ?? "";
+      const verify = svc.verifiability ?? "";
+      if (MODEL_REGEX.test(model) && verify === REQUIRED_VERIFIABILITY) {
+        providerAddress = addr;
+        modelName = model;
+        verificationType = verify;
+        break;
       }
     }
-    if (!providerAddress && services.length > 0) {
-      const first = services[0] as {
-        provider?: string;
-        providerAddress?: string;
-        model?: string;
-        verifiability?: string;
-      };
-      providerAddress = first.provider ?? first.providerAddress ?? "";
-      modelName = first.model ?? modelName;
-      verificationType = first.verifiability ?? verificationType;
+    if (!providerAddress) {
+      throw new Error(
+        `[demo-compute] No 0G Compute provider matched the required contract ` +
+          `(model ~ ${MODEL_REGEX} AND verifiability === "${REQUIRED_VERIFIABILITY}"). ` +
+          `Scanned ${services.length} providers. ` +
+          `Override via COMPUTE_PROVIDER_ADDRESS to pin a specific one.`,
+      );
     }
-  }
-  if (!providerAddress) {
-    throw new Error(
-      "[demo-compute] No 0G Compute providers found. Pin one via COMPUTE_PROVIDER_ADDRESS env.",
-    );
   }
   console.log(`[demo-compute]   provider: ${providerAddress}`);
   console.log(`[demo-compute]   model:    ${modelName}`);

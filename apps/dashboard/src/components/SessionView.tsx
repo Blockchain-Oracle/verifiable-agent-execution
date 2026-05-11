@@ -292,7 +292,9 @@ function SessionRecord({ proof }: { proof: ProofResponse }) {
               target="_blank"
               rel="noreferrer"
             >
-              indexer-storage-testnet ↗
+              {proof.meta.chainId === 16661
+                ? "indexer-storage ↗"
+                : "indexer-storage-testnet ↗"}
             </Link>
           }
           sub="proof: true · merkle-verified"
