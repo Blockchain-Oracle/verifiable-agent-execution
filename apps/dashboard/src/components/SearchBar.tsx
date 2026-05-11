@@ -35,7 +35,7 @@ export function SearchBar() {
       router.push(`/agent/${v}`);
       return;
     }
-    setError("Paste a tokenId (e.g. 98) or an agent address (0x...)");
+    setError("Paste a tokenId (e.g. 0) or an agent address (0x...)");
   }
 
   return (

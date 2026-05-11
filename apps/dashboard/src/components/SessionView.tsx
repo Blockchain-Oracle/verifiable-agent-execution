@@ -177,7 +177,9 @@ function NumericHero({
           {proof.tokenId}
         </div>
         <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
-          AgenticID iNFT · Galileo testnet · chainId {proof.meta.chainId}
+          AgenticID iNFT ·{" "}
+          {proof.meta.chainId === 16661 ? "Aristotle mainnet" : "Galileo testnet"} ·
+          chainId {proof.meta.chainId}
         </div>
       </div>
 
@@ -312,7 +314,7 @@ function SessionRecord({ proof }: { proof: ProofResponse }) {
               target="_blank"
               rel="noreferrer"
             >
-              Galileo explorer ↗
+              {proof.meta.chainId === 16661 ? "Aristotle explorer ↗" : "Galileo explorer ↗"}
             </Link>
           }
           sub="ERC-7857 · IntelligentDataSet"

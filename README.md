@@ -159,17 +159,30 @@ The ONLY user step on first run: paste your auto-generated wallet address into [
 
 ## Demo session (the canonical artifact)
 
-**TokenId 98** on Galileo — autonomous DeFi swap simulator:
+**TokenId 0** anchored on BOTH networks — autonomous DeFi swap simulator with a real 0G Compute TeeML inference call:
 
-| Seq | Tool | What |
+### Galileo (testnet) — `0xd4a5eA…0E38`
+
+| Seq | Type | What |
 |---|---|---|
-| 0 | `quote` | USDC→ETH 1000 → rate 2380.42, ethOut 0.42 |
-| 1 | `liquidity` | Uniswap V3 USDC/WETH 0.3% → depth $1.23M, slippage 0.42% |
-| 2 | `simulate-swap` | slippage=0.5% → executed=true, gas 142k |
-| 3 | `final-approval` | human=`0x3b56...33A3` → approved=false (demo mode) |
+| 0 | `tool_call` quote | USDC→ETH 1000 → rate 2380.42, ethOut 0.42 |
+| 1 | `tool_call` liquidity | Uniswap V3 USDC/WETH 0.3% → depth $1.23M, slippage 0.42% |
+| 2 | `tool_call` simulate-swap | slippage=0.5% → executed=true, gas 142k |
+| 3 | `tool_call` final-approval | human=`0x3b56...33A3` → approved=false (demo mode) |
 
-All 4 entries TEE-signed. Anchor: `0xfd23614f0d49c85c68ec7e8a57960f770afff171898ec892a198539409873313`.
-Storage rootHash: `0x9c08776db62cb84a9e4ec6b3fdd2961c47948c727b1874650837a52ac1bac570`.
+All 4 entries TEE-signed. Storage rootHash: `0x53bee8f7174b132fc4e8a85631a41a923a7952117a6e14fdf56fcb1fef6049e6`.
+
+### Aristotle (mainnet) — `0xC6f7fB…8937` (the submission artifact)
+
+| Seq | Type | What |
+|---|---|---|
+| 0 | `inference` | **REAL 0G Compute TeeML call** to `qwen3.6-plus` model (provider `0x992e6396…`), verifiability `TeeML` |
+| 1 | `tool_call` quote | USDC→ETH 1000 → rate 2380.42, ethOut 0.42 |
+| 2 | `tool_call` liquidity | Uniswap V3 USDC/WETH 0.3% → depth $1.23M |
+| 3 | `tool_call` simulate-swap | slippage=0.5% → executed=true, gas 142k |
+| 4 | `tool_call` final-approval | human=`0x3b56...33A3` → approved=false (demo mode) |
+
+All 5 entries signed; on-chain `verifyTEESignature` recovers to the configured oracle. Storage rootHash: `0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c`. Mint tx: [`0xd1b14b30…dfb6d152`](https://chainscan.0g.ai/tx/0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152).
 
 Re-mint a fresh session anytime: `pnpm exec tsx scripts/smoke/defi-swap-demo.ts`.
 

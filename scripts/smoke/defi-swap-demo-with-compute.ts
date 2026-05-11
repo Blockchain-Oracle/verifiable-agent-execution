@@ -416,12 +416,16 @@ async function main(): Promise<void> {
       prompt: inferenceResult.prompt,
     };
     const inferenceLogResult = {
-      response: inferenceResult.responseText,
-      usage: inferenceResult.usage,
-      providerAddress: inferenceResult.providerAddress,
+      // Field names match the Epic-7 BDD acceptance criteria (story
+      // story-epic-07-mainnet-deploy.md Scenario 3): {model, provider,
+      // endpoint, verificationType, usage}. Renamed from providerAddress
+      // / modelName per Codex pre-push review.
+      model: inferenceResult.modelName,
+      provider: inferenceResult.providerAddress,
       endpoint: inferenceResult.endpoint,
       verificationType: inferenceResult.verificationType,
-      modelName: inferenceResult.modelName,
+      usage: inferenceResult.usage,
+      response: inferenceResult.responseText,
       // Note: the raw provider response is NOT included — it can contain
       // duplicates of the response text and bloat the log. The hash anchors
       // integrity; the structured fields above are what the dashboard renders.

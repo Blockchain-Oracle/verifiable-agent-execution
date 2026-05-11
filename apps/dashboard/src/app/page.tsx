@@ -29,7 +29,10 @@ export default async function HomePage() {
     <div className="min-h-screen bg-bg text-text-primary">
       <TopBar />
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
-        <Hero agenticIdAddress={env.AGENTICID_ADDRESS} />
+        <Hero
+          agenticIdAddress={env.AGENTICID_ADDRESS}
+          chainId={env.CHAIN_ID}
+        />
         <div className="mt-12">
           <FeedTable initialRows={initialRows} />
         </div>
@@ -43,12 +46,20 @@ export default async function HomePage() {
   );
 }
 
-function Hero({ agenticIdAddress }: { agenticIdAddress: string }) {
+function Hero({
+  agenticIdAddress,
+  chainId,
+}: {
+  agenticIdAddress: string;
+  chainId: number;
+}) {
+  const heroNetworkLabel =
+    chainId === 16661 ? "Live on Aristotle mainnet" : "Live on Galileo testnet";
   return (
     <section className="grid gap-12 border-b border-border pb-12 lg:grid-cols-[1.15fr_0.85fr]">
       <div>
         <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent-verify">
-          0G APAC Hackathon · Track 1 · Live on Galileo testnet
+          0G APAC Hackathon · Track 1 · {heroNetworkLabel}
         </p>
         <h1 className="mt-4 font-sans text-5xl font-bold leading-[1.05] tracking-tight text-text-primary md:text-6xl">
           Etherscan
