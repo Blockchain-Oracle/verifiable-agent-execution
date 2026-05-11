@@ -190,6 +190,17 @@ interface ComputeInferenceResult {
   responseText: string;
   usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
   rawResponse: unknown;
+  /**
+   * SDK-level TEE verification result per ADR-07. Performed by calling
+   * `broker.inference.processResponse(providerAddress, chatID)` AFTER
+   * the inference HTTP response lands; the boolean records whether the
+   * provider's TeeML attestation chain validates off-chain. `null`
+   * means the verification call itself failed (transport / missing
+   * chatID header) and we don't claim either outcome.
+   */
+  teeVerified: boolean | null;
+  /** chatID parsed from the `ZG-Res-Key` response header. */
+  chatID: string | null;
 }
 
 /**
@@ -321,6 +332,11 @@ async function callComputeProvider(opts: {
       `[demo-compute] inference HTTP ${httpRes.status}: ${errBody.slice(0, 400)}`,
     );
   }
+
+  // Extract chatID from the ZG-Res-Key header per ADR-07. The header is
+  // emitted by 0G Compute provider responses; processResponse() uses it
+  // to fetch the TeeML attestation chain off-chain and return a verdict.
+  const chatID = httpRes.headers.get("zg-res-key");
   const json = (await httpRes.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
@@ -328,6 +344,34 @@ async function callComputeProvider(opts: {
   const responseText = json.choices?.[0]?.message?.content ?? "";
   console.log(`[demo-compute]   response (${responseText.length} chars):`);
   console.log(`[demo-compute]   ${responseText.slice(0, 200).replace(/\n/g, " ")}…`);
+
+  // Step 5 — SDK-level TEE verification per ADR-07. processResponse takes
+  // the providerAddress + chatID (from ZG-Res-Key), pulls the provider's
+  // signature record, and validates the TeeML attestation chain. Returns
+  // boolean. We log + record both the verdict and the chatID so the
+  // anchored proof carries the verification record alongside the raw
+  // response.
+  let teeVerified: boolean | null = null;
+  if (chatID) {
+    try {
+      console.log("[demo-compute] === processResponse (TeeML verify) ===");
+      const verdict = (await (
+        broker.inference as unknown as {
+          processResponse: (provider: string, chatID: string) => Promise<boolean>;
+        }
+      ).processResponse(providerAddress, chatID)) as boolean;
+      teeVerified = Boolean(verdict);
+      console.log(`[demo-compute]   processResponse → ${teeVerified}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[demo-compute]   processResponse failed: ${msg.slice(0, 200)}`);
+      // teeVerified stays null — distinct from a `false` verdict, so the
+      // anchored proof reflects "verification path unreachable" rather
+      // than "verification ran and rejected the response."
+    }
+  } else {
+    console.log("[demo-compute]   no ZG-Res-Key header — skipping processResponse");
+  }
 
   return {
     providerAddress,
@@ -342,6 +386,8 @@ async function callComputeProvider(opts: {
       totalTokens: json.usage?.total_tokens,
     },
     rawResponse: json,
+    teeVerified,
+    chatID,
   };
 }
 
@@ -429,6 +475,13 @@ async function main(): Promise<void> {
       verificationType: inferenceResult.verificationType,
       usage: inferenceResult.usage,
       response: inferenceResult.responseText,
+      // ADR-07 TEE verification record: SDK-level processResponse verdict
+      // (or null on transport failure / missing ZG-Res-Key header) plus
+      // the chatID that produced it. Anchored alongside the response so
+      // a verifier can re-run processResponse(provider, chatID) and
+      // cross-check.
+      teeVerified: inferenceResult.teeVerified,
+      chatID: inferenceResult.chatID,
       // Note: the raw provider response is NOT included — it can contain
       // duplicates of the response text and bloat the log. The hash anchors
       // integrity; the structured fields above are what the dashboard renders.

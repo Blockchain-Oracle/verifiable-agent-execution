@@ -37,8 +37,10 @@ Concurrent depth gain: integrate 0G Compute Network's TeeML inference into the a
 **Given** the deployer wallet has ≥ 4 0G on mainnet (3 for 0G Compute Ledger min + ~1 for deploys + gas)
 **When** `pnpm exec tsx scripts/smoke/defi-swap-demo-with-compute.ts` runs with mainnet env overrides (`ZG_TESTNET_RPC=https://evmrpc.0g.ai`, `ZG_INDEXER_RPC=https://indexer-storage-turbo.0g.ai`, `AGENTICID_ADDRESS=<mainnet>`)
 **Then** `@0gfoundation/0g-compute-ts-sdk` bootstraps the broker (idempotent: best-effort `ledger.depositFund(4)` + `acknowledgeProviderSigner`)
-**And** ONE real HTTP `chat/completions` call hits a 0G Compute provider running a TeeML-verified model (e.g., `qwen3.6-plus`)
-**And** the response is captured as `type: "inference"` log entry with `{model, provider, endpoint, verificationType, usage}` in `result`
+**And** ONE real HTTP `chat/completions` call hits a 0G Compute provider running a TeeML-verified model (model name matches `/qwen|chat|instruct/i`; the canonical mainnet pick is `qwen3.6-plus`)
+**And** the `ZG-Res-Key` response header is captured as `chatID`
+**And** `broker.inference.processResponse(provider, chatID)` is awaited per ADR-07; the boolean verdict is recorded as `teeVerified` (or `null` if the verification call itself fails)
+**And** the response is captured as `type: "inference"` log entry with `{model, provider, endpoint, verificationType, usage, response, teeVerified, chatID}` in `result`
 **And** 4 deterministic DeFi swap tool calls (`quote → liquidity → simulate-swap → final-approval`) are appended as `type: "tool_call"` entries, each signed by the deployer wallet in the agent-wrapper protocol format
 **And** the 5-entry SessionLog is uploaded to 0G Storage (mainnet indexer)
 **And** the rootHash is anchored via `AgenticID.iMint(...)` returning a tokenId
@@ -53,7 +55,7 @@ Concurrent depth gain: integrate 0G Compute Network's TeeML inference into the a
   - Search placeholder: `tokenId (0)`
   - ERC-7857 mint copy: `AgenticID at 0xd4a5eA…9E38`
   - Footer: `Anchored on 0G Galileo (testnet) · chainId 16602 · AgenticID 0xd4a5eA…9E38 · MockTEEVerifier 0x058FC3…C3AD`
-  - TopBar NETWORK chip: `TESTNET` (muted) + `view mainnet ↗` cross-link
+  - TopBar LIVE chip: pulsing green dot + `Live · TESTNET` (muted color when testnet, accent-verify `#10B981` when mainnet) + `view mainnet ↗` cross-link beside it. The "Live · " prefix is intentional (Etherscan-style live indicator) and not a regression of the bare "TESTNET" / "MAINNET" copy that earlier drafts of this story specified.
   - Latest sessions table: token #0 with the deployer agent address, ANCHORED status
 **When** `/verify/0` loads
 **Then** the 4-entry DeFi swap session renders with `TEE VERIFIED` green badges on each entry
@@ -67,7 +69,7 @@ Concurrent depth gain: integrate 0G Compute Network's TeeML inference into the a
 **And** `pnpm --filter @verifiable-agent-execution/dashboard start` serves the dashboard
 **Given** a second Coolify service ("mainnet") is configured with env overrides (`ZG_TESTNET_RPC=https://evmrpc.0g.ai`, `ZG_INDEXER_RPC=https://indexer-storage-turbo.0g.ai`, `AGENTICID_ADDRESS=0xC6f7fB…8937`, `TEE_VERIFIER_ADDRESS=0x4fffB5…58D2`, `CHAIN_ID=16661`)
 **Then** the same code build serves mainnet contracts from `lib/env.ts.loadEnv()`
-**And** the TopBar NETWORK chip flips to `MAINNET` (accent-verify color) + `view testnet ↗`
+**And** the TopBar LIVE chip flips to `Live · MAINNET` (accent-verify color) + `view testnet ↗`
 **And** the footer auto-detects `(MAINNET)` label, mainnet chainscan host, and mainnet addresses
 
 ### Scenario 6: Hardhat tests cover the AgenticID hot paths

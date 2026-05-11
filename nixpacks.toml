@@ -13,11 +13,11 @@
 #               Optional: TESTNET_SITE_URL=<self> + MAINNET_SITE_URL=<sibling>
 #
 #   mainnet  →  Domain = mainnet.verifiable.0g.ai  (subdomain of above)
-#               Env required (after Phase 2 mainnet deploy):
+#               Mainnet contracts are LIVE (deployed 2026-05-11). Env block:
 #                 ZG_TESTNET_RPC=https://evmrpc.0g.ai
-#                 ZG_INDEXER_RPC=<mainnet indexer URL — see docs.0g.ai>
-#                 AGENTICID_ADDRESS=<from deployments/0g-mainnet/AgenticID.json>
-#                 TEE_VERIFIER_ADDRESS=<from deployments/0g-mainnet/MockTEEVerifier.json>
+#                 ZG_INDEXER_RPC=https://indexer-storage-turbo.0g.ai
+#                 AGENTICID_ADDRESS=0xC6f7fB1511a7483C6e14258c70529e37ec698937
+#                 TEE_VERIFIER_ADDRESS=0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2
 #                 CHAIN_ID=16661
 #               Optional: MAINNET_SITE_URL=<self> + TESTNET_SITE_URL=<sibling>
 #

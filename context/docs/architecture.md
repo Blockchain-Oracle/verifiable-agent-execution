@@ -39,8 +39,8 @@
 
 | Contract | Galileo (16602) | Aristotle mainnet (16661) | Purpose |
 |---|---|---|---|
-| `AgenticID.sol` | `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (block 32602466) | PENDING (Phase 2) | ERC-7857 iNFT for session anchors. 1:1 source from `agenticID-examples/01`. See ADR-13. |
-| `MockTEEVerifier.sol` | `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` (block 32610650) | PENDING (Phase 2) | Verifies ECDSA sigs against the configured `teeOracleAddress` (= deployer wallet on Galileo; same on mainnet). |
+| `AgenticID.sol` | `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (block 32602466) | `0xC6f7fB1511a7483C6e14258c70529e37ec698937` (block 32907005) | ERC-7857 iNFT for session anchors. 1:1 source from `agenticID-examples/01`. See ADR-13. |
+| `MockTEEVerifier.sol` | `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` (block 32610650) | `0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2` (block 32907019, oracle rotated block 32907160) | Verifies ECDSA sigs against the configured `teeOracleAddress` (= deployer wallet on both networks). |
 
 ---
 
@@ -140,9 +140,11 @@ Decided 2026-05-10 in response to two concurrent findings:
 - MockTEEVerifier `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` (block 32610650)
 - Demo session: tokenId 0 with 4 signed entries (`scripts/smoke/defi-swap-demo.ts`).
 
-**Mainnet deploys (Phase 2 — pending wallet funding):**
-- Same source contracts, deploy via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet`.
-- `lib/env.ts` defaults swap to mainnet addresses + `CHAIN_ID=16661` per Coolify service env.
+**Mainnet deploys (LIVE on Aristotle, 2026-05-11):**
+- AgenticID `0xC6f7fB1511a7483C6e14258c70529e37ec698937` (block 32907005)
+- MockTEEVerifier `0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2` (block 32907019), oracle rotated to deployer wallet via `updateOracleAddress` (block 32907160)
+- Demo session anchored at tokenId 0: 5 entries (1 × 0G Compute TeeML inference via `qwen3.6-plus` provider + `processResponse` ADR-07 verdict + 4 × DeFi swap tool calls), rootHash `0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c`, mint tx `0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152`.
+- `lib/env.ts` defaults stay at Galileo; mainnet Coolify service overrides via env vars per `nixpacks.toml`.
 
 **Why this is honest, not a downgrade:** judges see the contract source on chainscan; the contract IS the canonical example; what changes is the deployer + chain. The depth gain (ownership of the on-chain primitive) more than offsets the loss of "we use 0G's official deploy" framing. Phase 0a layered 0G Compute Network on top so the on-chain AgenticID + off-chain TeeML inference both appear in the same anchored session.
 
