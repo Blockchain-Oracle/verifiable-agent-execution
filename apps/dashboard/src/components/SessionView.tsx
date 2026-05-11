@@ -54,10 +54,17 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
         next[i] = { state: "verifying" };
         return next;
       });
+      // Use the entry's actual `seq` (NOT the array index) — the API
+      // resolves entries by `seqNum === entry.seq`, so a session with
+      // non-zero-based or non-contiguous sequence numbers would
+      // silently 404 every entry under the index-based URL.
+      // (Codex bot round-11 P2 on PR #23.)
+      const entrySeq = proof.entries[i]!.seq;
       try {
-        const res = await fetch(`/api/verify/${proof.tokenId}/entry/${i}`, {
-          cache: "no-store",
-        });
+        const res = await fetch(
+          `/api/verify/${proof.tokenId}/entry/${entrySeq}`,
+          { cache: "no-store" },
+        );
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as {
             error?: { message?: string };

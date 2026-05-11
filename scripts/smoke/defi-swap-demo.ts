@@ -71,12 +71,23 @@ const MODEL_ID = "claude-sonnet-4-6";
 // real on-chain DEX call required for the demo asset.
 // ---------------------------------------------------------------------------
 
-const SWAP_STEPS: Array<{
+interface SwapStep {
   tool: string;
   params: Record<string, unknown>;
   result: Record<string, unknown>;
   delayMs: number;
-}> = [
+}
+
+/**
+ * Build the 4-step DeFi swap arc with `operatorAddress` threaded from
+ * the actual signer. Previously the operator field was a fixed literal
+ * `0x3b56…33A3` which made the anchored proof falsely claim approval
+ * from one specific wallet regardless of who actually ran the script.
+ * Mirrors the fix already applied to defi-swap-demo-with-compute.ts.
+ * (Codex bot round-11 P2 on PR #23.)
+ */
+function buildSwapSteps(operatorAddress: string): SwapStep[] {
+  return [
   {
     tool: "quote",
     params: { from: "USDC", to: "ETH", amount: 1000, slippageMaxBps: 50 },
@@ -117,7 +128,7 @@ const SWAP_STEPS: Array<{
   {
     tool: "final-approval",
     params: {
-      operatorAddress: "0x3b566583b51DA4da8d95565212C96836f66433A3",
+      operatorAddress,
       proposedSwap: { from: "USDC", to: "ETH", amount: 1000 },
       reason: "Above $500 threshold — human approval required",
     },
@@ -128,7 +139,8 @@ const SWAP_STEPS: Array<{
     },
     delayMs: 90,
   },
-];
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -193,10 +205,14 @@ async function main(): Promise<void> {
   console.log(`[defi-swap-demo] StorageClient uploadTimeoutMs=${uploadTimeoutMs}`);
   const logger = new SessionLogger(sessionId, storageClient);
 
-  // Append all 4 signed entries with FULL DECODED CONTENT
+  // Append all 4 signed entries with FULL DECODED CONTENT. Build
+  // SWAP_STEPS NOW with the actual signer.address threaded into the
+  // final-approval step's operatorAddress so the anchored proof
+  // reflects whoever ran the script — not one specific wallet.
+  const swapSteps = buildSwapSteps(signer.address);
   let baseTs = Date.now();
-  for (let i = 0; i < SWAP_STEPS.length; i++) {
-    const step = SWAP_STEPS[i];
+  for (let i = 0; i < swapSteps.length; i++) {
+    const step = swapSteps[i]!;
     baseTs += step.delayMs;
     const inputHash = sha256HexNoPrefix(step.params);
     const outputHash = sha256HexNoPrefix(step.result);
@@ -259,7 +275,7 @@ async function main(): Promise<void> {
   console.log("    • Session header (sessionId, agent, model, 4 entries)");
   console.log("    • Status: 🟢 TEE Verified (all 4 sigs recover to oracle)");
   console.log("    • Per-step decoded story:");
-  for (const step of SWAP_STEPS) {
+  for (const step of swapSteps) {
     const paramSummary = JSON.stringify(step.params).slice(0, 60);
     console.log(`        ${step.tool}: ${paramSummary}...`);
   }
