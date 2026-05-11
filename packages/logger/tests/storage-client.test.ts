@@ -424,7 +424,7 @@ describe("StorageClient.download (mocked indexer)", () => {
 
 const integrationEnvReady =
   Boolean(process.env.PRIVATE_KEY) &&
-  Boolean(process.env.ZG_TESTNET_RPC) &&
+  Boolean((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)) &&
   Boolean(process.env.ZG_INDEXER_RPC);
 
 describe.skipIf(!integrationEnvReady)(
@@ -432,11 +432,11 @@ describe.skipIf(!integrationEnvReady)(
   () => {
     it("uploads a buffer and downloads identical bytes", async () => {
       const { JsonRpcProvider, Wallet: EthersWallet } = await import("ethers");
-      const provider = new JsonRpcProvider(process.env.ZG_TESTNET_RPC);
+      const provider = new JsonRpcProvider((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC));
       const signer = new EthersWallet(process.env.PRIVATE_KEY!, provider);
 
       const client = new StorageClient({
-        rpcUrl: process.env.ZG_TESTNET_RPC!,
+        rpcUrl: (process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)!,
         indexerUrl: process.env.ZG_INDEXER_RPC!,
         signer,
       });

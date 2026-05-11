@@ -24,15 +24,15 @@
       },
       "agenticIdAddress": {
         "type": "string",
-        "description": "Pre-deployed AgenticID contract address. Galileo: 0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F (per ADR-08)."
+        "description": "AgenticID contract address (our Epic-7 deploys per ADR-13). Galileo: 0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38. Aristotle mainnet: 0xC6f7fB1511a7483C6e14258c70529e37ec698937."
       },
       "verifierAddress": {
         "type": "string",
-        "description": "Deployed MockTEEVerifier contract address (set after `pnpm hardhat run contracts/scripts/deploy-mock.ts --network 0g-testnet`)."
+        "description": "MockTEEVerifier contract address (our Epic-7 deploys, teeOracleAddress = deployer wallet). Galileo: 0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad. Aristotle mainnet: 0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2."
       },
       "verifyUrlBase": {
         "type": "string",
-        "description": "Base URL of the verifier dashboard (e.g. https://verify.example.com). Appended to the relative /verify/<chainId>/<tokenId> path returned by SessionAnchor.anchor()."
+        "description": "Base URL of the verifier dashboard. The DOMAIN carries the network signal (Epic-7 subdomain split: 'https://verifiable.0g.ai' = testnet root, 'https://mainnet.verifiable.0g.ai' = mainnet subdomain). Appended to the relative /verify/<tokenId> path returned by SessionAnchor.anchor()."
       },
       "chainId": {
         "type": "number",

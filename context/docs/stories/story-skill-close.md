@@ -57,7 +57,7 @@ And the session does not leave a dangling active logger behind
   - Builds containerHash deterministically from `sessionKey + agentId` (synthetic — see "Spec evolution" below)
   - Sets late-bind metadata + flushes via the logger
   - Builds a SessionAnchor and calls `anchor()`
-  - On success: INFO-logs full verifyUrl (`config.verifyUrlBase` + relative `/verify/<chainId>/<tokenId>`)
+  - On success: INFO-logs full verifyUrl (`config.verifyUrlBase` + relative `/verify/<tokenId>` — chainId is implicit from the verifyUrlBase domain per Epic-7 subdomain split)
   - On failure: ERROR-logs structured failure including `rootHash` from `SessionAnchorMintAfterFlushError` (so operators can manually `retryMint()`)
   - Always calls `state.sessions.release(sessionKey)` in `finally` so the SessionLogger doesn't leak across long-running OpenClaw processes
 - `openclaw-skills/verifiable-execution/tests/skill.test.ts` — Add the `handleSessionEnd` test suite (6 new tests: happy path with full verifyUrl assembly + release, no-op when zero tool calls, release after mint failure, rootHash captured in error log for retry, missing sessionKey safe-skip, trailing-slash on verifyUrlBase normalized).

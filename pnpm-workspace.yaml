@@ -2,3 +2,4 @@ packages:
   - "packages/*"
   - "contracts"
   - "openclaw-skills/*"
+  - "apps/*"

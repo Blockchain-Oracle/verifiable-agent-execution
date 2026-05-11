@@ -5,7 +5,7 @@ _Updated: 2026-05-05. Managed by sahil-coding-protocol._
 ## What this is
 
 **"Etherscan for AI agents — share a URL, verify any agent run cold."**
-The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw Lab)** — a primitive that lets anyone prove an AI agent ran exactly what it claimed. An OpenClaw plugin captures every tool call inside `agent-wrapper`'s TEE container, the session log is flushed to **0G Storage**, and an **iNFT (ERC-7857)** is minted on **AgenticID at `0x2700F6A3…EF1F`** anchoring the rootHash. A public verifier dashboard lets anyone hit the URL and run the proof chain (no wallet) — three live reads (`getIntelligentDatas` → 0G Storage download → `TEEVerifier.verifyTEESignature`) flip green checkmarks per row.
+The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw Lab)** — a primitive that lets anyone prove an AI agent ran exactly what it claimed. An OpenClaw plugin captures every tool call inside `agent-wrapper`'s TEE container, the session log is flushed to **0G Storage**, and an **iNFT (ERC-7857)** is minted on our **AgenticID at `0xd4a5eA…0E38` (Galileo testnet, Epic-7 OUR deploy)** anchoring the rootHash. A public verifier dashboard lets anyone hit the URL and run the proof chain (no wallet) — three live reads (`getIntelligentDatas` → 0G Storage download → `TEEVerifier.verifyTEESignature`) flip green checkmarks per row.
 
 **Wedge:** GREEN lane in the gallery (no competitor in verifiable-audit-trail) per `context/06-hidden-field.md`. First-mover on 0G Private Computer (TEE), launched April 28. The architecture survived first-principles + SCAMPER passes (see `context/REFERENCE_REPO_AUDIT.md`); the wedge is honestly **TEE-rooted, not trustless** (ADR-10) and **speculative infrastructure for the agent economy emerging in 2026–2027**, framed as a defensible bet rather than a present-day pull.
 
@@ -28,11 +28,16 @@ The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw
 - **Styling:** Tailwind CSS + shadcn/ui (Trigger.dev anchor, see `context/docs/ux-spec.md`)
 - **Testing:** Vitest (unit), Playwright @ 2% odiff (visual), Hardhat + chai (contracts)
 - **Validation:** zod at I/O edges
-- **Deploy target:** Vercel for `apps/dashboard/` (preview-on-PR via `vercel:bootstrap`); mainnet contract deploy via `pnpm hardhat run scripts/deploy-mock.ts --network 0g-mainnet`
+- **Deploy target:** Coolify with `nixpacks.toml` at repo root (subdomain split — testnet at root, mainnet at subdomain). Mainnet contract deploy via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet` (orchestrator — deploys BOTH AgenticID + MockTEEVerifier per ADR-13). Per-contract scripts also exist (`deploy:agenticid:mainnet`, `deploy:testnet`) plus `pnpm hardhat run scripts/update-oracle.ts --network 0g-mainnet` for owner-only oracle rotation.
 - **Chains:**
   - Galileo testnet — chainId **16602**, RPC `https://evmrpc-testnet.0g.ai`, indexer `https://indexer-storage-testnet-turbo.0g.ai`, faucet `https://faucet.0g.ai` (0.1 0G/day), explorer `https://chainscan-galileo.0g.ai`
   - Mainnet (Aristotle) — chainId **16661**, RPC `https://evmrpc.0g.ai`, indexer `https://indexer-storage-turbo.0g.ai`, explorer `https://chainscan.0g.ai`
-- **Pre-deployed AgenticID:** `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo (it is `agenticID-examples/01/AgenticID.sol` — verified by on-chain reads; ADR-08)
+- **Galileo AgenticID (OURS, Epic-7):** `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` — `contracts/contracts/AgenticID.sol`, 1:1 from `agenticID-examples/01-mint-and-manage`. Deployed 2026-05-10 (block 32602466, tx 0x57802912cc803e0e1cdd8e88b104fba630c628ac62581804961718c1be5071bd). Demo session at tokenId 0.
+- **Galileo MockTEEVerifier (OURS, Epic-7):** `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad` — deployed 2026-05-10 with `teeOracleAddress` = deployer wallet (`0x3b56…33A3`). Block 32610650.
+- **0G's pre-deployed example AgenticID (legacy):** `0x2700F6A3e505402C9daB154C5c6ab9cAEC98EF1F` on Galileo — still on-chain, original example contract per ADR-08. We no longer point at it; `lib/env.ts` defaults moved to our deploy in commit 929d6a6.
+- **Mainnet (Aristotle) AgenticID:** `0xC6f7fB1511a7483C6e14258c70529e37ec698937` — deployed 2026-05-11 (block 32907005, tx 0x2f125874f4ef56a7e555baa0e8736f2b13cd7cdf03118b80e3f770ae16c5e636).
+- **Mainnet (Aristotle) MockTEEVerifier:** `0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2` — deployed 2026-05-11 (block 32907019), oracle rotated to deployer wallet via `updateOracleAddress` (block 32907160).
+- **Mainnet demo session:** tokenId 0, 5 entries (1 × 0G Compute TeeML inference + 4 × DeFi swap tool calls), rootHash 0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c, mint tx 0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152.
 - **TEE oracle (signing address, not a contract):** `0x04581d192d22510ced643eaced12ef169644811a` (hardcoded in `0g-agent-nft/scripts/deploy/deploy_tee.ts`)
 
 ## Top-3 commands

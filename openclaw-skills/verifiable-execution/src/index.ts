@@ -4,8 +4,12 @@
  * Closes Epic 4 (stories: skill-init, skill-intercept, skill-close).
  * Captures every tool call inside an agent session, flushes the log to
  * 0G Storage at session end, and mints an AgenticID iNFT anchoring the
- * rootHash on-chain. Produces a `<verifyUrlBase>/verify/<chainId>/<tokenId>`
- * URL the verifier dashboard can resolve cold.
+ * rootHash on-chain. Produces a `<verifyUrlBase>/verify/<tokenId>` URL
+ * the verifier dashboard can resolve cold. The network (testnet vs
+ * mainnet) is disambiguated by the configured verifyUrlBase domain
+ * (Epic-7 subdomain split: `verifiable.0g.ai` = testnet root,
+ * `mainnet.verifiable.0g.ai` = mainnet subdomain) — NOT by a chainId
+ * segment in the path. Same model Etherscan uses vs Sepolia.Etherscan.
  *
  * Hooks fire AUTOMATICALLY — every tool call across every channel
  * (Telegram/Discord/Slack/CLI), every session end. The AI is observed
@@ -61,11 +65,12 @@ import {
 import { resolveConfig, type VerifiableExecutionConfig } from "./config.js";
 import { sha256Hex } from "./hash.js";
 import { SessionManager } from "./SessionManager.js";
+import { printFirstRunBanner, resolveWallet } from "./wallet.js";
 
 const PLUGIN_ID = "verifiable-execution";
 const PLUGIN_NAME = "Verifiable Execution";
 const PLUGIN_DESCRIPTION =
-  "Anchors every agent session as a TEE-signed log on 0G Storage + iNFT on AgenticID, producing a /verify/<chainId>/<tokenId> URL anyone can verify cold.";
+  "Anchors every agent session as a TEE-signed log on 0G Storage + iNFT on AgenticID, producing a /verify/<tokenId> URL anyone can verify cold.";
 
 // ---------------------------------------------------------------------------
 // Plugin state — built when config + private key both resolve. A
@@ -124,22 +129,30 @@ function deriveContainerHash(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// State construction — happy path. Throws on PRIVATE_KEY-missing OR
-// 0G SDK construction failure; caller catches + degrades.
+// State construction — happy path. Resolves the wallet via the
+// auto-managed pattern (wallet.ts): env override > disk cache >
+// freshly generated. Throws ONLY on 0G SDK construction failure.
 // ---------------------------------------------------------------------------
 
 function buildPluginState(config: VerifiableExecutionConfig): PluginState {
-  const privateKey = process.env[config.privateKeyEnvVar];
-  if (privateKey === undefined || privateKey.length === 0) {
-    throw new Error(
-      `Required env var ${config.privateKeyEnvVar} is unset; cannot construct signer for storage upload + iMint.`,
-    );
-  }
+  // Auto-managed wallet — no PRIVATE_KEY env required for the demo
+  // path. First run generates + persists to ~/.openclaw/verifiable-execution/wallet.json.
+  // Subsequent runs read from disk. PRIVATE_KEY env still works as
+  // an advanced override.
+  // Honor config.privateKeyEnvVar so operators running multiple agents
+  // on one host can keep their keys in different env vars.
+  // (Codex P2 on PR #23: previously the env-var name was fixed at PRIVATE_KEY.)
+  const wallet = resolveWallet({ envVarName: config.privateKeyEnvVar });
+  printFirstRunBanner(wallet);
+  structuredLog("INFO", "wallet", "Wallet resolved", {
+    address: wallet.address,
+    source: wallet.source,
+  });
 
   // Wallet without a connected provider — StorageClient internally
   // wires the rpcUrl to its 0G Storage upload signer; AgenticIDClient
   // gets the signer + an explicit JsonRpcProvider via fromRpc().
-  const storageSigner = new Wallet(privateKey);
+  const storageSigner = new Wallet(wallet.privateKey);
 
   const indexer = new Indexer(config.indexerUrl);
   const storageClient = new StorageClient({
@@ -152,7 +165,7 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
   const agenticIdClient = AgenticIDClient.fromRpc(
     config.agenticIdAddress,
     config.rpcUrl,
-    privateKey,
+    wallet.privateKey,
   );
 
   const sessions = new SessionManager({ storageClient });
@@ -220,6 +233,17 @@ export function handleAfterToolCall(
         : event.result;
     const outputHash = sha256Hex(outputPayload);
 
+    // Capture decoded content alongside the hashes (Stage 3 of the
+    // zero-config UX work, 2026-05-06). Hashes alone are PROOF OF
+    // EXISTENCE; decoded content is what makes the dashboard
+    // "Etherscan for AI agents" instead of a JSON viewer. We
+    // serialize-and-reparse so unserializable values (BigInt,
+    // circular refs) are filtered to undefined → entry stores only
+    // what's safely JSON-roundtrippable. The hash fields anchor
+    // integrity even when the decoded content is omitted.
+    const decodedParams = safeJsonRoundtrip(event.params);
+    const decodedResult = safeJsonRoundtrip(outputPayload);
+
     // seq from getStatus().entryCount (O(1)) — the prior version used
     // logger.getEntries().length which clones the entry array on every
     // call (O(n) per append → O(n²) for an N-tool-call session). For
@@ -233,6 +257,11 @@ export function handleAfterToolCall(
       tool: toolName,
       inputHash,
       outputHash,
+      // Decoded content (Stage 3 — Etherscan-grade story not just hashes).
+      // Omitted from the entry when undefined (schema fields are optional)
+      // so unserializable inputs don't bloat the log with empty fields.
+      ...(decodedParams !== undefined ? { params: decodedParams } : {}),
+      ...(decodedResult !== undefined ? { result: decodedResult } : {}),
     });
   } catch (cause) {
     // appendEntry can throw on schema-mismatch or post-flush; sha256Hex
@@ -310,6 +339,8 @@ export async function handleSessionEnd(
       entryCount: result.entryCount,
       verifyUrl: fullVerifyUrl,
     });
+    // Anchor succeeded → flush already sealed the logger; safe to release.
+    state.sessions.release(sessionKey);
   } catch (cause) {
     // Surface as a STRUCTURED failure (per BDD: "the error is caught
     // and surfaced as a structured failure"). The recovery path
@@ -325,13 +356,22 @@ export async function handleSessionEnd(
       failureFields.entryCount = cause.entryCount;
       failureFields.dataDescription = cause.dataDescription;
       failureFields.recovery = "Call SessionAnchor.retryMint({rootHash, entryCount, sessionId}) to retry mint without re-flushing.";
+      // Flush succeeded → logger is sealed; rootHash is on 0G Storage
+      // and survives a release. Operator retries mint independently.
+      structuredLog("ERROR", "session_end", "Anchor failed", failureFields);
+      state.sessions.release(sessionKey);
+    } else {
+      // Flush itself failed (or some pre-flush error). The SessionLogger
+      // still holds the collected entries in memory — DO NOT release,
+      // or those entries are lost and the proof is unrecoverable. Leave
+      // the logger in the SessionManager map so the operator (or a
+      // retry hook) can re-attempt anchor.anchor() on the same logger.
+      // (Codex bot round-13 P1 on PR #23.)
+      failureFields.recovery =
+        "Flush failed before mint; SessionLogger retained in-memory. " +
+        "Re-run anchor() with the same sessionKey to retry from flush.";
+      structuredLog("ERROR", "session_end", "Anchor failed (pre-flush)", failureFields);
     }
-    structuredLog("ERROR", "session_end", "Anchor failed", failureFields);
-  } finally {
-    // Always release — even on failure, the SessionLogger is sealed
-    // (flush either succeeded or threw) and shouldn't sit in the
-    // SessionManager map across long-running OpenClaw processes.
-    state.sessions.release(sessionKey);
   }
 }
 
@@ -375,6 +415,29 @@ function pickSessionKey(ctx: {
     return ctx.sessionKey;
   }
   return null;
+}
+
+/**
+ * JSON-roundtrip a value: returns a deep clone via JSON.parse(JSON.stringify(value))
+ * IFF the value is safely serializable. Returns `undefined` when JSON.stringify
+ * throws (BigInt, circular references) OR returns undefined (top-level
+ * function / symbol / undefined).
+ *
+ * Used to populate the OPTIONAL `params` / `result` fields on
+ * ExecutionLogEntry. Hash fields (inputHash / outputHash) are computed
+ * separately by sha256Hex, which has its own deterministic fallback for
+ * unserializable inputs — so omitting decoded content here doesn't break
+ * the proof chain, it just means the dashboard renders "<unserializable>"
+ * for that field instead of the decoded value.
+ */
+function safeJsonRoundtrip(value: unknown): unknown {
+  try {
+    const stringified = JSON.stringify(value);
+    if (stringified === undefined) return undefined;
+    return JSON.parse(stringified);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

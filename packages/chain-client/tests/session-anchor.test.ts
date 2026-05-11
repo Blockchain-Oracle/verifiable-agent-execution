@@ -9,7 +9,8 @@
  *                                   dataHash: rootHash }
  *       3. mints iNFT
  *       4. returns { tokenId, txHash, rootHash, entryCount, verifyUrl }
- *   - verifyUrl follows `/verify/<chainId>/<tokenId>`
+ *   - verifyUrl follows `/verify/<tokenId>` (network is implicit
+ *     from the verifyUrlBase domain; subdomain-split model)
  *   - mint receipt contains an IntelligentDataSet event (covered transitively
  *     by AgenticIDClient — re-asserted here at the integration boundary)
  *
@@ -327,7 +328,7 @@ describe("SessionAnchor.anchor — orchestration", () => {
     expect(result.txHash).toBe(MINT_TX_HASH);
     expect(result.rootHash).toBe(ROOT_HASH);
     expect(result.entryCount).toBe(1);
-    expect(result.verifyUrl).toBe(`/verify/${GALILEO_CHAIN_ID}/${MINT_TOKEN_ID.toString()}`);
+    expect(result.verifyUrl).toBe(`/verify/${MINT_TOKEN_ID.toString()}`);
   });
 
   it("forwards the configured confirmations to mint()", async () => {
@@ -461,7 +462,7 @@ describe("SessionAnchor.anchor — orchestration", () => {
     // entryCount must round-trip from the error → retryMint → result
     expect(result.entryCount).toBe(0);
     expect(result.verifyUrl).toBe(
-      `/verify/${GALILEO_CHAIN_ID}/${MINT_TOKEN_ID.toString()}`,
+      `/verify/${MINT_TOKEN_ID.toString()}`,
     );
     // mint() was called twice — once in anchor(), once in retryMint().
     expect(callCount).toBe(2);
@@ -518,10 +519,12 @@ describe("SessionAnchor.anchor — orchestration", () => {
     expect(mintSpy).not.toHaveBeenCalled();
   });
 
-  it("verifyUrl uses the chainId from constructor options (not a hardcoded default)", async () => {
+  it("verifyUrl is /verify/<tokenId> only — chainId is implicit from the deploy domain (subdomain-split)", async () => {
     const logger = buildSessionLogger();
     const { client } = buildAgenticIdClient();
-    // Pick mainnet chainId to prove the URL is parameterised.
+    // Pass mainnet chainId — but the URL must NOT bake it in. The
+    // network is disambiguated by the verifyUrlBase domain
+    // (testnet at root vs mainnet at subdomain), not the path.
     const anchor = new SessionAnchor(
       logger,
       client,
@@ -533,7 +536,12 @@ describe("SessionAnchor.anchor — orchestration", () => {
       sessionId: SESSION_ID,
       containerHash: CONTAINER_HASH,
     });
-    expect(result.verifyUrl).toBe(`/verify/16661/${MINT_TOKEN_ID.toString()}`);
+    expect(result.verifyUrl).toBe(`/verify/${MINT_TOKEN_ID.toString()}`);
+    // Defensive: assert the chainId is NOT in the path. Earlier
+    // versions emitted `/verify/<chainId>/<tokenId>` which 404s on
+    // the dashboard (which only routes `/verify/[tokenId]`).
+    expect(result.verifyUrl).not.toContain("16661");
+    expect(result.verifyUrl).not.toContain("16602");
   });
 
   // BDD coverage for: "Given the transaction is confirmed on-chain / When ethers.js
@@ -632,7 +640,7 @@ describe("SessionAnchor.anchor — orchestration", () => {
     expect(result.tokenId).toBe(expectedTokenId);
     expect(result.txHash).toBe(expectedTxHash);
     expect(result.verifyUrl).toBe(
-      `/verify/${GALILEO_CHAIN_ID}/${expectedTokenId.toString()}`,
+      `/verify/${expectedTokenId.toString()}`,
     );
     // Sanity: contract was actually invoked with the SessionAnchor-built
     // payload — proves the orchestration didn't accidentally short-circuit.
@@ -662,7 +670,7 @@ describe("SessionAnchor.anchor — orchestration", () => {
 // ---------------------------------------------------------------------------
 
 const liveAnchorEnvReady =
-  Boolean(process.env.ZG_TESTNET_RPC) &&
+  Boolean((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)) &&
   Boolean(process.env.ZG_INDEXER_RPC) &&
   Boolean(process.env.AGENTICID_ADDRESS) &&
   Boolean(process.env.PRIVATE_KEY);
@@ -673,7 +681,7 @@ describe.skipIf(!liveAnchorEnvReady)(
     it("flushes a real session log to 0G Storage and mints a real iNFT, returning a tokenId from the on-chain event", async () => {
       const { JsonRpcProvider, Wallet } = await import("ethers");
       const { Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
-      const provider = new JsonRpcProvider(process.env.ZG_TESTNET_RPC);
+      const provider = new JsonRpcProvider((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC));
       const signer = new Wallet(process.env.PRIVATE_KEY!, provider);
 
       // Pin chain identity before spending gas — exact same defensive
@@ -683,7 +691,7 @@ describe.skipIf(!liveAnchorEnvReady)(
 
       const indexer = new Indexer(process.env.ZG_INDEXER_RPC!);
       const storage = new StorageClient({
-        rpcUrl: process.env.ZG_TESTNET_RPC!,
+        rpcUrl: (process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)!,
         indexerUrl: process.env.ZG_INDEXER_RPC!,
         signer,
         indexer: indexer as unknown as IndexerLike,
@@ -731,7 +739,7 @@ describe.skipIf(!liveAnchorEnvReady)(
       expect(result.rootHash).toMatch(/^0x[0-9a-fA-F]{64}$/u);
       expect(result.entryCount).toBe(1);
       expect(result.verifyUrl).toBe(
-        `/verify/16602/${result.tokenId.toString()}`,
+        `/verify/${result.tokenId.toString()}`,
       );
       // BDD wall-clock: "appears on the block explorer within 60s"
       // (mirroring story-agenticid-client). 90s soft cap to absorb

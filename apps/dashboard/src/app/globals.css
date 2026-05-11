@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Body defaults — explicit dark theme per UX spec § Theme.
+ * Overrides are scoped to the body so utility classes can still
+ * specify their own colors without battling specificity.
+ */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-text-primary font-sans;
+    /* Anti-jitter for hash/address strings — the mono font has tabular
+       digits which the proof-detail page needs heavily. */
+    font-variant-numeric: tabular-nums;
+  }
+  /* Dark-mode-only — no light-mode media query toggling per the UX
+     spec scope cap. */
+  ::selection {
+    background-color: theme("colors.accent-verify");
+    color: theme("colors.bg");
+  }
+}
+
+/* Marquee ticker animation — used by VerificationTicker. Linear,
+   infinite loop, 24s wrap-around. The track holds 2x the content
+   so the wrap is seamless. */
+@keyframes ticker {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Massive numeric stamp — used for the tokenId hero on /verify/[tokenId].
+   Tabular nums + condensed letter-spacing so 6-digit tokenIds fit
+   without rebreaking the hero.
+   Uses font-weight (universal) instead of font-variation-settings —
+   the latter silently no-ops on static font cuts (caught in design
+   review, 2026-05-06). text-shadow plants the digits against the
+   watermark; without it the 160px stamp reads as floating gauze. */
+.token-stamp {
+  font-feature-settings: "tnum" 1, "ss01" 1;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* Reduced-motion respect: kill the ticker marquee + animate-pulse on
+   the verifying-state badge for users with `prefers-reduced-motion`.
+   Decorative motion only — the cascade itself still runs (it's
+   information, not animation). */
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[ticker_24s_linear_infinite\],
+  .animate-\[ticker_12s_linear_infinite\] {
+    animation: none !important;
+  }
+  .animate-pulse,
+  .animate-ping {
+    animation: none !important;
+  }
+}
+
+/* Subtle perforation between sections of an "official record" page —
+   row of dots at the divider line that signals "stamped section". */
+.perforated-border {
+  background-image: radial-gradient(
+    circle,
+    theme("colors.border") 1px,
+    transparent 1.5px
+  );
+  background-size: 8px 1px;
+  background-repeat: repeat-x;
+  background-position: bottom;
+}

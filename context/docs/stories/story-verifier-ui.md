@@ -54,7 +54,7 @@ And the status color is green
 ## Shell verification
 
 ```bash
-pnpm --filter=dashboard vitest run verifier-ui.test.tsx
-pnpm --filter=dashboard next build
+pnpm --filter @verifiable-agent-execution/dashboard exec vitest run verifier-ui.test.tsx
+pnpm --filter @verifiable-agent-execution/dashboard build
 # Both must exit 0
 ```
