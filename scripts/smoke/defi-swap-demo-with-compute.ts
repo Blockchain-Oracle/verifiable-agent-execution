@@ -76,7 +76,14 @@ const AGENTICID_ADDRESS =
   process.env.AGENTICID_ADDRESS ?? "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const PINNED_PROVIDER = process.env.COMPUTE_PROVIDER_ADDRESS ?? "";
-const DEPOSIT_OG = Number(process.env.COMPUTE_DEPOSIT_OG ?? "0.001");
+// 0G Compute Ledger contract enforces MIN_LEDGER_BALANCE_OG = 3 to
+// CREATE a ledger account; the SDK then auto-transfers 2 0G per
+// provider sub-account on first inference. Default 4 covers both
+// (ledger 3 + sub-account 2 = 5 — but sub-account auto-funding draws
+// from the just-deposited ledger, not the wallet, so 4 suffices for
+// initial setup). Override to 3 once the ledger exists for top-ups.
+// Funds remain recoverable via `0g-compute-cli retrieve-fund` (24h lock).
+const DEPOSIT_OG = Number(process.env.COMPUTE_DEPOSIT_OG ?? "4");
 
 if (!PRIVATE_KEY) {
   console.error(
@@ -345,10 +352,14 @@ async function main(): Promise<void> {
   console.log(`[demo-compute] Signer (TEE oracle): ${signer.address}`);
 
   const network = await provider.getNetwork();
-  if (network.chainId !== 16602n) {
-    throw new Error(`Expected Galileo (16602); got ${network.chainId}`);
+  const chainIdNum = Number(network.chainId);
+  if (chainIdNum !== 16602 && chainIdNum !== 16661) {
+    throw new Error(
+      `Expected Galileo (16602) or Aristotle (16661); got ${network.chainId}`,
+    );
   }
-  console.log(`[demo-compute] Galileo chainId confirmed: 16602`);
+  const networkLabel = chainIdNum === 16661 ? "Aristotle (mainnet)" : "Galileo (testnet)";
+  console.log(`[demo-compute] ${networkLabel} chainId confirmed: ${chainIdNum}`);
   console.log(`[demo-compute] AgenticID: ${AGENTICID_ADDRESS}`);
 
   const sessionId = `ses_defi_compute_${Date.now()}`;
@@ -376,12 +387,20 @@ async function main(): Promise<void> {
   }
 
   // Build storage + agenticID clients
+  // Mainnet + slow-testnet protection: SessionLogger's BDD upload bound
+  // (30s) sometimes rejects too aggressively for live demo mints.  Allow
+  // STORAGE_UPLOAD_TIMEOUT_MS env override (default 120s for demo
+  // scripts vs the 30s ceiling for production code paths).
+  const uploadTimeoutMs = Number(
+    process.env.STORAGE_UPLOAD_TIMEOUT_MS ?? "120000",
+  );
   const indexer = new Indexer(INDEXER_URL);
   const storageClient = new StorageClient({
     rpcUrl: RPC,
     indexerUrl: INDEXER_URL,
     signer,
     indexer: indexer as unknown as IndexerLike,
+    uploadTimeoutMs,
   });
   const logger = new SessionLogger(sessionId, storageClient);
 
@@ -477,7 +496,7 @@ async function main(): Promise<void> {
   // ─── Anchor ─────────────────────────────────────────────────────────
   const agenticIdClient = new AgenticIDClient(AGENTICID_ADDRESS, provider, signer);
   const anchor = new SessionAnchor(logger, agenticIdClient, agentId, MODEL_ID_LOG, {
-    chainId: 16602,
+    chainId: chainIdNum,
   });
 
   console.log(`[demo-compute] Anchoring session…`);
@@ -506,9 +525,11 @@ async function main(): Promise<void> {
   console.log("  Dashboard (local dev):");
   console.log(`    http://localhost:3000/verify/${result.tokenId.toString()}`);
   console.log("");
-  console.log("  Mainnet explorer:");
+  const explorerHost =
+    chainIdNum === 16661 ? "https://chainscan.0g.ai" : "https://chainscan-galileo.0g.ai";
+  console.log(`  ${networkLabel} explorer:`);
   console.log(
-    `    https://chainscan-galileo.0g.ai/token/${AGENTICID_ADDRESS}?a=${result.tokenId.toString()}`,
+    `    ${explorerHost}/token/${AGENTICID_ADDRESS}?a=${result.tokenId.toString()}`,
   );
   console.log("════════════════════════════════════════════════════════════════");
 }
