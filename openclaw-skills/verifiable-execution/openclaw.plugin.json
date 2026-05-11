@@ -32,7 +32,7 @@
       },
       "verifyUrlBase": {
         "type": "string",
-        "description": "Base URL of the verifier dashboard (e.g. https://verify.example.com). Appended to the relative /verify/<chainId>/<tokenId> path returned by SessionAnchor.anchor()."
+        "description": "Base URL of the verifier dashboard. The DOMAIN carries the network signal (Epic-7 subdomain split: 'https://verifiable.0g.ai' = testnet root, 'https://mainnet.verifiable.0g.ai' = mainnet subdomain). Appended to the relative /verify/<tokenId> path returned by SessionAnchor.anchor()."
       },
       "chainId": {
         "type": "number",

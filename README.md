@@ -79,7 +79,7 @@ The product is an **OpenClaw plugin**, not a script. Install it once in your Ope
 4. **Run OpenClaw normally.** Every session you complete auto-anchors at session-end and the plugin emits a structured log line with the verify URL:
    ```json
    {"level":"INFO","component":"session_end","msg":"Session anchored on-chain",
-    "data":{"tokenId":"123","verifyUrl":"https://verifiable.0g.ai/verify/16602/123"}}
+    "data":{"tokenId":"123","verifyUrl":"https://verifiable.0g.ai/verify/123"}}
    ```
 
 ### Switching to mainnet

@@ -31,8 +31,8 @@ Then it:
   4. Returns { tokenId: bigint, verifyUrl: string, txHash: string, rootHash: string, entryCount: number }
 
 Given a returned tokenId
-When the returned verifyUrl is `/verify/<chainId>/<tokenId>`
-Then it is a valid URL pattern (contains tokenId AND uses options.chainId, NOT a hardcoded default)
+When the returned verifyUrl is `/verify/<tokenId>`
+Then it is a valid URL pattern containing the tokenId — and ONLY the tokenId. The network (testnet vs mainnet) is disambiguated by the verifyUrlBase domain (Epic-7 subdomain split: `verifiable.0g.ai` = testnet root, `mainnet.verifiable.0g.ai` = mainnet subdomain), NOT by a chainId segment in the path. Putting chainId in the URL path was the pre-Epic-7 design; rejected because it forces ugly URLs and breaks the dashboard route `apps/dashboard/src/app/verify/[tokenId]/page.tsx`.
 
 Given the transaction is confirmed on-chain
 When ethers.js listens for Updated or IntelligentDataSet events from the mint tx

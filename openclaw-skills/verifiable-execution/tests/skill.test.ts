@@ -638,7 +638,7 @@ describe("handleSessionEnd — story-skill-close", () => {
     await expect(handleSessionEnd(state, {}, {})).resolves.toBeUndefined();
   });
 
-  it("verifyUrl in success log includes config.verifyUrlBase + relative /verify/<chainId>/<tokenId>", async () => {
+  it("verifyUrl in success log includes config.verifyUrlBase + relative /verify/<tokenId> (network is implicit from domain)", async () => {
     const { state } = buildPluginStateForTests({
       configOverrides: { verifyUrlBase: "https://verify.example.com/" }, // trailing slash on purpose
     });
@@ -666,7 +666,13 @@ describe("handleSessionEnd — story-skill-close", () => {
     // concatenating the relative /verify/ path so we don't get
     // "...com//verify/...".
     expect(successLogs.join("")).toContain(
-      `https://verify.example.com/verify/${state.config.chainId}/${MINT_TOKEN_ID.toString()}`,
+      `https://verify.example.com/verify/${MINT_TOKEN_ID.toString()}`,
+    );
+    // Defensive: chainId must NOT appear in the path. Network is
+    // disambiguated by the verifyUrlBase domain (subdomain split),
+    // not by a chainId segment.
+    expect(successLogs.join("")).not.toContain(
+      `/${state.config.chainId}/`,
     );
   });
 });

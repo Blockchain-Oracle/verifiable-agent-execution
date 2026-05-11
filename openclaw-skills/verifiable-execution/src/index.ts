@@ -4,8 +4,12 @@
  * Closes Epic 4 (stories: skill-init, skill-intercept, skill-close).
  * Captures every tool call inside an agent session, flushes the log to
  * 0G Storage at session end, and mints an AgenticID iNFT anchoring the
- * rootHash on-chain. Produces a `<verifyUrlBase>/verify/<chainId>/<tokenId>`
- * URL the verifier dashboard can resolve cold.
+ * rootHash on-chain. Produces a `<verifyUrlBase>/verify/<tokenId>` URL
+ * the verifier dashboard can resolve cold. The network (testnet vs
+ * mainnet) is disambiguated by the configured verifyUrlBase domain
+ * (Epic-7 subdomain split: `verifiable.0g.ai` = testnet root,
+ * `mainnet.verifiable.0g.ai` = mainnet subdomain) — NOT by a chainId
+ * segment in the path. Same model Etherscan uses vs Sepolia.Etherscan.
  *
  * Hooks fire AUTOMATICALLY — every tool call across every channel
  * (Telegram/Discord/Slack/CLI), every session end. The AI is observed
@@ -66,7 +70,7 @@ import { printFirstRunBanner, resolveWallet } from "./wallet.js";
 const PLUGIN_ID = "verifiable-execution";
 const PLUGIN_NAME = "Verifiable Execution";
 const PLUGIN_DESCRIPTION =
-  "Anchors every agent session as a TEE-signed log on 0G Storage + iNFT on AgenticID, producing a /verify/<chainId>/<tokenId> URL anyone can verify cold.";
+  "Anchors every agent session as a TEE-signed log on 0G Storage + iNFT on AgenticID, producing a /verify/<tokenId> URL anyone can verify cold.";
 
 // ---------------------------------------------------------------------------
 // Plugin state — built when config + private key both resolve. A

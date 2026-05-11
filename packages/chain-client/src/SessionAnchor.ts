@@ -6,7 +6,9 @@
  *   3. Mints an AgenticID iNFT with `{dataDescription, dataHash:rootHash}`
  *      so the rootHash is permanently anchored on-chain.
  *   4. Returns the tokenId, txHash, rootHash, entryCount, and the
- *      `/verify/<chainId>/<tokenId>` URL the dashboard surfaces.
+ *      `/verify/<tokenId>` URL the dashboard surfaces (network is
+ *      implicit from the verifyUrlBase domain — Epic-7 subdomain split,
+ *      see ADR-13).
  *
  * Source of truth:
  *   - context/docs/stories/story-session-mint.md (BDD acceptance)
@@ -45,9 +47,13 @@ import {
 
 export interface SessionAnchorOptions {
   /**
-   * EVM chainId baked into the verifyUrl. REQUIRED — the SessionAnchor
-   * is intentionally network-agnostic and will not silently default to
-   * Galileo. Pass 16602 for Galileo testnet, 16661 for Aristotle mainnet.
+   * EVM chainId this anchor is targeting. REQUIRED — informational
+   * metadata bound at construction so callers (the plugin, the smoke
+   * scripts) can structured-log which network they anchored to. NOT
+   * baked into the verifyUrl anymore (Epic-7 design: network is
+   * disambiguated by the DOMAIN — testnet at root, mainnet at
+   * subdomain — per the Etherscan/Sepolia.Etherscan model). Pass
+   * 16602 for Galileo testnet, 16661 for Aristotle mainnet.
    */
   chainId: number;
   /**
@@ -85,9 +91,13 @@ export interface AnchorResult {
   /** Count of entries that were anchored (mirrors LogFlushResult). */
   entryCount: number;
   /**
-   * Verifier URL pattern `/verify/<chainId>/<tokenId>`. Relative path —
-   * the dashboard origin is appended at the call site so the same
-   * SessionAnchor can serve preview / staging / prod without re-wiring.
+   * Verifier URL pattern `/verify/<tokenId>` — relative path. The chain
+   * (testnet vs mainnet) is disambiguated by the DOMAIN the verifyUrl
+   * gets prepended to (e.g., `verifiable.0g.ai` = testnet,
+   * `mainnet.verifiable.0g.ai` = mainnet), matching the Etherscan vs
+   * Sepolia.Etherscan model. Do NOT bake chainId into the URL path —
+   * the deploy topology already carries it and a path-prefixed chainId
+   * forces ugly URLs + dead routes.
    */
   verifyUrl: string;
 }
@@ -283,7 +293,11 @@ export class SessionAnchor {
       });
     }
 
-    const verifyUrl = `/verify/${this.chainId}/${mintResult.tokenId.toString()}`;
+    // Subdomain-split design: chain is implicit from the verifyUrlBase's
+    // domain (testnet at root, mainnet at subdomain). Path stays
+    // `/verify/<tokenId>` on both. Matches the dashboard's actual route
+    // at `apps/dashboard/src/app/verify/[tokenId]/page.tsx`.
+    const verifyUrl = `/verify/${mintResult.tokenId.toString()}`;
     return {
       tokenId: mintResult.tokenId,
       txHash: mintResult.txHash,
