@@ -82,9 +82,15 @@ function NetworkChip({
   const showCrossLink =
     typeof badge.oppositeUrl === "string" && badge.oppositeUrl.length > 0;
 
+  // The chip itself renders on EVERY viewport (mobile users need the
+  // active-network signal too). The "view <other> ↗" cross-link is
+  // hidden below `md` to keep the mobile TopBar from wrapping — the
+  // chip alone carries the LIVE indicator + network label per Codex
+  // round-7 frontend finding. (Prior version was `hidden md:flex` on
+  // the entire container, which hid the chip on mobile entirely.)
   return (
     <div
-      className="hidden items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] md:flex"
+      className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em]"
       aria-label={`Live on ${badge.label}`}
     >
       <span
@@ -107,7 +113,7 @@ function NetworkChip({
           href={badge.oppositeUrl}
           target="_blank"
           rel="noreferrer"
-          className="text-text-secondary transition-colors hover:text-text-primary"
+          className="hidden text-text-secondary transition-colors hover:text-text-primary md:inline"
         >
           view {badge.oppositeLabel.toLowerCase()} ↗
         </a>
