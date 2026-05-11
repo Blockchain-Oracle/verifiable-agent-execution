@@ -70,6 +70,12 @@ const DEFAULTS = {
 // ---------------------------------------------------------------------------
 
 const envSchema = z.object({
+  // ZG_RPC is the canonical name (network-agnostic — the value is the
+  // mainnet or testnet 0G RPC URL depending on which Coolify service
+  // this is running on). ZG_TESTNET_RPC is a deprecated alias kept for
+  // back-compat with .env files written before the Epic-7 mainnet
+  // deploy when the project was testnet-only.
+  ZG_RPC: z.string().url().optional(),
   ZG_TESTNET_RPC: z.string().url().optional(),
   ZG_INDEXER_RPC: z.string().url().optional(),
   AGENTICID_ADDRESS: z.string().regex(ADDRESS_HEX_RE).optional(),
@@ -78,14 +84,15 @@ const envSchema = z.object({
 });
 
 export interface DashboardEnv {
-  ZG_TESTNET_RPC: string;
+  /** 0G chain RPC URL (mainnet or testnet — set per Coolify service). */
+  ZG_RPC: string;
   ZG_INDEXER_RPC: string;
   AGENTICID_ADDRESS: string;
   /**
    * Always present now (compiled-in default). Was previously optional
-   * because we hadn't deployed a verifier — we have, the address above
-   * is real on Galileo. The "preview" verification status only fires
-   * when a session has zero teeSignature entries.
+   * because we hadn't deployed a verifier — we have. The "preview"
+   * verification status only fires when a session has zero teeSignature
+   * entries.
    */
   TEE_VERIFIER_ADDRESS: string;
   CHAIN_ID: number;
@@ -178,7 +185,10 @@ export function loadEnv(): DashboardEnv {
     );
   }
   return {
-    ZG_TESTNET_RPC: result.data.ZG_TESTNET_RPC ?? DEFAULTS.RPC,
+    // Prefer ZG_RPC; fall back to legacy ZG_TESTNET_RPC; final fallback
+    // is the compiled-in default. Both env names accepted so older
+    // .env files keep working.
+    ZG_RPC: result.data.ZG_RPC ?? result.data.ZG_TESTNET_RPC ?? DEFAULTS.RPC,
     ZG_INDEXER_RPC: result.data.ZG_INDEXER_RPC ?? DEFAULTS.INDEXER,
     AGENTICID_ADDRESS: result.data.AGENTICID_ADDRESS ?? DEFAULTS.AGENTICID_ADDRESS,
     TEE_VERIFIER_ADDRESS:

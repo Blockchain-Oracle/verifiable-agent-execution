@@ -68,7 +68,7 @@ export async function fetchRecentFeed(
   limit = FEED_RESULT_LIMIT,
 ): Promise<FeedRow[]> {
   const env = loadEnv();
-  const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
+  const provider = new JsonRpcProvider(env.ZG_RPC);
   const contract = new Contract(env.AGENTICID_ADDRESS, AGENTICID_FEED_ABI, provider);
 
   const ceiling = await resolveCeiling(contract, FEED_PROBE_CEILING_OFFSET);
@@ -95,7 +95,7 @@ export async function fetchTokensForAgent(
   limit = 50,
 ): Promise<FeedRow[]> {
   const env = loadEnv();
-  const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
+  const provider = new JsonRpcProvider(env.ZG_RPC);
   const contract = new Contract(env.AGENTICID_ADDRESS, AGENTICID_FEED_ABI, provider);
 
   const ceiling = await resolveCeiling(contract, 0n);

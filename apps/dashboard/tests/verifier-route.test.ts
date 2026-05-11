@@ -109,7 +109,7 @@ function installFakeClients(opts: {
     indexer: indexer as never,
     verifier: verifier as never,
     env: {
-      ZG_TESTNET_RPC: process.env.ZG_TESTNET_RPC!,
+      ZG_RPC: process.env.ZG_TESTNET_RPC!,
       ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
       AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
       CHAIN_ID: 16602,
@@ -284,7 +284,7 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
         }),
       } as never,
       env: {
-        ZG_TESTNET_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_RPC: process.env.ZG_TESTNET_RPC!,
         ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
         AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
         CHAIN_ID: 16602,
@@ -337,7 +337,7 @@ describe("GET /api/verify/[tokenId] — verifier integration", () => {
         }),
       } as never,
       env: {
-        ZG_TESTNET_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_RPC: process.env.ZG_TESTNET_RPC!,
         ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
         AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
         CHAIN_ID: 16602,

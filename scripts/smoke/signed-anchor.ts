@@ -47,7 +47,8 @@ import {
 } from "@verifiable-agent-execution/chain-client";
 import { signingMessageDigestFromString } from "@verifiable-agent-execution/tee-adapter";
 
-const RPC = process.env.ZG_TESTNET_RPC;
+// ZG_RPC is the canonical name; ZG_TESTNET_RPC kept for back-compat.
+const RPC = process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC;
 const INDEXER_URL = process.env.ZG_INDEXER_RPC ?? process.env.ZG_TESTNET_INDEXER;
 const AGENTICID_ADDRESS = process.env.AGENTICID_ADDRESS;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;

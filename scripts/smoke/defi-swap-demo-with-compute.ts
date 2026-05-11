@@ -67,7 +67,10 @@ import { createHash } from "node:crypto";
 // Env + defaults
 // ---------------------------------------------------------------------------
 
-const RPC = process.env.ZG_TESTNET_RPC ?? "https://evmrpc-testnet.0g.ai";
+// ZG_RPC is the canonical env name (network-agnostic — value differs
+// for testnet vs mainnet runs). ZG_TESTNET_RPC kept as a fallback for
+// .env files written pre-Epic-7.
+const RPC = process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC ?? "https://evmrpc-testnet.0g.ai";
 const INDEXER_URL =
   process.env.ZG_INDEXER_RPC ??
   process.env.ZG_TESTNET_INDEXER ??

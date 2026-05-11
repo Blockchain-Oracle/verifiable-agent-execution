@@ -573,7 +573,7 @@ describe("AgenticIDClient.getIntelligentDatas", () => {
 // ---------------------------------------------------------------------------
 
 const integrationEnvReady =
-  Boolean(process.env.ZG_TESTNET_RPC) &&
+  Boolean((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)) &&
   Boolean(process.env.AGENTICID_ADDRESS);
 
 describe.skipIf(!integrationEnvReady)(
@@ -581,7 +581,7 @@ describe.skipIf(!integrationEnvReady)(
   () => {
     it("reads token 0 from the deployed AgenticID and returns the canonical entries", async () => {
       const { JsonRpcProvider } = await import("ethers");
-      const provider = new JsonRpcProvider(process.env.ZG_TESTNET_RPC);
+      const provider = new JsonRpcProvider((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC));
       const client = new AgenticIDClient(
         process.env.AGENTICID_ADDRESS!,
         provider,
@@ -627,7 +627,7 @@ describe.skipIf(!liveMintEnvReady)(
       const { JsonRpcProvider, Wallet, keccak256, toUtf8Bytes } = await import(
         "ethers"
       );
-      const provider = new JsonRpcProvider(process.env.ZG_TESTNET_RPC);
+      const provider = new JsonRpcProvider((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC));
       const signer = new Wallet(process.env.PRIVATE_KEY!, provider);
 
       // Verify we're actually on Galileo (chain 16602) before spending

@@ -670,7 +670,7 @@ describe("SessionAnchor.anchor — orchestration", () => {
 // ---------------------------------------------------------------------------
 
 const liveAnchorEnvReady =
-  Boolean(process.env.ZG_TESTNET_RPC) &&
+  Boolean((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)) &&
   Boolean(process.env.ZG_INDEXER_RPC) &&
   Boolean(process.env.AGENTICID_ADDRESS) &&
   Boolean(process.env.PRIVATE_KEY);
@@ -681,7 +681,7 @@ describe.skipIf(!liveAnchorEnvReady)(
     it("flushes a real session log to 0G Storage and mints a real iNFT, returning a tokenId from the on-chain event", async () => {
       const { JsonRpcProvider, Wallet } = await import("ethers");
       const { Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
-      const provider = new JsonRpcProvider(process.env.ZG_TESTNET_RPC);
+      const provider = new JsonRpcProvider((process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC));
       const signer = new Wallet(process.env.PRIVATE_KEY!, provider);
 
       // Pin chain identity before spending gas — exact same defensive
@@ -691,7 +691,7 @@ describe.skipIf(!liveAnchorEnvReady)(
 
       const indexer = new Indexer(process.env.ZG_INDEXER_RPC!);
       const storage = new StorageClient({
-        rpcUrl: process.env.ZG_TESTNET_RPC!,
+        rpcUrl: (process.env.ZG_RPC ?? process.env.ZG_TESTNET_RPC)!,
         indexerUrl: process.env.ZG_INDEXER_RPC!,
         signer,
         indexer: indexer as unknown as IndexerLike,

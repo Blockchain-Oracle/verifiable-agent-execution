@@ -198,7 +198,7 @@ let cachedClients: CachedClients | null = null;
 function getClients(): CachedClients {
   if (cachedClients !== null) return cachedClients;
   const env = loadEnv();
-  const provider = new JsonRpcProvider(env.ZG_TESTNET_RPC);
+  const provider = new JsonRpcProvider(env.ZG_RPC);
   const agenticIdClient = new AgenticIDClient(env.AGENTICID_ADDRESS, provider);
   const indexer = new Indexer(env.ZG_INDEXER_RPC);
   const verifier = new Contract(

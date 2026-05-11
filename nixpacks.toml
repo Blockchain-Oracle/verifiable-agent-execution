@@ -14,12 +14,14 @@
 #
 #   mainnet  →  Domain = mainnet.verifiable.0g.ai  (subdomain of above)
 #               Mainnet contracts are LIVE (deployed 2026-05-11). Env block:
-#                 ZG_TESTNET_RPC=https://evmrpc.0g.ai
+#                 ZG_RPC=https://evmrpc.0g.ai
 #                 ZG_INDEXER_RPC=https://indexer-storage-turbo.0g.ai
 #                 AGENTICID_ADDRESS=0xC6f7fB1511a7483C6e14258c70529e37ec698937
 #                 TEE_VERIFIER_ADDRESS=0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2
 #                 CHAIN_ID=16661
 #               Optional: MAINNET_SITE_URL=<self> + TESTNET_SITE_URL=<sibling>
+#               Note: ZG_TESTNET_RPC is accepted as a back-compat alias
+#               for ZG_RPC; new setups should use ZG_RPC.
 #
 # IMPORTANT: in Coolify set "Base Directory" to / (repo root), NOT
 # apps/dashboard.  Nixpacks needs to see the workspace root so pnpm
