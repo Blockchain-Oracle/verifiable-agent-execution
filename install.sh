@@ -93,9 +93,17 @@ info "Step 0/3 — installing workspace dependencies"
 ok "deps installed"
 
 # ── Step 1: link the plugin via OpenClaw CLI ─────────────────────────────────
+#
+# `--dangerously-force-unsafe-install` is required because pnpm workspaces
+# put third-party deps in a shared `.pnpm/` store and symlink to them from
+# the plugin's `node_modules/`. OpenClaw's security scanner flags these
+# "symlink target outside install root" as a potential local-dev attack
+# vector — for our plugin it's just the normal pnpm workspace layout.
+# When we publish to npm (TODO post-hackathon) the tarball is flat and
+# this flag goes away. The plugin source is open & reviewable either way.
 echo
 info "Step 1/3 — linking plugin into OpenClaw"
-if openclaw plugins install --link "$PLUGIN_DIR" 2>&1 | sed 's/^/    /'; then
+if openclaw plugins install --link "$PLUGIN_DIR" --dangerously-force-unsafe-install 2>&1 | sed 's/^/    /'; then
   ok "linked $PLUGIN_ID"
 else
   fail "'openclaw plugins install --link' failed — see output above"
