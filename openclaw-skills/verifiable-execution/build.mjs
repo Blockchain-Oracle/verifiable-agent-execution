@@ -10,7 +10,7 @@
  *   shipped artifact has no `node_modules/` at all.
  *
  *   This same bundle is the artifact we npm-publish: subscribers run
- *   `openclaw plugins install npm:@blockchain-oracle/openclaw-verifiable-execution`
+ *   `openclaw plugins install npm:@blockchainoracle/openclaw-verifiable-execution`
  *   and OpenClaw extracts a tarball that contains exactly this dist.
  *
  * What it does:
@@ -81,7 +81,7 @@ const result = await build({
   logLevel: "info",
   // banner: keep the package origin visible in any stack trace.
   banner: {
-    js: "// @blockchain-oracle/openclaw-verifiable-execution — bundled with esbuild",
+    js: "// @blockchainoracle/openclaw-verifiable-execution — bundled with esbuild",
   },
 });
 
@@ -110,10 +110,9 @@ console.log("[build] copied openclaw.plugin.json");
 const sourcePkg = JSON.parse(await readFile(SRC_PKG_JSON, "utf8"));
 
 const distPkg = {
-  // Scoped to the GitHub org so the package matches the repo & is
-  // unambiguous on npm. Free `@blockchain-oracle/*` scope assumed —
-  // first publish creates it automatically with `--access public`.
-  name: "@blockchain-oracle/openclaw-verifiable-execution",
+  // Personal scope of the npm user `blockchainoracle`. First publish
+  // with `--access public` auto-claims the package under the scope.
+  name: "@blockchainoracle/openclaw-verifiable-execution",
   version: sourcePkg.version,
   description: sourcePkg.description,
   type: "module",
@@ -179,7 +178,7 @@ console.log("[build] wrote dist package.json");
 //    is just to be a landing card on npmjs.com.
 // ---------------------------------------------------------------------------
 
-const distReadme = `# @blockchain-oracle/openclaw-verifiable-execution
+const distReadme = `# @blockchainoracle/openclaw-verifiable-execution
 
 OpenClaw plugin that captures every tool call inside an agent session,
 flushes the log to **0G Storage** at session end, and mints an
@@ -190,7 +189,7 @@ cold — share once, anyone can replay the agent's run.
 ## Install
 
 \`\`\`bash
-openclaw plugins install npm:@blockchain-oracle/openclaw-verifiable-execution
+openclaw plugins install npm:@blockchainoracle/openclaw-verifiable-execution
 openclaw gateway restart
 \`\`\`
 
