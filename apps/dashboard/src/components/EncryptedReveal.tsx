@@ -177,10 +177,16 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
 
   // Locked / decrypting / error all share the metadata-only chrome.
   // Only the small status pill + footer hint differ.
+  //
+  // Responsive (Codex round-7 P2): on mobile the long Mono values
+  // (rootHash, sessionId) were forcing the fixed `grid-cols-[200px_1fr]`
+  // wider than the viewport. Stack to a single column under `sm:` and
+  // restore the two-column labeled grid above. Same pattern for the
+  // outer padding (`px-4`/`p-5` mobile → `px-6`/`p-8` desktop).
   return (
-    <section className="mx-auto max-w-5xl px-6 py-10">
-      <div className="rounded-md border border-border bg-surface p-8">
-        <header className="flex items-baseline justify-between gap-4">
+    <section className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
+      <div className="rounded-md border border-border bg-surface p-5 sm:p-8">
+        <header className="flex flex-wrap items-baseline justify-between gap-4">
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-text-secondary">
               Token #{initialProof.tokenId}
@@ -199,7 +205,7 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
           owner must share a reveal link with you.
         </p>
 
-        <dl className="mt-8 grid grid-cols-[200px_1fr] gap-y-3 font-mono text-xs">
+        <dl className="mt-8 grid grid-cols-1 gap-y-3 font-mono text-xs sm:grid-cols-[200px_1fr]">
           <dt className="uppercase tracking-wider text-text-secondary">Token ID</dt>
           <dd>
             <Mono>{initialProof.tokenId}</Mono>
