@@ -220,7 +220,14 @@ jq \
     .plugins.load.paths //= [] |
     (if (.plugins.load.paths | index($pluginPath)) == null
        then .plugins.load.paths += [$pluginPath]
-       else . end)
+       else . end) |
+    # CRITICAL: add to plugins.allow so OpenClaw actually dispatches
+    # events to our handlers. Without this, the plugin LOADS (shows up
+    # in `plugins list` as enabled) but its api.on() subscriptions never
+    # fire — the gateway sandboxes "non-bundled discovered" plugins by
+    # default and only allowlisted ids get the event stream. We learned
+    # this the hard way on the VPS E2E: 8 sessions, nonce 0, no anchor.
+    .plugins.allow = ((.plugins.allow // []) + [$pluginId] | unique)
   ' "$OPENCLAW_CONFIG" > "$TMP"
 
 mv "$TMP" "$OPENCLAW_CONFIG"
