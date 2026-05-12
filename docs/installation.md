@@ -75,6 +75,100 @@ Send 0.1 0G to that address. After it lands (~10 seconds on Galileo),
 every subsequent session anchors automatically and prints a
 `/verify/<tokenId>` URL you can share with anyone.
 
+If you'd rather find the address WITHOUT running a session first:
+
+```bash
+# Address is printed by openclaw itself if you `plugins enable` again:
+openclaw plugins enable verifiable-execution
+
+# Or just read it directly:
+jq -r .address ~/.openclaw/verifiable-execution/wallet.json
+```
+
+---
+
+## How it works after install — what you'll actually see
+
+This is the most-asked question from new users, so here's the
+complete picture.
+
+### Nothing changes about how you use OpenClaw
+
+You don't tell agents to "use the plugin". You don't pass a flag.
+You don't change any prompt. The plugin attaches itself to the
+OpenClaw event loop as a **passive listener** — every time the
+runtime fires an `after_tool_call` or `session_end` event for any
+agent, the plugin gets notified out of band.
+
+Run any OpenClaw command exactly the way you would without the
+plugin installed:
+
+```bash
+openclaw query "Quote a USDC→ETH swap on 0G with 50 bps max slippage"
+```
+
+While the agent runs, the plugin silently:
+
+- Hashes the params + result of every tool call (sha256, no
+  plaintext leaves your machine)
+- Buffers the hashed entries in memory under a sessionId
+- On `session_end`, flushes the buffer to **0G Storage**, gets back
+  a Merkle rootHash
+- Mints an **AgenticID iNFT** (ERC-7857) anchoring that rootHash
+  on-chain
+- Prints the result to stderr:
+
+```
+[verifiable-execution] session anchored: tokenId=42 verifyUrl=https://verifiable.0g.ai/verify/42
+```
+
+### You share the URL — anyone can verify it cold
+
+Open the printed URL in any browser. No wallet, no auth, no install
+required to verify. The dashboard runs three live reads against
+0G:
+
+1. `AgenticID.getIntelligentDatas(tokenId)` → fetches the stored
+   `dataDescription` + `dataHash` for the session
+2. **0G Storage download** of the log identified by that rootHash
+3. `MockTEEVerifier.verifyTEESignature(...)` for each entry's
+   signature
+
+All three pass → 4 green badges on the page → "this agent really
+did execute these tool calls, in this order, with these results."
+
+### Multiple agents / multiple channels
+
+Every OpenClaw session — no matter which channel triggered it
+(CLI, Telegram bot, Discord bot, Slack, web, anything you wire up
+to your gateway) — gets anchored. Sessions are keyed by OpenClaw's
+own `sessionId`, so each conversation produces its own iNFT.
+
+---
+
+## Restarting the gateway
+
+OpenClaw loads installed plugins at gateway-start time. After
+`openclaw plugins install <...>` you have to restart for the change
+to take effect:
+
+```bash
+openclaw gateway restart
+```
+
+If the gateway wasn't running, start it instead:
+
+```bash
+openclaw gateway start
+```
+
+You can confirm the plugin loaded with:
+
+```bash
+openclaw plugins list
+# Should show: verifiable-execution | enabled | 0.1.1
+```
+
 ---
 
 ## Install from source (for plugin contributors)
