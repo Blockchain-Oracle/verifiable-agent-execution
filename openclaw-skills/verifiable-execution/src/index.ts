@@ -288,6 +288,108 @@ export function handleAfterToolCall(
 }
 
 /**
+ * llm_output handler — captures every LLM response as an ExecutionLogEntry,
+ * so even when an agent uses INTERNAL tools (Claude's bash/edit/grep that
+ * live inside Claude's reasoning loop and never surface to OpenClaw's tool
+ * dispatcher) we still anchor what the agent did. Without this, the only
+ * agents we could attest to would be ones that use OpenClaw-dispatched
+ * tools (Brave search, web fetch, memory lookup) — which excludes most
+ * realistic agent workloads.
+ *
+ * The entry's `tool` field is set to "llm_call" to distinguish from
+ * actual tool_call entries. The decoded `result.content` is the model's
+ * full response (which contains any inline tool calls in JSON form for
+ * verifiable replay). The OpenClaw payload shape is intentionally
+ * loose-typed (`{ content?: unknown }`) because the SDK's
+ * PluginHookLlmOutputEvent declares many optional fields that differ
+ * across provider backends.
+ *
+ * Why mirror handleAfterToolCall structure: the entry schema is the same
+ * (ExecutionLogEntry), the failure modes are the same (sessionKey
+ * missing → log + return; appendEntry throws → log + return), and the
+ * dashboard renders both via the same EntryCard component. Code reuse
+ * via a private helper would make the BDD-to-test mapping less direct.
+ */
+export function handleLlmOutput(
+  state: PluginState,
+  event: {
+    runId?: unknown;
+    sessionId?: unknown;
+    provider?: unknown;
+    model?: unknown;
+    resolvedRef?: unknown;
+    harnessId?: unknown;
+    assistantTexts?: unknown;
+    lastAssistant?: unknown;
+    usage?: unknown;
+  },
+  ctx: { sessionKey?: unknown; sessionId?: unknown },
+): void {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "llm_output", "Skipping entry: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+
+  let logger: SessionLogger;
+  try {
+    logger = state.sessions.getOrCreate(sessionKey);
+  } catch (cause) {
+    structuredLog("ERROR", "llm_output", "Failed to allocate SessionLogger", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+    return;
+  }
+
+  try {
+    // Per `PluginHookLlmOutputEvent` in
+    // openclaw@2026.5.4/plugin-sdk/src/plugins/hook-types.d.ts: the
+    // payload exposes runId/provider/model + the model's response in
+    // `assistantTexts` (chunks) and `lastAssistant` (final). The
+    // prompt itself is delivered on the SEPARATE `llm_input` event
+    // (PluginHookLlmInputEvent), which we don't subscribe to — that
+    // would double the entry count for one model call. Using a
+    // synthetic identifier as the input lets us anchor the call
+    // identity without storing duplicate prompt content.
+    const inputDescriptor = {
+      runId: event.runId,
+      provider: event.provider,
+      model: event.model,
+      resolvedRef: event.resolvedRef,
+      harnessId: event.harnessId,
+    };
+    const outputPayload = {
+      assistantTexts: event.assistantTexts,
+      lastAssistant: event.lastAssistant,
+      usage: event.usage,
+    };
+    const inputHash = sha256Hex(inputDescriptor);
+    const outputHash = sha256Hex(outputPayload);
+    const decodedInput = safeJsonRoundtrip(inputDescriptor);
+    const decodedOutput = safeJsonRoundtrip(outputPayload);
+
+    logger.appendEntry({
+      seq: logger.getStatus().entryCount,
+      ts: Date.now(),
+      type: "tool_call",
+      tool: "llm_call",
+      inputHash,
+      outputHash,
+      ...(decodedInput !== undefined ? { params: decodedInput } : {}),
+      ...(decodedOutput !== undefined ? { result: decodedOutput } : {}),
+    });
+  } catch (cause) {
+    structuredLog("ERROR", "llm_output", "Failed to append llm_output entry", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}
+
+/**
  * session_end handler — flush the SessionLogger to 0G Storage, mint an
  * iNFT anchor via SessionAnchor, and log the resulting verifyUrl. Three
  * outcomes:
@@ -385,6 +487,28 @@ export async function handleSessionEnd(
       structuredLog("ERROR", "session_end", "Anchor failed (pre-flush)", failureFields);
     }
   }
+}
+
+/**
+ * agent_end handler — same anchor logic as session_end, fires per
+ * agent-run rather than per channel-session. On claude-cli backends
+ * (Claude Code, Aider, etc.) `session_end` only fires when the channel
+ * conversation ends, while `agent_end` fires after every agent reply.
+ * Subscribing to both means: per-reply anchors for autonomous agents,
+ * per-conversation anchors for chat channels — whichever fires first
+ * for a given sessionKey wins; the second one finds the SessionLogger
+ * released and no-ops cleanly.
+ *
+ * Implementation is literally a delegation to handleSessionEnd —
+ * keeping them separate at the type/export level so the BDD-to-test
+ * mapping stays line-by-line obvious (one hook per BDD scenario).
+ */
+export async function handleAgentEnd(
+  state: PluginState,
+  event: unknown,
+  ctx: { sessionKey?: unknown; sessionId?: unknown },
+): Promise<void> {
+  return handleSessionEnd(state, event, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -490,7 +614,13 @@ export default {
       api.on("after_tool_call", () => {
         /* noop in degraded mode */
       });
+      api.on("llm_output", () => {
+        /* noop in degraded mode */
+      });
       api.on("session_end", () => {
+        /* noop in degraded mode */
+      });
+      api.on("agent_end", () => {
         /* noop in degraded mode */
       });
       return;
@@ -511,18 +641,44 @@ export default {
       api.on("after_tool_call", () => {
         /* noop in degraded mode */
       });
+      api.on("llm_output", () => {
+        /* noop in degraded mode */
+      });
       api.on("session_end", () => {
+        /* noop in degraded mode */
+      });
+      api.on("agent_end", () => {
         /* noop in degraded mode */
       });
       return;
     }
 
+    // ── Capture hooks ─────────────────────────────────────────────────────
+    // after_tool_call fires for OpenClaw-dispatched tools (Brave search,
+    // Firecrawl, memory_lookup, etc.). llm_output fires for EVERY model
+    // response — including agents like Claude Code that handle tool
+    // calls inside their own reasoning loop and never route them through
+    // OpenClaw. Subscribing to both covers the full agent population
+    // without needing to know which dispatch path each agent uses.
     api.on("after_tool_call", (event, ctx) => {
       handleAfterToolCall(state, event, ctx);
     });
+    api.on("llm_output", (event, ctx) => {
+      handleLlmOutput(state, event, ctx);
+    });
 
+    // ── Anchor hooks ──────────────────────────────────────────────────────
+    // session_end fires when a channel session closes (Telegram/Discord
+    // thread ends, idle timeout). agent_end fires after every agent run
+    // — more reliable for autonomous agents and CLI backends. Whichever
+    // fires first for a sessionKey performs the anchor; the second one
+    // finds the SessionLogger released and no-ops cleanly (handleSessionEnd
+    // checks `state.sessions.has(sessionKey)` before doing any work).
     api.on("session_end", async (event, ctx) => {
       await handleSessionEnd(state, event, ctx);
+    });
+    api.on("agent_end", async (event, ctx) => {
+      await handleAgentEnd(state, event, ctx);
     });
 
     structuredLog("INFO", "register", "Plugin loaded with full runtime state", {

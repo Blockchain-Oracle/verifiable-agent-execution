@@ -37,6 +37,8 @@ import {
 
 import plugin, {
   handleAfterToolCall,
+  handleAgentEnd,
+  handleLlmOutput,
   handleSessionEnd,
 } from "../src/index.js";
 import { resolveConfig, type VerifiableExecutionConfig } from "../src/config.js";
@@ -119,15 +121,25 @@ describe("verifiable-execution plugin — shape", () => {
 // ---------------------------------------------------------------------------
 
 describe("register() — happy path with full config", () => {
-  it("registers after_tool_call and session_end hooks via api.registerHook", () => {
+  it("registers all 4 capture+anchor hooks via api.on", () => {
     const { api, onSpy } = makeFakeApi(FULL_CONFIG);
     plugin.register(api);
 
-    // Two hooks should be registered — after_tool_call + session_end.
-    expect(onSpy).toHaveBeenCalledTimes(2);
+    // v0.1.2: four hooks. Capture pair (after_tool_call + llm_output)
+    // covers both OpenClaw-dispatched tools AND internal agent tools
+    // (Claude's bash/edit/etc. that never surface as OpenClaw tool calls).
+    // Anchor pair (session_end + agent_end) ensures we trigger on
+    // either channel-session close OR per-agent-run end.
+    expect(onSpy).toHaveBeenCalledTimes(4);
     const events = onSpy.mock.calls.map((call) => call[0]);
-    expect(events).toContain("after_tool_call");
-    expect(events).toContain("session_end");
+    expect(events).toEqual(
+      expect.arrayContaining([
+        "after_tool_call",
+        "llm_output",
+        "session_end",
+        "agent_end",
+      ]),
+    );
   });
 
   it("hook handlers are functions (the test fixtures, not undefined)", () => {
@@ -161,17 +173,22 @@ describe("register() — degraded mode on missing config", () => {
     expect(() => plugin.register(api)).not.toThrow();
   });
 
-  it("still registers no-op hooks in degraded mode (so OpenClaw sees the plugin as healthy)", () => {
+  it("still registers all 4 hooks in degraded mode (so OpenClaw sees the plugin as healthy)", () => {
     const { api, onSpy } = makeFakeApi({});
     plugin.register(api);
     // Same number of hooks registered, same event names — only the
     // handler bodies differ (no-op vs real). This keeps the plugin
     // surface consistent so an operator can fix config + restart
     // without re-reading the registration log.
-    expect(onSpy).toHaveBeenCalledTimes(2);
+    expect(onSpy).toHaveBeenCalledTimes(4);
     const events = onSpy.mock.calls.map((call) => call[0]);
     expect(events).toEqual(
-      expect.arrayContaining(["after_tool_call", "session_end"]),
+      expect.arrayContaining([
+        "after_tool_call",
+        "llm_output",
+        "session_end",
+        "agent_end",
+      ]),
     );
   });
 
@@ -570,6 +587,180 @@ describe("handleAfterToolCall — story-skill-intercept", () => {
     expect(entry.inputHash).toBe(
       createHash("sha256").update("<<unserializable:object>>", "utf8").digest("hex"),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleLlmOutput — v0.1.2 broader capture (story-skill-intercept supersession)
+// ---------------------------------------------------------------------------
+
+describe("handleLlmOutput — v0.1.2 broader capture", () => {
+  it("appends one llm_call entry per llm_output event, with the right shape", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_llm_01";
+
+    handleLlmOutput(
+      state,
+      {
+        runId: "run-abc",
+        sessionId: sessionKey,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        assistantTexts: ["I'll search the web for that."],
+        lastAssistant: "I'll search the web for that.",
+        usage: { input: 120, output: 12, total: 132 },
+      },
+      { sessionKey },
+    );
+
+    const logger = state.sessions.getOrCreate(sessionKey);
+    const entries = logger.getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      seq: 0,
+      type: "tool_call",
+      tool: "llm_call",
+    });
+    expect(entries[0].inputHash).toBe(
+      sha256Hex({
+        runId: "run-abc",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        resolvedRef: undefined,
+        harnessId: undefined,
+      }),
+    );
+    expect(entries[0].outputHash).toBe(
+      sha256Hex({
+        assistantTexts: ["I'll search the web for that."],
+        lastAssistant: "I'll search the web for that.",
+        usage: { input: 120, output: 12, total: 132 },
+      }),
+    );
+  });
+
+  it("3 sequential llm_output events produce 3 entries with monotonic seq (0,1,2)", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_llm_seq";
+    for (let i = 0; i < 3; i++) {
+      handleLlmOutput(
+        state,
+        {
+          runId: `run-${i}`,
+          sessionId: sessionKey,
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          assistantTexts: [`turn ${i} response`],
+        },
+        { sessionKey },
+      );
+    }
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries.length).toBe(3);
+    expect(entries.map((e) => e.seq)).toEqual([0, 1, 2]);
+    expect(entries.every((e) => e.tool === "llm_call")).toBe(true);
+  });
+
+  it("interleaves correctly with handleAfterToolCall entries (shared SessionLogger)", () => {
+    // Real agents emit BOTH OpenClaw-dispatched tool calls AND raw
+    // llm_output events. The plugin should record them in arrival
+    // order in the same logger.
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_mixed";
+
+    handleAfterToolCall(
+      state,
+      { toolName: "brave_search", params: { q: "0g" }, result: { hits: 5 } },
+      { sessionKey },
+    );
+    handleLlmOutput(
+      state,
+      {
+        runId: "run-x",
+        sessionId: sessionKey,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        assistantTexts: ["Got 5 hits. Let me read the first one."],
+      },
+      { sessionKey },
+    );
+    handleAfterToolCall(
+      state,
+      { toolName: "web_fetch", params: { url: "https://0g.ai" }, result: { ok: true } },
+      { sessionKey },
+    );
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries.length).toBe(3);
+    expect(entries.map((e) => e.tool)).toEqual([
+      "brave_search",
+      "llm_call",
+      "web_fetch",
+    ]);
+    expect(entries.map((e) => e.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("skips entry + warns on missing sessionKey/sessionId (does not throw)", () => {
+    const { state } = buildPluginStateForTests();
+    expect(() =>
+      handleLlmOutput(
+        state,
+        {
+          runId: "run-orphan",
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          assistantTexts: ["orphan"],
+        },
+        {},
+      ),
+    ).not.toThrow();
+    // No session = no logger created.
+    expect(state.sessions.has("run-orphan")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleAgentEnd — v0.1.2 alternative anchor trigger
+// ---------------------------------------------------------------------------
+
+describe("handleAgentEnd — v0.1.2 alternative anchor trigger", () => {
+  it("delegates to handleSessionEnd: anchors when buffer has entries", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_agent_end_happy";
+
+    // Seed an entry so there's something to anchor.
+    handleLlmOutput(
+      state,
+      {
+        runId: "run-a",
+        sessionId: sessionKey,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        assistantTexts: ["task complete"],
+      },
+      { sessionKey },
+    );
+
+    await handleAgentEnd(
+      state,
+      { runId: "run-a", messages: [], success: true, durationMs: 1200 },
+      { sessionKey },
+    );
+
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    // SessionLogger should be released post-anchor (no double-mint on
+    // subsequent session_end for the same key).
+    expect(state.sessions.has(sessionKey)).toBe(false);
+  });
+
+  it("no-ops when no entries buffered (matches handleSessionEnd behavior)", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    await handleAgentEnd(
+      state,
+      { runId: "run-empty", messages: [], success: true },
+      { sessionKey: "ses_empty" },
+    );
+    expect(mintSpy).toHaveBeenCalledTimes(0);
   });
 });
 

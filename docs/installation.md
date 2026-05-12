@@ -31,6 +31,12 @@ openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
 # (NOT `npm:@blockchainoracle/...` — the npm: prefix is rejected on
 # OpenClaw 2026.4.25 with "protocol specs are not allowed". The bare
 # spec resolves through ClawHub which proxies the same npm registry.)
+
+# After install, you MUST also allowlist the plugin id OR the gateway
+# silently won't dispatch events to it (the plugin LOADS but never
+# fires hooks). One-liner:
+jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)' \
+  ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
 openclaw gateway restart
 ```
 
@@ -179,13 +185,24 @@ openclaw plugins list
 > immediately, kill the gateway process: `pkill -TERM -f 'openclaw'`
 > — supervisor will restart it.
 
-Optionally, suppress the "discovered non-bundled plugin" warning by
-explicitly allowlisting:
+**Allowlist (REQUIRED — not optional):** OpenClaw 2026.4.25 silently
+quarantines event dispatch for "non-bundled discovered" plugins
+unless their id is in `plugins.allow`. The plugin will install and
+appear as enabled in `openclaw plugins list`, but its `api.on()`
+handlers will never receive events — so no anchor will ever happen.
+
+`./install.sh` adds the allowlist entry automatically. If you
+installed via raw `openclaw plugins install <pkg>` (skipping the
+script), you must run this yourself:
 
 ```bash
 jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)' \
   ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
+openclaw gateway restart
 ```
+
+Verify with `jq '.plugins.allow' ~/.openclaw/openclaw.json` — the
+output must include `"verifiable-execution"`.
 
 ---
 
