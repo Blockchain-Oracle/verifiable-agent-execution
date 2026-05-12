@@ -459,6 +459,137 @@ export function handleAfterToolCall(
 }
 
 /**
+ * message_received handler — appends the USER's raw inbound message as a
+ * `user_input` entry. Fires once per incoming Telegram/Discord/CLI
+ * message before the agent has done any work. Without this, the timeline
+ * is missing the most important context ("what did the user actually
+ * ASK the agent?") and looks like the agent talked to itself.
+ *
+ * Per PluginHookMessageReceivedEvent (openclaw@2026.5.4
+ * plugin-sdk/src/plugins/hook-types.d.ts:155-167): `event.content` is
+ * the raw inbound string; `ctx.channelId` + `ctx.senderId` give routing
+ * context. We store only the content + minimal metadata — channel/
+ * senderId are routing identifiers, not part of the on-chain attestation.
+ */
+export function handleMessageReceived(
+  state: PluginState,
+  event: { content?: unknown; senderId?: unknown },
+  ctx: { sessionKey?: unknown; sessionId?: unknown; channelId?: unknown },
+): void {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "message_received", "Skipping: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+  let logger: SessionLogger;
+  try {
+    logger = state.sessions.getOrCreate(sessionKey);
+  } catch (cause) {
+    structuredLog("ERROR", "message_received", "Failed to allocate SessionLogger", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+    return;
+  }
+  try {
+    const inputPayload = { senderId: event.senderId, channelId: ctx.channelId };
+    const outputPayload = { content: event.content };
+    const inputHash = sha256Hex(inputPayload);
+    const outputHash = sha256Hex(outputPayload);
+    const entry = buildSignedEntry(state, sessionKey, logger.getStatus().entryCount, {
+      type: "tool_call",
+      tool: "user_input",
+      inputHash,
+      outputHash,
+      params: safeJsonRoundtrip(inputPayload),
+      result: safeJsonRoundtrip(outputPayload),
+    });
+    logger.appendEntry(entry);
+  } catch (cause) {
+    structuredLog("ERROR", "message_received", "Failed to append user_input entry", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}
+
+/**
+ * before_prompt_build handler — appends a `prompt_build` entry recording
+ * which model + provider the agent is using for this turn. Privacy-
+ * conscious: does NOT capture the systemPrompt body (can be 50KB+ of
+ * project context with secrets/MCP URLs) or the prompt itself — only
+ * metadata. The actual prompt content surfaces via `llm_output`
+ * indirectly (assistant's response references context, history etc.).
+ *
+ * Per PluginHookBeforePromptBuildEvent
+ * (plugin-sdk/src/plugins/hook-types.d.ts:9, 226): fields include
+ * `prompt`, `systemPrompt`, `historyMessages`, model identity. We
+ * record provider/model + historyMessages.length only.
+ */
+export function handleBeforePromptBuild(
+  state: PluginState,
+  event: {
+    prompt?: unknown;
+    systemPrompt?: unknown;
+    historyMessages?: unknown;
+  },
+  ctx: {
+    sessionKey?: unknown;
+    sessionId?: unknown;
+    modelProviderId?: unknown;
+    modelId?: unknown;
+  },
+): void {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "before_prompt_build", "Skipping: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+  let logger: SessionLogger;
+  try {
+    logger = state.sessions.getOrCreate(sessionKey);
+  } catch (cause) {
+    structuredLog("ERROR", "before_prompt_build", "Failed to allocate SessionLogger", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+    return;
+  }
+  try {
+    const historyLen = Array.isArray(event.historyMessages)
+      ? event.historyMessages.length
+      : 0;
+    const payload = {
+      provider: ctx.modelProviderId,
+      model: ctx.modelId,
+      historyMessagesLength: historyLen,
+      systemPromptLength:
+        typeof event.systemPrompt === "string" ? event.systemPrompt.length : 0,
+      promptLength: typeof event.prompt === "string" ? event.prompt.length : 0,
+    };
+    const inputHash = sha256Hex({ sessionKey });
+    const outputHash = sha256Hex(payload);
+    const entry = buildSignedEntry(state, sessionKey, logger.getStatus().entryCount, {
+      type: "tool_call",
+      tool: "prompt_build",
+      inputHash,
+      outputHash,
+      result: safeJsonRoundtrip(payload),
+    });
+    logger.appendEntry(entry);
+  } catch (cause) {
+    structuredLog("ERROR", "before_prompt_build", "Failed to append prompt_build entry", {
+      sessionKey,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}
+
+/**
  * llm_output handler — captures every LLM response as an ExecutionLogEntry,
  * so even when an agent uses INTERNAL tools (Claude's bash/edit/grep that
  * live inside Claude's reasoning loop and never surface to OpenClaw's tool
@@ -516,15 +647,6 @@ export function handleLlmOutput(
   }
 
   try {
-    // Per `PluginHookLlmOutputEvent` in
-    // openclaw@2026.5.4/plugin-sdk/src/plugins/hook-types.d.ts: the
-    // payload exposes runId/provider/model + the model's response in
-    // `assistantTexts` (chunks) and `lastAssistant` (final). The
-    // prompt itself is delivered on the SEPARATE `llm_input` event
-    // (PluginHookLlmInputEvent), which we don't subscribe to — that
-    // would double the entry count for one model call. Using a
-    // synthetic identifier as the input lets us anchor the call
-    // identity without storing duplicate prompt content.
     const inputDescriptor = {
       runId: event.runId,
       provider: event.provider,
@@ -532,31 +654,129 @@ export function handleLlmOutput(
       resolvedRef: event.resolvedRef,
       harnessId: event.harnessId,
     };
-    const outputPayload = {
-      assistantTexts: event.assistantTexts,
-      lastAssistant: event.lastAssistant,
-      usage: event.usage,
-    };
     const inputHash = sha256Hex(inputDescriptor);
-    const outputHash = sha256Hex(outputPayload);
     const decodedInput = safeJsonRoundtrip(inputDescriptor);
-    const decodedOutput = safeJsonRoundtrip(outputPayload);
 
-    const entry = buildSignedEntry(state, sessionKey, logger.getStatus().entryCount, {
-      type: "tool_call",
-      tool: "llm_call",
-      inputHash,
-      outputHash,
-      ...(decodedInput !== undefined ? { params: decodedInput } : {}),
-      ...(decodedOutput !== undefined ? { result: decodedOutput } : {}),
-    });
-    logger.appendEntry(entry);
+    // v0.2.0: parse `lastAssistant.content` into discrete entries when
+    // possible — one per block (thinking / tool_use / text). Falls back
+    // to a single `llm_call` entry for the legacy assistantTexts-only
+    // shape. Reference: @mariozechner/pi-ai types.d.ts:98-146 (the
+    // AssistantMessage content union) + OpenClaw provider-stream-shared
+    // normalizer that aliases `toolCall` ↔ `tool_use` across providers.
+    const blocks = parseAssistantBlocks(event.lastAssistant);
+    if (blocks.length === 0) {
+      // Fallback path — no parseable blocks, emit one bundle entry
+      // with the whole response. Preserves pre-v0.2.0 behavior for
+      // providers that don't expose structured content.
+      const outputPayload = {
+        assistantTexts: event.assistantTexts,
+        lastAssistant: event.lastAssistant,
+        usage: event.usage,
+      };
+      const outputHash = sha256Hex(outputPayload);
+      const decodedOutput = safeJsonRoundtrip(outputPayload);
+      const entry = buildSignedEntry(
+        state,
+        sessionKey,
+        logger.getStatus().entryCount,
+        {
+          type: "tool_call",
+          tool: "llm_call",
+          inputHash,
+          outputHash,
+          ...(decodedInput !== undefined ? { params: decodedInput } : {}),
+          ...(decodedOutput !== undefined ? { result: decodedOutput } : {}),
+        },
+      );
+      logger.appendEntry(entry);
+      return;
+    }
+
+    // Multi-entry path — one ExecutionLogEntry per block.
+    for (const block of blocks) {
+      const seq = logger.getStatus().entryCount;
+      // outputHash is per-block so each entry's signature is over its
+      // own content; inputHash stays the shared model-call descriptor
+      // so a verifier can re-bundle blocks belonging to one llm_output.
+      const blockOutputHash = sha256Hex(block);
+      const decodedBlock = safeJsonRoundtrip(block);
+      const entry = buildSignedEntry(state, sessionKey, seq, {
+        type: "tool_call",
+        tool: block.kind, // "reasoning" | "tool_use" | "llm_text"
+        inputHash,
+        outputHash: blockOutputHash,
+        ...(decodedInput !== undefined ? { params: decodedInput } : {}),
+        ...(decodedBlock !== undefined ? { result: decodedBlock } : {}),
+      });
+      logger.appendEntry(entry);
+    }
   } catch (cause) {
     structuredLog("ERROR", "llm_output", "Failed to append llm_output entry", {
       sessionKey,
       cause: cause instanceof Error ? cause.message : String(cause),
     });
   }
+}
+
+/**
+ * Parse a Claude/Anthropic-style AssistantMessage.content array into
+ * discrete blocks. Returns [] when content isn't an array OR no
+ * recognized blocks are found — caller falls back to single-entry
+ * emit in that case.
+ *
+ * Recognized block types (from @mariozechner/pi-ai types.d.ts:98-146):
+ *   - { type: "text", text }                            → llm_text
+ *   - { type: "thinking", thinking }                    → reasoning
+ *   - { type: "toolCall" | "tool_use", name, input/arguments }  → tool_use
+ *
+ * OpenClaw's provider-stream-shared normalizer aliases `toolCall` ↔
+ * `tool_use` across providers (Anthropic uses tool_use; OpenAI uses
+ * toolCall) — we accept both verbatim.
+ */
+export function parseAssistantBlocks(
+  lastAssistant: unknown,
+): Array<
+  | { kind: "llm_text"; text: string }
+  | { kind: "reasoning"; thinking: string }
+  | { kind: "tool_use"; name: string; arguments: unknown; toolCallId?: string }
+> {
+  if (lastAssistant === null || typeof lastAssistant !== "object") return [];
+  const content = (lastAssistant as { content?: unknown }).content;
+  if (!Array.isArray(content)) return [];
+
+  const out: ReturnType<typeof parseAssistantBlocks> = [];
+  for (const block of content) {
+    if (block === null || typeof block !== "object") continue;
+    const b = block as Record<string, unknown>;
+    const type = typeof b.type === "string" ? b.type : "";
+    if (type === "text" && typeof b.text === "string") {
+      out.push({ kind: "llm_text", text: b.text });
+    } else if (type === "thinking" && typeof b.thinking === "string") {
+      out.push({ kind: "reasoning", thinking: b.thinking });
+    } else if (type === "toolCall" || type === "tool_use") {
+      const name =
+        typeof b.name === "string"
+          ? b.name
+          : typeof b.toolName === "string"
+            ? (b.toolName as string)
+            : "<unknown>";
+      // Anthropic uses `input`; OpenClaw normalized form uses `arguments`.
+      const args = b.arguments !== undefined ? b.arguments : b.input;
+      const toolCallId =
+        typeof b.toolCallId === "string"
+          ? b.toolCallId
+          : typeof b.id === "string"
+            ? (b.id as string)
+            : undefined;
+      out.push({
+        kind: "tool_use",
+        name,
+        arguments: args,
+        ...(toolCallId !== undefined ? { toolCallId } : {}),
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -789,6 +1009,12 @@ export default {
         "Plugin loaded in degraded mode: missing required config",
         { missing: resolution.missing, invalid: resolution.invalid },
       );
+      api.on("message_received", () => {
+        /* noop in degraded mode */
+      });
+      api.on("before_prompt_build", () => {
+        /* noop in degraded mode */
+      });
       api.on("after_tool_call", () => {
         /* noop in degraded mode */
       });
@@ -816,6 +1042,12 @@ export default {
         "Plugin loaded in degraded mode: failed to build runtime state",
         { cause: cause instanceof Error ? cause.message : String(cause) },
       );
+      api.on("message_received", () => {
+        /* noop in degraded mode */
+      });
+      api.on("before_prompt_build", () => {
+        /* noop in degraded mode */
+      });
       api.on("after_tool_call", () => {
         /* noop in degraded mode */
       });
@@ -832,12 +1064,24 @@ export default {
     }
 
     // ── Capture hooks ─────────────────────────────────────────────────────
-    // after_tool_call fires for OpenClaw-dispatched tools (Brave search,
-    // Firecrawl, memory_lookup, etc.). llm_output fires for EVERY model
-    // response — including agents like Claude Code that handle tool
-    // calls inside their own reasoning loop and never route them through
-    // OpenClaw. Subscribing to both covers the full agent population
-    // without needing to know which dispatch path each agent uses.
+    // v0.2.0 evermemos-style capture set (5 hooks):
+    //   message_received    → user_input entry (what did the user ask?)
+    //   before_prompt_build → prompt_build entry (which model/provider?)
+    //   llm_output          → parsed into reasoning / tool_use / llm_text
+    //   after_tool_call     → tool_result entry per OpenClaw-dispatched tool
+    //   session_end / agent_end → flush + mint
+    //
+    // This combination covers BOTH OpenClaw-dispatched tools (Brave search,
+    // Firecrawl) AND agents that handle tools internally (Claude Code's
+    // bash/edit/grep that never surface to OpenClaw). Reference plugin:
+    // evermemos at /tmp/0g-memory-fresh/openclaw-skills/evermemos/src/index.ts
+    // uses the same 5-hook set.
+    api.on("message_received", (event, ctx) => {
+      handleMessageReceived(state, event, ctx);
+    });
+    api.on("before_prompt_build", (event, ctx) => {
+      handleBeforePromptBuild(state, event, ctx);
+    });
     api.on("after_tool_call", (event, ctx) => {
       handleAfterToolCall(state, event, ctx);
     });

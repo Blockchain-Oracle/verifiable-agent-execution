@@ -38,8 +38,11 @@ import {
 import plugin, {
   handleAfterToolCall,
   handleAgentEnd,
+  handleBeforePromptBuild,
   handleLlmOutput,
+  handleMessageReceived,
   handleSessionEnd,
+  parseAssistantBlocks,
 } from "../src/index.js";
 import { resolveConfig, type VerifiableExecutionConfig } from "../src/config.js";
 import { sha256Hex } from "../src/hash.js";
@@ -121,19 +124,20 @@ describe("verifiable-execution plugin — shape", () => {
 // ---------------------------------------------------------------------------
 
 describe("register() — happy path with full config", () => {
-  it("registers all 4 capture+anchor hooks via api.on", () => {
+  it("registers all 6 capture+anchor hooks via api.on", () => {
     const { api, onSpy } = makeFakeApi(FULL_CONFIG);
     plugin.register(api);
 
-    // v0.1.2: four hooks. Capture pair (after_tool_call + llm_output)
-    // covers both OpenClaw-dispatched tools AND internal agent tools
-    // (Claude's bash/edit/etc. that never surface as OpenClaw tool calls).
-    // Anchor pair (session_end + agent_end) ensures we trigger on
-    // either channel-session close OR per-agent-run end.
-    expect(onSpy).toHaveBeenCalledTimes(4);
+    // v0.2.0: 6 hooks (evermemos-style set).
+    //   Capture (4): message_received, before_prompt_build,
+    //                after_tool_call, llm_output
+    //   Anchor (2):  session_end, agent_end
+    expect(onSpy).toHaveBeenCalledTimes(6);
     const events = onSpy.mock.calls.map((call) => call[0]);
     expect(events).toEqual(
       expect.arrayContaining([
+        "message_received",
+        "before_prompt_build",
         "after_tool_call",
         "llm_output",
         "session_end",
@@ -173,17 +177,19 @@ describe("register() — degraded mode on missing config", () => {
     expect(() => plugin.register(api)).not.toThrow();
   });
 
-  it("still registers all 4 hooks in degraded mode (so OpenClaw sees the plugin as healthy)", () => {
+  it("still registers all 6 hooks in degraded mode (so OpenClaw sees the plugin as healthy)", () => {
     const { api, onSpy } = makeFakeApi({});
     plugin.register(api);
     // Same number of hooks registered, same event names — only the
     // handler bodies differ (no-op vs real). This keeps the plugin
     // surface consistent so an operator can fix config + restart
     // without re-reading the registration log.
-    expect(onSpy).toHaveBeenCalledTimes(4);
+    expect(onSpy).toHaveBeenCalledTimes(6);
     const events = onSpy.mock.calls.map((call) => call[0]);
     expect(events).toEqual(
       expect.arrayContaining([
+        "message_received",
+        "before_prompt_build",
         "after_tool_call",
         "llm_output",
         "session_end",
@@ -877,6 +883,195 @@ describe("v0.2.0 entry signing — agent-wrapper convention", () => {
     expect(recoverAddress(digest, entry.teeSignature!).toLowerCase()).toBe(
       signerForTest.address.toLowerCase(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.2.0 — parseAssistantBlocks + new event handlers
+// ---------------------------------------------------------------------------
+
+describe("v0.2.0 parseAssistantBlocks", () => {
+  it("returns [] for non-object / array-less inputs", () => {
+    expect(parseAssistantBlocks(null)).toEqual([]);
+    expect(parseAssistantBlocks(undefined)).toEqual([]);
+    expect(parseAssistantBlocks("text")).toEqual([]);
+    expect(parseAssistantBlocks({ content: "not an array" })).toEqual([]);
+  });
+
+  it("parses Anthropic-style text + thinking + tool_use blocks", () => {
+    const blocks = parseAssistantBlocks({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "let me search the web" },
+        { type: "tool_use", name: "web_search", input: { q: "0g news" }, id: "t1" },
+        { type: "text", text: "Here are the results…" },
+      ],
+    });
+    expect(blocks).toEqual([
+      { kind: "reasoning", thinking: "let me search the web" },
+      {
+        kind: "tool_use",
+        name: "web_search",
+        arguments: { q: "0g news" },
+        toolCallId: "t1",
+      },
+      { kind: "llm_text", text: "Here are the results…" },
+    ]);
+  });
+
+  it("parses OpenClaw-normalized `toolCall` blocks (alias for tool_use)", () => {
+    const blocks = parseAssistantBlocks({
+      content: [
+        {
+          type: "toolCall",
+          toolCallId: "t2",
+          name: "memory_lookup",
+          arguments: { key: "user_pref" },
+        },
+      ],
+    });
+    expect(blocks).toEqual([
+      {
+        kind: "tool_use",
+        name: "memory_lookup",
+        arguments: { key: "user_pref" },
+        toolCallId: "t2",
+      },
+    ]);
+  });
+
+  it("skips unrecognized block types", () => {
+    const blocks = parseAssistantBlocks({
+      content: [
+        { type: "text", text: "kept" },
+        { type: "unknown_block", payload: "dropped" },
+        { type: "thinking", thinking: "kept" },
+      ],
+    });
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].kind).toBe("llm_text");
+    expect(blocks[1].kind).toBe("reasoning");
+  });
+});
+
+describe("v0.2.0 handleLlmOutput — multi-block emit", () => {
+  it("emits one entry per parsed block (thinking + tool_use + text → 3 entries)", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_blocks_01";
+
+    handleLlmOutput(
+      state,
+      {
+        runId: "run-blocks",
+        sessionId: sessionKey,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        assistantTexts: ["unused-when-blocks-parse"],
+        lastAssistant: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "I should search the web" },
+            { type: "tool_use", name: "web_search", input: { q: "0g news" } },
+            { type: "text", text: "Found 3 articles." },
+          ],
+        },
+      },
+      { sessionKey },
+    );
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries).toHaveLength(3);
+    expect(entries.map((e) => e.tool)).toEqual([
+      "reasoning",
+      "tool_use",
+      "llm_text",
+    ]);
+    expect(entries.map((e) => e.seq)).toEqual([0, 1, 2]);
+    // Each entry still signed.
+    for (const e of entries) {
+      expect(e.teeSignature).toMatch(/^0x[0-9a-f]{130}$/);
+      expect(e.sealId).toMatch(/^0x[0-9a-f]{64}$/);
+    }
+  });
+
+  it("falls back to single llm_call entry when lastAssistant has no parseable blocks", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_blocks_fallback";
+
+    handleLlmOutput(
+      state,
+      {
+        runId: "run-fallback",
+        sessionId: sessionKey,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        assistantTexts: ["just-a-string"],
+        lastAssistant: "just-a-string", // no .content array
+      },
+      { sessionKey },
+    );
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tool).toBe("llm_call");
+  });
+});
+
+describe("v0.2.0 handleMessageReceived", () => {
+  it("appends a user_input entry with senderId in params and content in result", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_msg_01";
+
+    handleMessageReceived(
+      state,
+      { content: "search the web for 0g news", senderId: "user_abc" },
+      { sessionKey, channelId: "telegram:direct:123" },
+    );
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tool).toBe("user_input");
+    expect(entries[0].teeSignature).toMatch(/^0x[0-9a-f]{130}$/);
+    expect((entries[0].result as { content: string }).content).toBe(
+      "search the web for 0g news",
+    );
+  });
+
+  it("skips when no sessionKey/sessionId in ctx (does not throw)", () => {
+    const { state } = buildPluginStateForTests();
+    expect(() =>
+      handleMessageReceived(state, { content: "orphan" }, {}),
+    ).not.toThrow();
+    expect(state.sessions.has("orphan")).toBe(false);
+  });
+});
+
+describe("v0.2.0 handleBeforePromptBuild", () => {
+  it("appends a prompt_build entry with model/provider metadata only (no body)", () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_pb_01";
+
+    handleBeforePromptBuild(
+      state,
+      {
+        prompt: "this is the actual prompt body — should NOT appear in entry",
+        systemPrompt: "long system prompt 50KB+",
+        historyMessages: [{ role: "user" }, { role: "assistant" }],
+      },
+      { sessionKey, modelProviderId: "anthropic", modelId: "claude-sonnet-4-6" },
+    );
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tool).toBe("prompt_build");
+    expect(entries[0].teeSignature).toMatch(/^0x[0-9a-f]{130}$/);
+    const result = entries[0].result as Record<string, unknown>;
+    expect(result.provider).toBe("anthropic");
+    expect(result.model).toBe("claude-sonnet-4-6");
+    expect(result.historyMessagesLength).toBe(2);
+    // Body content NOT stored — only lengths.
+    expect(JSON.stringify(result)).not.toContain("this is the actual prompt");
+    expect(JSON.stringify(result)).not.toContain("long system prompt 50KB");
   });
 });
 
