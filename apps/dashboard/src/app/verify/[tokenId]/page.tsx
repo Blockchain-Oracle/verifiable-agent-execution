@@ -54,10 +54,15 @@ export default async function VerifyPage({ params }: PageProps) {
         {proof !== null ? (
           <main>
             {/* v0.3.0: encrypted receipts render a metadata-only locked
-                state; client-side EncryptedReveal then reads the URL
-                fragment (#k=…) and re-fetches with the key to hydrate
-                full SessionView. Legacy plaintext receipts (verified
-                = "verified"|"preview"|"unverified") skip the wrapper
+                state. Client-side EncryptedReveal reads the URL
+                fragment (#k=…), fetches the raw envelope from the
+                key-blind /blob endpoint (NO ?k= on the wire), decrypts
+                via WebCrypto in the browser, and hydrates SessionView
+                with a client-side ethers verifyEntry callback. The
+                reveal key NEVER reaches the server (Codex round-1
+                security fix; pinned by tests/encrypted-route.test.ts).
+                Legacy plaintext receipts (verified =
+                "verified"|"preview"|"unverified") skip the wrapper
                 and render SessionView directly. */}
             {proof.verified === "encrypted" ? (
               <EncryptedReveal initialProof={proof} />

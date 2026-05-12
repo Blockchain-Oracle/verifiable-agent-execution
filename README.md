@@ -11,7 +11,9 @@
 
 AI agents act autonomously. Today, there's no way to prove what one actually did. Anyone can claim an agent ran a task correctly; no one can verify it.
 
-**Verifiable Agent Execution** is an OpenClaw plugin + dashboard that produces a cryptographically signed, on-chain-anchored proof for every agent session. The proof chain:
+**Verifiable Agent Execution** is an OpenClaw plugin + dashboard that produces a cryptographically signed, on-chain-anchored proof for every agent session — **encrypted by default**, with selective reveal via a per-session key the operator chooses when to share. v0.3.0 pivoted from "public Etherscan-style log" to "encrypted-by-default receipts" after [Codex review](#codex-review--security-trail) caught that auto-publishing agent prompts/outputs is a privacy violation.
+
+The proof chain:
 
 ```
 Tool call (params + result)
@@ -20,15 +22,25 @@ TEE signature (agent-wrapper, recovered against deployed verifier)
    ↓
 SessionLog (full content, sha256-hashed, JSON)
    ↓
-0G Storage (rootHash anchored)
+AES-256-GCM encrypt → v1 envelope {v, alg, iv, ciphertext, tag}
+   ↓ (key K stays in the operator's local keystore, mode 0600)
+0G Storage (encrypted blob — rootHash anchored)
    ↓
 ERC-7857 iNFT mint on AgenticID (Galileo)
    ↓
-Verifier dashboard (open URL → see the story → click "Verify on chain"
-                    → 4 row badges flip green sequentially)
+KEY-FREE verifier URL  https://verifiable.0g.ai/verify/<tokenId>
+   ↓
+   ├─ Cold visitor (no key):       sees 🔒 Encrypted — metadata + chain anchor only
+   └─ Operator types `/share` in chat → bot replies with FULL URL
+                                       https://verifiable.0g.ai/verify/<id>#k=<base64url>
+                                       ↓
+                                       Recipient opens URL → WebCrypto decrypts in
+                                       BROWSER (key never leaves the device) → 4 row
+                                       badges flip green sequentially. Server is
+                                       key-blind by design.
 ```
 
-Anyone clicks the URL on any device — no wallet, no login, no setup. Etherscan UX for agent runs.
+Anyone clicks the **key-free** URL on any device — no wallet, no login, no setup — and sees a verifiable locked-state proof. The operator-controlled `/share` slash command is the ONLY path that emits a `#k=` reveal URL. No keys appear in URLs without an explicit operator action, in any server log, or in any HTTP access trace.
 
 ---
 

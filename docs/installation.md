@@ -127,24 +127,67 @@ While the agent runs, the plugin silently:
 - On `session_end`, flushes the buffer to **0G Storage**, gets back
   a Merkle rootHash
 - Mints an **AgenticID iNFT** (ERC-7857) anchoring that rootHash
-  on-chain
-- Prints the result to stderr:
+  on-chain (the encrypted envelope's rootHash, not plaintext)
+- Prints a **KEY-FREE** result to stderr (the reveal key stays in
+  the local keystore — no auto-leak to log streams):
 
 ```
 [verifiable-execution] session anchored: tokenId=42 verifyUrl=https://verifiable.0g.ai/verify/42
 ```
 
-### You share the URL — anyone can verify it cold
+The session's AES-256-GCM key is written to
+`~/.openclaw/verifiable-execution/keystore/<encoded-tokenId>.key`
+(mode 0600). It never appears in stderr, never appears in HTTP
+requests to the verifier server, and never leaves your host
+unless YOU choose to share it via the `/share` command below.
 
-Open the printed URL in any browser. No wallet, no auth, no install
-required to verify. The dashboard runs three live reads against
-0G:
+### Two ways to verify
+
+The printed URL is **key-free**. Anyone clicking it sees a
+metadata-only **🔒 Encrypted** view: the rootHash, the iNFT page,
+the storage blob link, and the on-chain anchor — the cryptographic
+proof chain is fully verifiable cold even without the key. What
+they CANNOT see (without your consent): the agent's tool params,
+the LLM's outputs, or the user's prompts.
+
+To reveal the content to a recipient:
+
+1. **In your agent's chat (Telegram / Discord / CLI)** — type:
+
+   ```
+   /share              ← URL for the most recent receipt
+   /share 42           ← URL for a specific tokenId
+   ```
+
+   The bot replies with the full share URL, including a
+   `#k=<base64url-key>` URL fragment. **Important**: URL fragments
+   are NEVER sent in HTTP requests, so the key remains on the
+   recipient's device only.
+
+2. **Send the URL via your chosen channel** (DM, email, etc.).
+
+3. **Recipient clicks the link** → dashboard loads the locked
+   state, reads the URL fragment in the browser, fetches the
+   encrypted envelope from `/api/verify/<id>/blob` (a key-blind
+   passthrough), decrypts via WebCrypto, and renders the four
+   tool-call cards with their decoded params/results. The
+   verify-on-chain badge cascade then runs entirely in the
+   browser via ethers — confirming each entry's signature against
+   our deployed `MockTEEVerifier`.
+
+   The verifier server **never** sees the key. The decryption
+   happens fully client-side; the server only serves the
+   encrypted bytes and the public iNFT metadata.
+
+The dashboard's three live reads behind the scenes:
 
 1. `AgenticID.getIntelligentDatas(tokenId)` → fetches the stored
    `dataDescription` + `dataHash` for the session
-2. **0G Storage download** of the log identified by that rootHash
+2. **0G Storage download** of the encrypted envelope identified by
+   that rootHash (no decryption — pure passthrough)
 3. `MockTEEVerifier.verifyTEESignature(...)` for each entry's
-   signature
+   signature — run client-side in the browser for encrypted
+   receipts, server-side for legacy plaintext receipts
 
 All three pass → 4 green badges on the page → "this agent really
 did execute these tool calls, in this order, with these results."
