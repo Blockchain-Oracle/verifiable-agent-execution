@@ -191,24 +191,40 @@ describe("register() — degraded mode on missing config", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveConfig — config validation", () => {
-  it("returns ok=true with all defaults when full config is supplied", () => {
+  it("returns ok=true with no defaults applied when full config is supplied", () => {
     const result = resolveConfig(FULL_CONFIG);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.config.privateKeyEnvVar).toBe("PRIVATE_KEY");
       expect(result.config.chainId).toBe(16602);
       expect(result.config.agentId).toBe(VALID_AGENT_ADDRESS);
+      expect(result.appliedDefaults).toEqual([]);
     }
   });
 
-  it("reports ALL missing required fields in one go (not just the first)", () => {
+  it("fills every field with Galileo testnet defaults when config is empty", () => {
+    // 0.1.1: every field is optional; missing fields fall back to the
+    // baked-in Galileo defaults. agentId is a special case — it stays
+    // empty string here and gets filled from the wallet by the plugin
+    // entry (so `appliedDefaults` still includes 'agentId' as a flag).
     const result = resolveConfig({});
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      // 7 required string/number fields (privateKeyEnvVar has a default
-      // and is therefore not in `missing`).
-      expect(result.missing.length).toBeGreaterThanOrEqual(7);
-      expect(result.missing).toEqual(
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.rpcUrl).toBe("https://evmrpc-testnet.0g.ai");
+      expect(result.config.indexerUrl).toBe(
+        "https://indexer-storage-testnet-turbo.0g.ai",
+      );
+      expect(result.config.agenticIdAddress).toBe(
+        "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38",
+      );
+      expect(result.config.verifierAddress).toBe(
+        "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
+      );
+      expect(result.config.verifyUrlBase).toBe("https://verifiable.0g.ai");
+      expect(result.config.chainId).toBe(16602);
+      expect(result.config.modelId).toBe("claude-sonnet-4-6");
+      expect(result.config.agentId).toBe(""); // filled from wallet downstream
+      expect(result.appliedDefaults).toEqual(
         expect.arrayContaining([
           "rpcUrl",
           "indexerUrl",
@@ -223,7 +239,19 @@ describe("resolveConfig — config validation", () => {
     }
   });
 
-  it("flags malformed addresses as 'invalid' (separate bucket from 'missing')", () => {
+  it("treats zero-address agentId as unset (defaults to wallet downstream)", () => {
+    const result = resolveConfig({
+      ...FULL_CONFIG,
+      agentId: "0x0000000000000000000000000000000000000000",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.agentId).toBe("");
+      expect(result.appliedDefaults).toContain("agentId");
+    }
+  });
+
+  it("flags malformed addresses as 'invalid' (overrides must be valid)", () => {
     const result = resolveConfig({
       ...FULL_CONFIG,
       agentId: "not-an-address",
@@ -247,12 +275,24 @@ describe("resolveConfig — config validation", () => {
     }
   });
 
-  it("rejects a non-integer / zero / negative chainId", () => {
-    for (const bad of [0, -1, 1.5, "16602", null]) {
+  it("rejects an explicitly-provided bad chainId (but accepts missing)", () => {
+    // Bad values: non-integer / zero / negative / string → invalid bucket.
+    for (const bad of [0, -1, 1.5, "16602"]) {
       const result = resolveConfig({ ...FULL_CONFIG, chainId: bad });
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.missing).toContain("chainId");
+        expect(result.invalid.some((s) => s.includes("chainId"))).toBe(true);
+      }
+    }
+    // Missing / null → default (no error).
+    for (const absent of [undefined, null]) {
+      const { chainId: _drop, ...rest } = FULL_CONFIG;
+      const result = resolveConfig(
+        absent === undefined ? rest : { ...rest, chainId: absent },
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.config.chainId).toBe(16602);
       }
     }
   });

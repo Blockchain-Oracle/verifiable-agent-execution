@@ -149,6 +149,18 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
     source: wallet.source,
   });
 
+  // Auto-fill agentId from the wallet if the operator didn't supply
+  // one. resolveConfig returns agentId="" for the missing case (zero
+  // address is also treated as unset). The wallet IS the agent
+  // identity by default — operators who want a different on-chain
+  // attribution override agentId in openclaw.json.
+  if (config.agentId === "") {
+    config = { ...config, agentId: wallet.address };
+    structuredLog("INFO", "config", "agentId auto-bound to wallet address", {
+      agentId: wallet.address,
+    });
+  }
+
   // Wallet without a connected provider — StorageClient internally
   // wires the rpcUrl to its 0G Storage upload signer; AgenticIDClient
   // gets the signer + an explicit JsonRpcProvider via fromRpc().

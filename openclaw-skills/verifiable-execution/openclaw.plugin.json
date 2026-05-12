@@ -3,16 +3,6 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "required": [
-      "rpcUrl",
-      "indexerUrl",
-      "agenticIdAddress",
-      "verifierAddress",
-      "verifyUrlBase",
-      "chainId",
-      "agentId",
-      "modelId"
-    ],
     "properties": {
       "rpcUrl": {
         "type": "string",
@@ -36,11 +26,11 @@
       },
       "chainId": {
         "type": "number",
-        "description": "EVM chainId for the verifyUrl. 16602 for Galileo testnet, 16661 for Aristotle mainnet. REQUIRED — no Galileo default to prevent silent mainnet-URL leaks on preview deploys."
+        "description": "EVM chainId. Defaults to 16602 (Galileo testnet). Set 16661 for Aristotle mainnet. Pair with the matching agenticIdAddress, verifierAddress, rpcUrl, indexerUrl, and verifyUrlBase — there's no auto-switch (silent network swap is worse than a one-time edit)."
       },
       "agentId": {
         "type": "string",
-        "description": "0x-prefixed 20-byte address bound to this agent. Used as both the iNFT recipient and the dataDescription identity in `exec-log:<sessionId>:<modelId>` entries."
+        "description": "0x-prefixed 20-byte address identifying the agent. Defaults to the plugin's auto-generated wallet address. Override to bind proofs to a different identity than the signing key."
       },
       "modelId": {
         "type": "string",
