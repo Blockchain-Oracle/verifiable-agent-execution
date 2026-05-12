@@ -63,7 +63,13 @@ import {
 } from "@verifiable-agent-execution/chain-client";
 
 import { resolveConfig, type VerifiableExecutionConfig } from "./config.js";
+import {
+  encryptSessionLog,
+  generateKey,
+  keyToShareString,
+} from "./crypto.js";
 import { sha256Hex } from "./hash.js";
+import { Keystore } from "./keystore.js";
 import { SessionManager } from "./SessionManager.js";
 import { printFirstRunBanner, resolveWallet } from "./wallet.js";
 
@@ -90,6 +96,14 @@ interface PluginState {
    * without needing MockTEEVerifier's global oracle to match.
    */
   signer: Wallet;
+  /**
+   * v0.3.0 — per-tokenId encryption key persistence. Holds the AES-256-GCM
+   * symmetric key for each minted receipt; powers the `/share` slash-
+   * command that returns a `verify/<id>#k=...` URL. The pre-mint
+   * (`setPending`) → post-mint (`commitPending`) ordering is what makes
+   * crash recovery between flush and mint possible.
+   */
+  keystore: Keystore;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,12 +362,22 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
   );
 
   const sessions = new SessionManager({ storageClient });
+  // v0.3.0: keystore is a sibling to wallet.json under
+  // ~/.openclaw/verifiable-execution/. Default constructor uses that
+  // path; tests inject a temp dir.
+  const keystore = new Keystore();
   // The storageSigner (already provider-connected) doubles as our
   // entry-signing key. agentId is the wallet's address, so signatures
   // recover to the agentId field on each entry — that's how the
   // dashboard's "Signed by 0x…" badge becomes green without needing
   // MockTEEVerifier's global teeOracleAddress to match.
-  return { config, sessions, agenticIdClient, signer: storageSigner };
+  return {
+    config,
+    sessions,
+    agenticIdClient,
+    signer: storageSigner,
+    keystore,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -829,19 +853,73 @@ export async function handleSessionEnd(
     { chainId: state.config.chainId },
   );
 
+  // v0.3.0 encryption path: generate K, persist pending BEFORE flush,
+  // pass encrypt-callback through anchor, commit AFTER mint. Crash
+  // between flush and mint leaves K recoverable under pending/<sessionKey>.key.
+  // See keystore.ts header for full rationale.
+  const encryptionKey: Buffer = generateKey();
+  try {
+    state.keystore.setPending(sessionKey, encryptionKey);
+  } catch (cause) {
+    // Keystore unwritable (disk full / permission denied) — degrade to
+    // PRE-V0.3.0 plaintext upload so the anchor still happens. Loud log
+    // so the operator can fix the FS issue offline.
+    structuredLog(
+      "WARN",
+      "session_end",
+      "Keystore setPending failed; degrading to plaintext upload for this session",
+      {
+        sessionKey,
+        cause: cause instanceof Error ? cause.message : String(cause),
+      },
+    );
+  }
+
   try {
     const result = await anchor.anchor({
       sessionId: sessionKey,
       containerHash,
+      // Encrypt the plaintext SessionLog JSON into our v1 envelope, then
+      // upload the JSON-encoded envelope bytes. dashboard's
+      // isEncryptedEnvelope() distinguishes these from legacy plaintext
+      // SessionLogs (token 0 + all pre-v0.3.0 receipts).
+      encrypt: (plaintextJson: string): Uint8Array => {
+        const envelope = encryptSessionLog(plaintextJson, encryptionKey);
+        return new TextEncoder().encode(JSON.stringify(envelope));
+      },
     });
-    const fullVerifyUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
+    const tokenIdStr = result.tokenId.toString();
+    // Promote the pending key to a committed key keyed by tokenId.
+    // ALSO updates last-receipt.json so `/share` with no args targets
+    // this receipt.
+    const committed = state.keystore.commitPending(sessionKey, tokenIdStr);
+    if (!committed) {
+      // Means setPending failed earlier — we still want to TRY to put
+      // the key under tokenId so the operator can /share retroactively.
+      try {
+        state.keystore.put(tokenIdStr, encryptionKey);
+      } catch (putErr) {
+        structuredLog("WARN", "session_end", "Keystore put after-mint failed", {
+          sessionKey,
+          tokenId: tokenIdStr,
+          cause: putErr instanceof Error ? putErr.message : String(putErr),
+        });
+      }
+    }
+    // Build share URL with the #k=<key> fragment. The fragment NEVER
+    // leaves the browser (URL-fragment is client-side only) so the
+    // operator can paste this URL into any channel + the recipient's
+    // browser decrypts locally.
+    const baseUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
+    const shareUrl = `${baseUrl}#k=${keyToShareString(encryptionKey)}`;
     structuredLog("INFO", "session_end", "Session anchored on-chain", {
       sessionKey,
-      tokenId: result.tokenId.toString(),
+      tokenId: tokenIdStr,
       txHash: result.txHash,
       rootHash: result.rootHash,
       entryCount: result.entryCount,
-      verifyUrl: fullVerifyUrl,
+      verifyUrl: baseUrl,
+      shareUrl,
     });
     // Anchor succeeded → flush already sealed the logger; safe to release.
     state.sessions.release(sessionKey);

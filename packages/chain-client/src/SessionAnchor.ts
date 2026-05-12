@@ -79,6 +79,20 @@ export interface AnchorInput {
    * the SessionLogger metadata before calling flush().
    */
   containerHash: string;
+  /**
+   * v0.3.0 optional client-side encryption. When provided, the
+   * SessionLog plaintext JSON is transformed by `encrypt()` before
+   * upload. The cipher closure owns the key; SessionAnchor + SessionLogger
+   * stay key-agnostic. Plugins set up the keystore.setPending →
+   * encrypt → keystore.commitPending ordering AROUND this call to
+   * survive crashes between flush and mint (see
+   * openclaw-skills/verifiable-execution/src/keystore.ts).
+   *
+   * Return contract: must be a Uint8Array (or Buffer) of upload-ready
+   * bytes. Recommended: serialize an `EncryptedSessionLogEnvelope`
+   * (`crypto.ts`) and `TextEncoder.encode` the JSON.
+   */
+  encrypt?: (plaintextJson: string) => Uint8Array;
 }
 
 export interface AnchorResult {
@@ -196,7 +210,9 @@ export class SessionAnchor {
       containerHash: input.containerHash,
     });
 
-    const flushResult = await this.sessionLogger.flush();
+    const flushResult = await this.sessionLogger.flush(
+      input.encrypt !== undefined ? { encrypt: input.encrypt } : undefined,
+    );
 
     // Mint AFTER successful flush. If mint fails, the SessionLogger
     // is already sealed (flushed=true) and a second `anchor()` would

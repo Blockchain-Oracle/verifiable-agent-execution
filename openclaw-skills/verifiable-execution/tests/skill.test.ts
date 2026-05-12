@@ -18,6 +18,9 @@
  */
 
 import { createHash } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { Wallet, keccak256, recoverAddress, toUtf8Bytes } from "ethers";
 import { describe, expect, it, vi } from "vitest";
@@ -46,6 +49,7 @@ import plugin, {
 } from "../src/index.js";
 import { resolveConfig, type VerifiableExecutionConfig } from "../src/config.js";
 import { sha256Hex } from "../src/hash.js";
+import { Keystore } from "../src/keystore.js";
 import { SessionManager } from "../src/SessionManager.js";
 
 // ---------------------------------------------------------------------------
@@ -413,7 +417,15 @@ function buildPluginStateForTests(opts?: {
     opts?.signerPrivateKey ??
       "0x0000000000000000000000000000000000000000000000000000000000000001",
   );
-  return { state: { config, sessions, agenticIdClient, signer }, mintSpy };
+  // Per-test ephemeral keystore so writes don't touch the real
+  // ~/.openclaw/. Goes into the OS tmpdir and is leaked at process exit
+  // (vitest sandboxes give a fresh dir per worker).
+  const keystoreRoot = mkdtempSync(join(tmpdir(), "ve-test-keystore-"));
+  const keystore = new Keystore({ root: keystoreRoot });
+  return {
+    state: { config, sessions, agenticIdClient, signer, keystore },
+    mintSpy,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1084,97 @@ describe("v0.2.0 handleBeforePromptBuild", () => {
     // Body content NOT stored — only lengths.
     expect(JSON.stringify(result)).not.toContain("this is the actual prompt");
     expect(JSON.stringify(result)).not.toContain("long system prompt 50KB");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.3.0 — handleSessionEnd encrypts the SessionLog + manages keystore
+// ---------------------------------------------------------------------------
+
+describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
+  it("uploads an encrypted envelope (not plaintext SessionLog) and stores K in keystore by tokenId", async () => {
+    // The upload spy CAPTURES whatever bytes the SessionLogger passed
+    // to the storage client. After v0.3.0 those bytes are the JSON of
+    // an EncryptedSessionLogEnvelope, NOT a plaintext SessionLog.
+    let capturedBytes: Uint8Array | null = null;
+    const uploadOverride = async (memData: { data: ArrayLike<number> }) => {
+      // MemData wraps `data: ArrayLike<number>` — straight access; no
+      // async `read()`. Clone into a Uint8Array so the assertion runs
+      // on a stable snapshot.
+      capturedBytes = new Uint8Array(Array.from(memData.data));
+      return [
+        { rootHash: ROOT_HASH, txHash: "0x" + "a".repeat(64), txSeq: 0 },
+        null,
+      ] as const;
+    };
+    const { state } = buildPluginStateForTests({
+      uploadOverride: uploadOverride as unknown as IndexerLike["upload"],
+    });
+    const sessionKey = "ses_v030_encrypt_01";
+    // Seed an entry so the flush has content.
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "0g" }, result: { hits: 3 } },
+      { sessionKey },
+    );
+
+    await handleSessionEnd(
+      state,
+      { messages: [], success: true },
+      { sessionKey },
+    );
+
+    // 1) Uploaded bytes are the encrypted envelope shape, not plaintext.
+    expect(capturedBytes).not.toBeNull();
+    const uploadedJson = new TextDecoder().decode(capturedBytes!);
+    const uploaded = JSON.parse(uploadedJson) as Record<string, unknown>;
+    expect(uploaded.v).toBe(1);
+    expect(uploaded.alg).toBe("aes-256-gcm");
+    expect(typeof uploaded.iv).toBe("string");
+    expect(typeof uploaded.ciphertext).toBe("string");
+    expect(typeof uploaded.tag).toBe("string");
+    // Plaintext-SessionLog field names MUST NOT appear in the upload.
+    expect(uploadedJson).not.toContain("sessionId");
+    expect(uploadedJson).not.toContain("entries");
+
+    // 2) Keystore contains a 32-byte key indexed by tokenId.
+    const tokenId = "99"; // stub mint result in buildAgenticIdClient
+    const k = state.keystore.get(tokenId);
+    expect(k).not.toBeNull();
+    expect(k!.length).toBe(32);
+
+    // 3) Last-receipt pointer points to this tokenId.
+    const last = state.keystore.getLast();
+    expect(last?.tokenId).toBe(tokenId);
+    expect(last?.sessionKey).toBe(sessionKey);
+  });
+
+  it("survives a crash between setPending and mint — pending key recoverable by sessionKey", async () => {
+    // Force mint to fail. The keystore should retain pending/<sessionKey>.key
+    // so the operator can recover (manual commitPending after retryMint).
+    const { state } = buildPluginStateForTests({
+      mintImpl: async () => {
+        throw new Error("simulated network failure during iMint");
+      },
+    });
+    const sessionKey = "ses_v030_crash_01";
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "0g" }, result: { hits: 3 } },
+      { sessionKey },
+    );
+
+    await handleSessionEnd(
+      state,
+      { messages: [], success: true },
+      { sessionKey },
+    );
+
+    // tokenId 99 was never created (mint failed), so no committed key.
+    expect(state.keystore.get("99")).toBeNull();
+    // BUT pending should still be there for the sessionKey.
+    expect(state.keystore.list().length).toBe(0);
+    // Operator can later: retryMint → get tokenId → commitPending(sessionKey, tokenId).
   });
 });
 
