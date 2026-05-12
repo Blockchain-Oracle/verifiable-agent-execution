@@ -35,7 +35,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ tokenId: string; seq: string }> },
 ): Promise<NextResponse> {
   const { tokenId, seq } = await context.params;
@@ -53,8 +53,13 @@ export async function GET(
   }
   const seqNum = Number.parseInt(seq, 10);
 
+  // v0.3.0: forward ?k= for encrypted-receipt support. Without it, an
+  // encrypted blob bubbles back as STORAGE_BLOB_ENCRYPTED_NO_KEY (422).
+  const url = new URL(request.url);
+  const key = url.searchParams.get("k") ?? undefined;
+
   try {
-    const { sessionLog, verifier } = await loadSessionLogForToken(tokenId);
+    const { sessionLog, verifier } = await loadSessionLogForToken(tokenId, key);
     const entry = sessionLog.entries.find((e) => e.seq === seqNum);
     if (entry === undefined) {
       return NextResponse.json(

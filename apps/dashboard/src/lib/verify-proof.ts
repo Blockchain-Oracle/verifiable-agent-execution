@@ -60,6 +60,12 @@ import {
 import { signingMessageDigestFromString } from "@verifiable-agent-execution/tee-adapter";
 import { Indexer } from "@0gfoundation/0g-storage-ts-sdk";
 
+import {
+  decryptSessionLog,
+  isEncryptedEnvelope,
+  shareStringToKey,
+  type EncryptedSessionLogEnvelope,
+} from "./crypto.js";
 import { loadEnv, type DashboardEnv } from "./env.js";
 import {
   agenticIdContractUrl,
@@ -98,7 +104,7 @@ export interface ProofResponse {
    * (no signatures present) and pre-verifier-deploy environments
    * (TEE_VERIFIER_ADDRESS unset).
    */
-  verified: "verified" | "preview" | "unverified";
+  verified: "verified" | "preview" | "unverified" | "encrypted";
   /**
    * Selected fields from each ExecutionLogEntry — the dashboard
    * doesn't need the full entry shape (most fields are optional and
@@ -231,7 +237,8 @@ export function __setCachedClientsForTests(clients: CachedClients | null): void 
  */
 export async function loadSessionLogForToken(
   tokenIdRaw: string,
-): Promise<{ sessionLog: SessionLog; verifier: Contract }> {
+  keyBase64Url?: string,
+): Promise<{ sessionLog: SessionLog; verifier: Contract; encrypted: boolean }> {
   const tokenId = parseTokenId(tokenIdRaw);
   const { agenticIdClient, indexer, verifier, env } = getClients();
 
@@ -266,8 +273,25 @@ export async function loadSessionLogForToken(
   }
 
   const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
-  const sessionLog = parseSessionLog(blobBytes);
-  return { sessionLog, verifier };
+  const parsed = parseSessionLog(blobBytes, keyBase64Url);
+  // For per-entry verify (badge cascade) we need an actual SessionLog.
+  // If the caller didn't supply a key for an encrypted blob, the entry
+  // cascade can't run yet — caller (route handler) decides whether to
+  // 422 or surface metadata. We throw here for the unkeyed-encrypted
+  // case because the per-entry route's only valid response is per-entry
+  // verification, which is impossible without entries.
+  if (parsed.kind === "encrypted-locked") {
+    throw new ProofResolutionError({
+      status: 422,
+      code: "STORAGE_BLOB_ENCRYPTED_NO_KEY",
+      message: `Token ${tokenId.toString()}'s blob is encrypted. Re-fetch /api/verify/${tokenId}/entry/<seq>?k=<base64url-key> with the reveal key.`,
+    });
+  }
+  return {
+    sessionLog: parsed.sessionLog,
+    verifier,
+    encrypted: parsed.kind === "encrypted-decoded",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +303,10 @@ export async function loadSessionLogForToken(
  * with HTTP-mapped status/code on every failure so the route handler
  * can pass them straight through.
  */
-export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
+export async function resolveProof(
+  tokenIdRaw: string,
+  keyBase64Url?: string,
+): Promise<ProofResponse> {
   const tokenId = parseTokenId(tokenIdRaw);
   const { agenticIdClient, indexer, verifier, env } = getClients();
 
@@ -316,7 +343,37 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
   const sessionId = parseSessionIdFromDescription(execLogEntry.dataDescription);
 
   const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
-  const sessionLog = parseSessionLog(blobBytes);
+  const parsed = parseSessionLog(blobBytes, keyBase64Url);
+
+  // v0.3.0 encrypted-locked path: blob is an envelope and no key was
+  // supplied. Return metadata-only ProofResponse with `verified:
+  // "encrypted"` so the dashboard can render the "🔒 Encrypted —
+  // request reveal link from owner" state. Cold visitors hitting
+  // /verify/<tokenId> without `#k=...` always land here for v0.3.0
+  // receipts.
+  if (parsed.kind === "encrypted-locked") {
+    return {
+      tokenId: tokenId.toString(),
+      sessionId,
+      rootHash: execLogEntry.dataHash,
+      entryCount: 0,
+      verified: "encrypted",
+      entries: [],
+      meta: {
+        chainId: env.CHAIN_ID,
+        dataDescription: execLogEntry.dataDescription,
+        storageUrl: storageBlobUrl(execLogEntry.dataHash),
+        explorer: {
+          token: agenticIdTokenUrl(tokenId.toString()),
+          contract: agenticIdContractUrl(),
+          verifierContract: agenticIdContractUrl(), // legacy field, same target
+        },
+        faucetUrl: faucetUrl(),
+      },
+    };
+  }
+
+  const sessionLog = parsed.sessionLog;
 
   if (sessionLog.sessionId !== sessionId) {
     throw new ProofResolutionError({
@@ -439,7 +496,23 @@ async function downloadStorageBlob(
   }
 }
 
-function parseSessionLog(bytes: Uint8Array): SessionLog {
+/**
+ * Result of parsing the 0G Storage blob bytes for a tokenId.
+ *
+ * Three states:
+ *   - `kind: "plaintext"` — legacy pre-v0.3.0 SessionLog. Token 0 and all
+ *     pre-v0.3.0 receipts hit this path.
+ *   - `kind: "encrypted-locked"` — v0.3.0 envelope detected but no key
+ *     provided. Caller renders metadata-only.
+ *   - `kind: "encrypted-decoded"` — v0.3.0 envelope + valid key →
+ *     decrypted SessionLog.
+ */
+export type ParsedBlob =
+  | { kind: "plaintext"; sessionLog: SessionLog }
+  | { kind: "encrypted-locked"; envelope: EncryptedSessionLogEnvelope }
+  | { kind: "encrypted-decoded"; sessionLog: SessionLog };
+
+function parseSessionLog(bytes: Uint8Array, keyBase64Url?: string): ParsedBlob {
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -451,6 +524,48 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
       cause,
     });
   }
+
+  // v0.3.0: detect the EncryptedSessionLogEnvelope shape first. If
+  // present, branch on whether a key was supplied.
+  if (isEncryptedEnvelope(parsed)) {
+    if (keyBase64Url === undefined || keyBase64Url.length === 0) {
+      return { kind: "encrypted-locked", envelope: parsed };
+    }
+    let plaintext: string;
+    try {
+      const key = shareStringToKey(keyBase64Url);
+      plaintext = decryptSessionLog(parsed, key);
+    } catch (cause) {
+      throw new ProofResolutionError({
+        status: 422,
+        code: "STORAGE_BLOB_DECRYPT_FAILED",
+        message: `Failed to decrypt envelope with supplied key: ${cause instanceof Error ? cause.message : String(cause)}`,
+        cause,
+      });
+    }
+    let inner: unknown;
+    try {
+      inner = JSON.parse(plaintext);
+    } catch (cause) {
+      throw new ProofResolutionError({
+        status: 422,
+        code: "STORAGE_BLOB_DECRYPTED_INVALID_JSON",
+        message: `Decrypted payload is not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+        cause,
+      });
+    }
+    const inResult = sessionLogSchema.safeParse(inner);
+    if (!inResult.success) {
+      throw new ProofResolutionError({
+        status: 422,
+        code: "STORAGE_BLOB_INVALID_SCHEMA",
+        message: `Decrypted SessionLog does not match schema: ${inResult.error.message}`,
+      });
+    }
+    return { kind: "encrypted-decoded", sessionLog: inResult.data };
+  }
+
+  // Legacy plaintext path (token 0 + all pre-v0.3.0 receipts).
   const result = sessionLogSchema.safeParse(parsed);
   if (!result.success) {
     throw new ProofResolutionError({
@@ -459,7 +574,7 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
       message: `0G Storage blob does not match SessionLog schema: ${result.error.message}`,
     });
   }
-  return result.data;
+  return { kind: "plaintext", sessionLog: result.data };
 }
 
 /**

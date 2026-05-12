@@ -27,12 +27,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ tokenId: string }> },
 ): Promise<NextResponse> {
   const { tokenId } = await context.params;
+  // v0.3.0: optional `?k=<base64url-key>` query forwards the share-link
+  // fragment that the page-level client component reads from
+  // window.location.hash. The fragment NEVER leaves the browser
+  // server-side automatically — we forward it explicitly via this query
+  // param after the client decodes the hash. Without `?k=` an
+  // encrypted token returns `verified: "encrypted"` + empty entries.
+  const url = new URL(request.url);
+  const key = url.searchParams.get("k") ?? undefined;
   try {
-    const proof = await resolveProof(tokenId);
+    const proof = await resolveProof(tokenId, key);
     return NextResponse.json(proof, { status: 200 });
   } catch (cause) {
     if (cause instanceof ProofResolutionError) {

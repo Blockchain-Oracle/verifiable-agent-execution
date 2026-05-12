@@ -12,7 +12,7 @@
  */
 
 type StatusBadgeProps = {
-  status: "verified" | "preview" | "unverified";
+  status: "verified" | "preview" | "unverified" | "encrypted";
 };
 
 const STATUS_CONFIG: Record<
@@ -43,6 +43,20 @@ const STATUS_CONFIG: Record<
     bg: "bg-accent-unverified/15",
     text: "text-accent-unverified",
     icon: "M6 18L18 6M6 6l12 12",
+  },
+  encrypted: {
+    // v0.3.0: privately-anchored receipt. The proof chain still
+    // verifies (rootHash + sig + chain anchor) but the content is
+    // encrypted off-chain. Visitor without a reveal key sees this
+    // badge instead of red "Unverified."
+    label: "Encrypted",
+    // Reuse the link-blue palette token so the badge reads as
+    // "informational state" not "failure state." Dashboard tailwind
+    // config exposes accent-link (#3B82F6) per UX spec palette.
+    bg: "bg-accent-link/15",
+    text: "text-accent-link",
+    // Lock icon (Material) — solid lock outline.
+    icon: "M16 11V7a4 4 0 00-8 0v4M5 11h14a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2v-7a2 2 0 012-2z",
   },
 };
 
