@@ -862,18 +862,30 @@ export async function handleSessionEnd(
   try {
     state.keystore.setPending(sessionKey, encryptionKey);
   } catch (cause) {
-    // Keystore unwritable (disk full / permission denied) — degrade to
-    // PRE-V0.3.0 plaintext upload so the anchor still happens. Loud log
-    // so the operator can fix the FS issue offline.
+    // HARD-FAIL: if we can't persist K before upload, a crash between
+    // flush and mint loses K forever → the rootHash on 0G Storage
+    // becomes an undecipherable encrypted blob no one can ever read.
+    // Better to ABORT the session_end anchor and keep the in-memory
+    // SessionLogger alive so the operator can fix the FS issue and
+    // retry. Silently degrading to plaintext upload (the pre-Codex-
+    // round-3 behavior) violated v0.3.0's encrypted-by-default contract
+    // and could leak agent params/result to anyone scraping the feed.
     structuredLog(
-      "WARN",
+      "ERROR",
       "session_end",
-      "Keystore setPending failed; degrading to plaintext upload for this session",
+      "Keystore setPending failed — aborting encrypted anchor to preserve the in-memory SessionLogger",
       {
         sessionKey,
         cause: cause instanceof Error ? cause.message : String(cause),
+        recovery:
+          "Fix the keystore FS issue (check ~/.openclaw/verifiable-execution/keystore mode + disk space), then re-run anchor() with the same sessionKey to retry.",
       },
     );
+    // Leave the SessionLogger in the SessionManager map — same recovery
+    // pattern as the pre-flush failure branch below. Caller (the
+    // OpenClaw session_end hook) sees no exception; structured ERROR
+    // log is the surface.
+    return;
   }
 
   try {
@@ -938,7 +950,16 @@ export async function handleSessionEnd(
       failureFields.rootHash = cause.rootHash;
       failureFields.entryCount = cause.entryCount;
       failureFields.dataDescription = cause.dataDescription;
-      failureFields.recovery = "Call SessionAnchor.retryMint({rootHash, entryCount, sessionId}) to retry mint without re-flushing.";
+      // Concrete copy-paste recovery: substitute the actual sessionKey,
+      // rootHash, and entryCount so the operator can copy this line
+      // straight into their REPL. After Codex round-3 caught the
+      // placeholder phrasing.
+      failureFields.recovery =
+        `Call sessionAnchor.retryMint({rootHash: "${cause.rootHash}", ` +
+        `entryCount: ${cause.entryCount}, sessionId: "${sessionKey}"}) ` +
+        `to re-mint against the already-flushed 0G Storage blob, then ` +
+        `keystore.commitPending("${sessionKey}", <newTokenId>) to ` +
+        `register the encryption key under the recovered tokenId.`;
       // Flush succeeded → logger is sealed; rootHash is on 0G Storage
       // and survives a release. Operator retries mint independently.
       structuredLog("ERROR", "session_end", "Anchor failed", failureFields);

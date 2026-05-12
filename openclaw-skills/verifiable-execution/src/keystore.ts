@@ -65,6 +65,18 @@ export interface LastReceiptPointer {
   mintedAt: number; // unix seconds
 }
 
+/**
+ * Sidecar metadata written next to each pending key file so the
+ * ORIGINAL sessionKey (with separators intact) survives the
+ * one-way sanitization that goes into the filename. Used by
+ * `listPending()` to give crash-recovery tooling a copy-paste
+ * sessionKey for `commitPending(sessionKey, tokenId)`.
+ */
+interface PendingMetadata {
+  sessionKey: string;
+  createdAt: number; // unix seconds
+}
+
 export class Keystore {
   private readonly root: string;
   private readonly committedDir: string;
@@ -114,8 +126,20 @@ export class Keystore {
       throw new Error(`Key must be 32 bytes; got ${key.length}`);
     }
     this.ensureDirs();
-    const path = join(this.pendingDir, this.sanitizeFilename(sessionKey) + ".key");
-    this.atomicWriteBytes(path, key);
+    const sanitized = this.sanitizeFilename(sessionKey);
+    const keyPath = join(this.pendingDir, sanitized + ".key");
+    this.atomicWriteBytes(keyPath, key);
+    // Sidecar metadata preserves the ORIGINAL sessionKey (sanitization
+    // is one-way: ":"/"/" all collapse to "_", so we cannot recover
+    // the agent-runtime sessionKey from the filename alone). After a
+    // crash, listPending() reads these sidecars to give operators a
+    // copy-paste-ready sessionKey for retryMint(sessionKey, tokenId).
+    const metaPath = join(this.pendingDir, sanitized + ".meta.json");
+    const meta: PendingMetadata = {
+      sessionKey,
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+    this.atomicWriteText(metaPath, JSON.stringify(meta));
   }
 
   /**
@@ -129,10 +153,9 @@ export class Keystore {
    */
   commitPending(sessionKey: string, tokenId: string): boolean {
     this.ensureDirs();
-    const pendingPath = join(
-      this.pendingDir,
-      this.sanitizeFilename(sessionKey) + ".key",
-    );
+    const sanitized = this.sanitizeFilename(sessionKey);
+    const pendingPath = join(this.pendingDir, sanitized + ".key");
+    const pendingMetaPath = join(this.pendingDir, sanitized + ".meta.json");
     const committedPath = join(
       this.committedDir,
       this.sanitizeFilename(tokenId) + ".key",
@@ -143,6 +166,17 @@ export class Keystore {
       chmodSync(committedPath, 0o600);
     } catch {
       // best-effort
+    }
+    // Sidecar cleanup. Best-effort: if the .meta.json is missing
+    // (e.g., the operator manually placed a .key file), don't fail
+    // the commit — the .key is the load-bearing artifact, the sidecar
+    // is operator-comfort metadata.
+    if (existsSync(pendingMetaPath)) {
+      try {
+        unlinkSync(pendingMetaPath);
+      } catch {
+        // best-effort
+      }
     }
     this.writeLastReceiptPointer({
       tokenId,
@@ -235,6 +269,57 @@ export class Keystore {
     return readdirSync(this.committedDir)
       .filter((f) => f.endsWith(".key"))
       .map((f) => f.slice(0, -4));
+  }
+
+  /**
+   * List pending keys awaiting commit, with their ORIGINAL sessionKey
+   * (not the sanitized filename). Used by crash-recovery tooling:
+   * after a process restart, the operator runs `listPending()` to
+   * discover sessions that flushed encrypted bytes to 0G Storage but
+   * never finished mint, and re-issues `commitPending(sessionKey,
+   * tokenId)` once they learn the eventually-minted tokenId.
+   *
+   * Returns entries whose .key file is intact. A pending .key without
+   * a matching sidecar surfaces with sessionKey === null so the
+   * operator can still see the orphan (rare — only happens if the
+   * sidecar write succeeded but the .meta.json write didn't, or vice
+   * versa, or someone manually placed a .key file).
+   */
+  listPending(): Array<{
+    sessionKey: string | null;
+    /** Filename minus ".key" extension — the sanitized form on disk. */
+    sanitizedFilename: string;
+    /** Unix seconds; null when the sidecar is missing. */
+    createdAt: number | null;
+  }> {
+    if (!existsSync(this.pendingDir)) return [];
+    const keyFiles = readdirSync(this.pendingDir).filter((f) =>
+      f.endsWith(".key"),
+    );
+    return keyFiles.map((keyFile) => {
+      const sanitizedFilename = keyFile.slice(0, -4);
+      const metaPath = join(
+        this.pendingDir,
+        sanitizedFilename + ".meta.json",
+      );
+      if (!existsSync(metaPath)) {
+        return { sessionKey: null, sanitizedFilename, createdAt: null };
+      }
+      try {
+        const meta = JSON.parse(
+          readFileSync(metaPath, "utf8"),
+        ) as Partial<PendingMetadata>;
+        return {
+          sessionKey:
+            typeof meta.sessionKey === "string" ? meta.sessionKey : null,
+          sanitizedFilename,
+          createdAt:
+            typeof meta.createdAt === "number" ? meta.createdAt : null,
+        };
+      } catch {
+        return { sessionKey: null, sanitizedFilename, createdAt: null };
+      }
+    });
   }
 
   /**

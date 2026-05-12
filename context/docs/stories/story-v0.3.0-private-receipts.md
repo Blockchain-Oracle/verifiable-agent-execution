@@ -161,17 +161,20 @@ And contracts/contracts/MockTEEVerifier.sol is exempt per ADR-06
 - `openclaw-skills/verifiable-execution/tests/crypto.test.ts` — 24 tests
 - `openclaw-skills/verifiable-execution/tests/keystore.test.ts` — 17 tests
 - `openclaw-skills/verifiable-execution/tests/share-command.test.ts` — 10 tests
-- `apps/dashboard/src/lib/crypto.ts` — Decrypt-side mirror of plugin crypto (intentionally duplicated to avoid the cross-package dep that would force a workspace install on dashboard consumers)
-- `apps/dashboard/src/components/EncryptedReveal.tsx` — Client component, reads `window.location.hash`, re-fetches `/api/verify/<id>?k=`, hydrates SessionView
+- `apps/dashboard/src/lib/crypto.ts` — WebCrypto-based decrypter (`globalThis.crypto.subtle.decrypt`) that runs in both Node 20+ and the browser. Mirrors the plugin's v1 envelope wire shape without forcing a cross-package dep.
+- `apps/dashboard/src/lib/client-verify.ts` — Browser-side per-entry verifier (ecrecover + on-chain MockTEEVerifier via ethers JsonRpcProvider against the public 0G RPC). Used by encrypted-mode SessionView so the badge cascade runs without round-tripping the reveal key to the server.
+- `apps/dashboard/src/components/EncryptedReveal.tsx` — Client component. Reads `window.location.hash`, fetches the envelope from `/api/verify/<id>/blob` (key-blind passthrough — no `?k=` in the URL), decrypts via WebCrypto, synthesizes the full ProofResponse, renders SessionView with a client-side verifyEntry callback.
+- `apps/dashboard/src/app/api/verify/[tokenId]/blob/route.ts` — New key-blind passthrough route. Returns the encrypted envelope JSON; never decrypts; never parses `?k=`.
 
 **Update:**
 - `packages/logger/src/SessionLogger.ts` — `FlushOptions { encrypt?: (plaintextJson: string) => Uint8Array }`; flush() conditionally invokes encrypt before upload
 - `packages/chain-client/src/SessionAnchor.ts` — `AnchorInput.encrypt?` threaded through to `sessionLogger.flush({encrypt: input.encrypt})`
-- `openclaw-skills/verifiable-execution/src/index.ts` — `PluginState.keystore` added; `handleSessionEnd` does generateKey→setPending→anchor(encrypt)→commitPending; registers `inbound_claim` listener for `/share`
+- `openclaw-skills/verifiable-execution/src/index.ts` — `PluginState.keystore` added; `handleSessionEnd` does generateKey→setPending→anchor(encrypt)→commitPending (HARD-FAILS if setPending fails — Codex round-3 finding: silent degrade to plaintext would violate the encrypted-by-default contract); registers `inbound_claim` listener for `/share`
 - `openclaw-skills/verifiable-execution/tests/skill.test.ts` — hook count 6 → 7 (inbound_claim added); v0.3.0 encrypted-flush + crash-recovery tests
-- `apps/dashboard/src/lib/verify-proof.ts` — `ParsedBlob` discriminated union; `resolveProof(tokenIdRaw, keyBase64Url?)` returns `verified: "encrypted"` for locked blobs
-- `apps/dashboard/src/app/api/verify/[tokenId]/route.ts` — Forwards `?k=` from URL.searchParams to resolveProof
-- `apps/dashboard/src/app/api/verify/[tokenId]/entry/[seq]/route.ts` — Same `?k=` forward
+- `apps/dashboard/src/lib/verify-proof.ts` — `ParsedBlob` discriminated union (plaintext | encrypted-locked, server is key-blind); `resolveProof(tokenIdRaw)` (no key param) returns `verified: "encrypted"` with entries OMITTED for locked blobs; new `fetchEncryptedEnvelope(tokenId)` powers the /blob route
+- `apps/dashboard/src/app/api/verify/[tokenId]/route.ts` — Drops `?k=` parsing — handler is key-blind by signature
+- `apps/dashboard/src/app/api/verify/[tokenId]/entry/[seq]/route.ts` — Drops `?k=` parsing; encrypted blobs surface STORAGE_BLOB_ENCRYPTED_CLIENT_ONLY (422); encrypted-mode SessionView uses client-side verifyEntry instead
+- `apps/dashboard/src/components/SessionView.tsx` — Optional `verifyEntry` callback prop (default = fetch /entry/<seq>; encrypted-mode override = client-side ethers via lib/client-verify)
 - `apps/dashboard/src/app/verify/[tokenId]/page.tsx` — Wraps SessionView in `<EncryptedReveal>` when `proof.verified === "encrypted"`
 - `apps/dashboard/src/components/StatusBadge.tsx` — Adds "encrypted" status with lock icon + `accent-link` blue palette
 - `apps/dashboard/tailwind.config.ts` — `"accent-link": "#3B82F6"` semantic token

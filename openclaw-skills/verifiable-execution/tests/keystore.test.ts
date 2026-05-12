@@ -150,6 +150,55 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     expect(ks.commitPending(sk, "100")).toBe(true);
     expect(ks.get("100")!.equals(k)).toBe(true);
   });
+
+  // BDD: "And the original sessionKey is recoverable by callers via list()"
+  // Codex round-3 caught that sanitization was one-way; the sanitized
+  // filename couldn't be reversed. This test pins the listPending()
+  // surface which uses sidecar .meta.json to preserve the original
+  // OpenClaw sessionKey.
+  it("listPending() returns the ORIGINAL sessionKey (not the sanitized filename)", () => {
+    const sk = "agent:core:telegram:direct:8028166336";
+    const k = generateKey();
+    ks.setPending(sk, k);
+    const pending = ks.listPending();
+    expect(pending).toHaveLength(1);
+    // Sidecar preserves the unsanitized form so a crashed operator
+    // can copy-paste this string into commitPending(sessionKey, tokenId).
+    expect(pending[0]?.sessionKey).toBe(sk);
+    expect(pending[0]?.sanitizedFilename).toBe(
+      "agent_core_telegram_direct_8028166336",
+    );
+    expect(typeof pending[0]?.createdAt).toBe("number");
+  });
+
+  // Cleanup invariant: after commitPending the sidecar is gone.
+  it("commitPending removes the pending sidecar .meta.json (no leak)", () => {
+    const sk = "ses:cleanup:check";
+    const k = generateKey();
+    ks.setPending(sk, k);
+    const sanitized = "ses_cleanup_check";
+    expect(existsSync(join(root, "keystore", "pending", sanitized + ".meta.json"))).toBe(true);
+    expect(ks.commitPending(sk, "777")).toBe(true);
+    expect(existsSync(join(root, "keystore", "pending", sanitized + ".meta.json"))).toBe(false);
+    expect(ks.listPending()).toHaveLength(0);
+  });
+
+  // BDD crash-recovery: after a process restart with an in-progress
+  // session, the operator can still recover the key + sessionKey from
+  // disk and finish the commit.
+  it("crash-recovery: pending key file + sidecar both recoverable from disk", () => {
+    const sk = "ses:crash:integration";
+    const k = generateKey();
+    ks.setPending(sk, k);
+    // Simulate restart: build a NEW Keystore pointing at the same root.
+    const ks2 = new Keystore({ root });
+    const pending = ks2.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.sessionKey).toBe(sk);
+    // Operator can finish the commit using the recovered sessionKey.
+    expect(ks2.commitPending(sk, "8888")).toBe(true);
+    expect(ks2.get("8888")!.equals(k)).toBe(true);
+  });
 });
 
 describe("Keystore — last-receipt pointer", () => {

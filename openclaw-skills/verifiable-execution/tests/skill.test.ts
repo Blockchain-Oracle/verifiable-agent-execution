@@ -1174,9 +1174,55 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
 
     // tokenId 99 was never created (mint failed), so no committed key.
     expect(state.keystore.get("99")).toBeNull();
-    // BUT pending should still be there for the sessionKey.
     expect(state.keystore.list().length).toBe(0);
+    // BUT the pending key + sidecar MUST be recoverable so the operator
+    // can finish the commit after retryMint. Codex round-3 strengthened
+    // this: assert the actual pending entry surfaces with the original
+    // sessionKey via listPending() (not just "committed list is empty").
+    const pending = state.keystore.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.sessionKey).toBe(sessionKey);
     // Operator can later: retryMint → get tokenId → commitPending(sessionKey, tokenId).
+  });
+
+  // Hard-fail invariant (Codex round-3): if keystore.setPending throws
+  // (FS unwritable / disk full), handleSessionEnd MUST abort before
+  // upload. Silently degrading to plaintext upload would violate the
+  // v0.3.0 encrypted-by-default contract.
+  it("aborts before upload when keystore.setPending fails — no plaintext leak", async () => {
+    let uploadCalls = 0;
+    const uploadOverride = async () => {
+      uploadCalls++;
+      return [
+        { rootHash: ROOT_HASH, txHash: "0x" + "a".repeat(64), txSeq: 0 },
+        null,
+      ] as const;
+    };
+    const { state, mintSpy } = buildPluginStateForTests({
+      uploadOverride: uploadOverride as unknown as IndexerLike["upload"],
+    });
+    // Stub keystore.setPending to simulate "FS unwritable" condition.
+    const setPendingSpy = vi
+      .spyOn(state.keystore, "setPending")
+      .mockImplementation(() => {
+        throw new Error("EROFS: read-only file system");
+      });
+    const sessionKey = "ses_setpending_fails";
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
+      { sessionKey },
+    );
+    await handleSessionEnd(state, { messages: [], success: true }, { sessionKey });
+
+    expect(setPendingSpy).toHaveBeenCalledOnce();
+    // CRITICAL: no upload, no mint. The session log remains in-memory
+    // for the operator to retry once the FS is fixed.
+    expect(uploadCalls).toBe(0);
+    expect(mintSpy).not.toHaveBeenCalled();
+    // No committed key either — nothing was minted.
+    expect(state.keystore.list()).toEqual([]);
+    setPendingSpy.mockRestore();
   });
 });
 
