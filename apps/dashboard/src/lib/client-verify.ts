@@ -84,6 +84,21 @@ export async function verifyEntryClient(
   const digest = keccak256(toUtf8Bytes(message));
 
   // Path A: agent-wrapper convention — ecrecover and compare to agentId.
+  //
+  // TRUST MODEL (v0.2.0, inherited by v0.3.0, per ADR-10 "TEE-rooted,
+  // not trustless"): if `recoverAddress(digest, sig) === entry.agentId`,
+  // the dashboard reports "verified" WITHOUT calling the on-chain
+  // MockTEEVerifier. This is intentional: the agent's own wallet is
+  // the trusted signer for ITS entries — agentId IS the agent
+  // identity. The wedge is "the agent wallet binds the content,
+  // anchored under tokenId on AgenticID." It is NOT a claim of
+  // trustless TEE attestation. Codex round-5 flagged that an attacker
+  // can self-declare an agentId, sign with that key, and render
+  // green — true, but that's bound to a token THEY minted on
+  // AgenticID, which is also their own claim. The chain-of-trust
+  // ends at the iNFT owner; making it trustless via a real Phala /
+  // 0G TEE oracle is v0.4.0 scope. The pinning test for this design
+  // is in apps/dashboard/tests/verifier-route.test.ts.
   try {
     const recovered = recoverAddress(digest, entry.teeSignature);
     if (recovered.toLowerCase() === entry.agentId.toLowerCase()) {
@@ -94,7 +109,10 @@ export async function verifyEntryClient(
   }
 
   // Path B: on-chain MockTEEVerifier (legacy / demo entries signed by
-  // global oracle wallet). Browser → public 0G RPC → view call.
+  // global oracle wallet, e.g., token 0). Browser → public 0G RPC →
+  // view call. Used when Path A doesn't match — typically signatures
+  // by the deployer wallet (synthetic demo) against the deployed
+  // verifier's configured teeOracleAddress.
   const verifier = getVerifier(deps.rpcUrl, deps.verifierAddress);
   try {
     const ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;

@@ -63,7 +63,12 @@ Then the pending key file survives, so a retryMint can still anchor it
 Given a sessionKey containing OpenClaw separators ("agent:core:telegram:direct:8028...")
 When setPending(sessionKey, key) is called
 Then the sanitized filename has no ":" or "/" (filesystem-safe)
-And the original sessionKey is recoverable by callers via list()
+And the original sessionKey is recoverable by callers via listPending()
+# (NOT list() — list() returns committed tokenIds only. Pending
+# crash-recovery surfaces through listPending(), which reads sidecar
+# .meta.json files alongside each pending .key. Codex round-3 surfaced
+# the original BDD wording inconsistency; resolved by renaming the API
+# in the spec to match the implementation that ships in v0.3.0.)
 
 # --- m3: Encrypt-before-flush ordering ---
 Given SessionLogger.flush() receives FlushOptions {encrypt}
@@ -217,6 +222,7 @@ pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && \
 - **CLI subcommand for share** — included as `/share` slash command; standalone `openclaw share <tokenId>` CLI deferred (no operator demand yet)
 - **before_message_write auto-inject** — REJECTED per Abu's UX critique 2026-05-12 ("99% of the time you never share — polluting the conversation with a verifier link is friction, not UX")
 - **plaintextHash** — skipped; the encrypted blob's rootHash is the only on-chain commitment, which is sufficient for the proof chain
+- **Trustless TEE-attestation-only "verified" badge** — v0.3.0 inherits the v0.2.0 trust model: ecrecover-match against `entry.agentId` is sufficient for the "verified" badge, falling back to MockTEEVerifier (oracle-signed) only when ecrecover doesn't match. Codex round-5 flagged this as "anyone can self-sign green" — true, and ADR-10 explicitly frames the wedge as "TEE-rooted, **not trustless**." A trustless model requires real Phala dstack / 0G TEE oracle integration where the agentId itself is bound to a remote attestation quote — v0.4.0 scope. The current pinning test lives in `apps/dashboard/tests/verifier-route.test.ts` ("returns 'verified' when ecrecover matches agentId — even if MockTEEVerifier would reject") so accidental "fixes" can't regress the agent-wrapper attestation path.
 
 ---
 
