@@ -158,7 +158,7 @@ export class Keystore {
     const pendingMetaPath = join(this.pendingDir, sanitized + ".meta.json");
     const committedPath = join(
       this.committedDir,
-      this.sanitizeFilename(tokenId) + ".key",
+      this.committedFilename(tokenId) + ".key",
     );
     if (!existsSync(pendingPath)) return false;
     renameSync(pendingPath, committedPath);
@@ -205,7 +205,7 @@ export class Keystore {
     this.ensureDirs();
     const path = join(
       this.committedDir,
-      this.sanitizeFilename(tokenId) + ".key",
+      this.committedFilename(tokenId) + ".key",
     );
     this.atomicWriteBytes(path, key);
     this.writeLastReceiptPointer({
@@ -221,10 +221,12 @@ export class Keystore {
    * host" rather than throwing back into the chat.
    */
   get(tokenId: string): Buffer | null {
-    const path = join(
-      this.committedDir,
-      this.sanitizeFilename(tokenId) + ".key",
-    );
+    // Lenient read: if the tokenId isn't a valid decimal string,
+    // we know we never wrote a file for it (committedFilename
+    // validates on write). Return null instead of throwing so
+    // callers like /share don't crash on user-supplied junk.
+    if (!/^[0-9]+$/.test(tokenId)) return null;
+    const path = join(this.committedDir, tokenId + ".key");
     if (!existsSync(path)) return null;
     const buf = readFileSync(path);
     if (buf.length !== 32) {
@@ -262,20 +264,24 @@ export class Keystore {
 
   /**
    * List all tokenIds with committed keys. Used by the (post-hackathon)
-   * "/my-receipts" command and by ops tooling. Filenames are
-   * base64url-encoded (Codex round-14 fix) — decode back to the
-   * original tokenId string.
+   * "/my-receipts" command and by ops tooling. Committed key files
+   * are stored at the literal path `<tokenId>.key` (Codex round-18
+   * fix — tokenIds are stringified BigInts with no special chars,
+   * so no encoding is needed). The `[0-9]+` validation in
+   * committedFilename() means we can safely return these filenames
+   * directly as tokenIds.
    */
   list(): string[] {
     if (!existsSync(this.committedDir)) return [];
-    const out: string[] = [];
-    for (const f of readdirSync(this.committedDir)) {
-      if (!f.endsWith(".key")) continue;
-      const encoded = f.slice(0, -4);
-      const decoded = this.decodeFilename(encoded);
-      if (decoded !== null) out.push(decoded);
-    }
-    return out;
+    return readdirSync(this.committedDir)
+      .filter((f) => f.endsWith(".key"))
+      .map((f) => f.slice(0, -4))
+      // Defensive filter: ignore stray files that don't match the
+      // tokenId shape (e.g. leftover .tmp files from atomicWriteBytes
+      // crashes, or legacy base64url-encoded names from a pre-r18
+      // install — operators with such legacy files can `ls keystore/`
+      // manually).
+      .filter((name) => /^[0-9]+$/.test(name));
   }
 
   /**
@@ -356,10 +362,11 @@ export class Keystore {
    * local /share command from re-emitting it.
    */
   remove(tokenId: string): void {
-    const path = join(
-      this.committedDir,
-      this.sanitizeFilename(tokenId) + ".key",
-    );
+    // Lenient: a remove on an invalid tokenId is a no-op (we never
+    // wrote a file for it). Don't throw — operator tools may pass
+    // arbitrary strings.
+    if (!/^[0-9]+$/.test(tokenId)) return;
+    const path = join(this.committedDir, tokenId + ".key");
     if (existsSync(path)) {
       unlinkSync(path);
     }
@@ -404,7 +411,7 @@ export class Keystore {
   }
 
   /**
-   * Encode a sessionKey or tokenId for use as a filename. OpenClaw
+   * Encode a sessionKey for use as a pending-file filename. OpenClaw
    * sessionKeys can contain `:` and `/` (e.g.
    * "agent:core:telegram:direct:8028..."). Earlier revisions did a
    * lossy `/[/:?...]/g → "_"` substitution, but Codex round-14 caught
@@ -422,13 +429,35 @@ export class Keystore {
    * Note: base64url uses `A-Za-z0-9_-` plus optional `=` padding, all
    * filesystem-safe; we strip padding so the filename has no `=`.
    *
-   * Token IDs are always stringified integers in our flow (BigInt →
-   * decimal string), which encode to ASCII-equivalent base64url that's
-   * 33% longer (e.g. "42" → "NDI"). That's a slight cosmetic regression
-   * in `ls keystore/` output but the security gain dominates.
+   * **Scope (Codex round-18 fix):** this encoding is for SESSION KEYS
+   * only — i.e. the pending/ directory. Committed token-id key files
+   * (`keystore/<tokenId>.key`) use the LITERAL tokenId because tokenIds
+   * are stringified BigInts (digits only), which can't collide and
+   * which the BDD spec requires to live at the human-readable path.
+   * See `committedFilename` for the tokenId path.
    */
   private encodeFilename(name: string): string {
     return Buffer.from(name, "utf8").toString("base64url");
+  }
+
+  /**
+   * Filename for a committed token-id key file. The BDD spec
+   * requires the literal path `keystore/<tokenId>.key` (see
+   * story-v0.3.0-private-receipts.md). TokenIDs in our flow are
+   * always BigInt → decimal string, so the path is collision-free
+   * by construction. For defense in depth, we still validate: only
+   * `[0-9]+` token IDs are accepted; anything else throws (would
+   * indicate a caller bug or a malicious input upstream).
+   */
+  private committedFilename(tokenId: string): string {
+    if (!/^[0-9]+$/.test(tokenId)) {
+      throw new Error(
+        `tokenId must be a non-empty decimal string; got "${tokenId}". ` +
+          `If you need to bind a non-decimal identifier, encode it upstream ` +
+          `before calling put()/commitPending()/get().`,
+      );
+    }
+    return tokenId;
   }
 
   /**

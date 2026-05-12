@@ -64,15 +64,24 @@ describe("Keystore — put / get round-trip", () => {
     expect(() => ks.put("7", Buffer.alloc(64))).toThrow(/32 bytes/);
   });
 
-  it("writes key files with mode 0600 (no group/other readable)", () => {
+  it("writes key files at the BDD-specified path `keystore/<tokenId>.key` with mode 0600", () => {
     if (process.platform === "win32") return; // skip on Windows
     const k = generateKey();
     ks.put("7", k);
-    // Filename is base64url(tokenId) post-round-14 fix.
-    const encoded = Buffer.from("7", "utf8").toString("base64url");
-    const filePath = join(root, "keystore", encoded + ".key");
+    // Codex round-18: tokenId files use the LITERAL tokenId (digits
+    // only — collision-free by construction). The pending-dir path
+    // uses base64url encoding because sessionKeys CAN have `:`/`/`.
+    const filePath = join(root, "keystore", "7.key");
+    expect(existsSync(filePath)).toBe(true);
     const mode = statSync(filePath).mode & 0o777;
     expect(mode.toString(8)).toBe("600");
+  });
+
+  it("rejects non-decimal tokenIds (defense in depth — would otherwise produce unsafe filenames)", () => {
+    const k = generateKey();
+    expect(() => ks.put("not-a-number", k)).toThrow(/decimal string/i);
+    expect(() => ks.put("../escape", k)).toThrow(/decimal string/i);
+    expect(() => ks.put("", k)).toThrow(/decimal string/i);
   });
 
   // BDD: "Then a file at keystore/<tokenId>.key exists with mode 0600
@@ -109,9 +118,10 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     ks.setPending("ses-xyz", k);
     const ok = ks.commitPending("ses-xyz", "42");
     expect(ok).toBe(true);
-    // Pending gone, committed present (both paths use base64url-encoded names).
+    // Pending uses base64url(sessionKey), committed uses literal tokenId
+    // (Codex round-18: tokenId files at BDD-required path <tokenId>.key).
     expect(existsSync(join(root, "keystore", "pending", enc("ses-xyz") + ".key"))).toBe(false);
-    expect(existsSync(join(root, "keystore", enc("42") + ".key"))).toBe(true);
+    expect(existsSync(join(root, "keystore", "42.key"))).toBe(true);
     // Key bytes identical post-rename.
     expect(ks.get("42")!.equals(k)).toBe(true);
     // Last-receipt pointer updated.
