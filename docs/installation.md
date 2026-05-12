@@ -28,6 +28,9 @@ restart. Done.
 
 ```bash
 openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
+# (NOT `npm:@blockchainoracle/...` — the npm: prefix is rejected on
+# OpenClaw 2026.4.25 with "protocol specs are not allowed". The bare
+# spec resolves through ClawHub which proxies the same npm registry.)
 openclaw gateway restart
 ```
 
@@ -167,6 +170,21 @@ You can confirm the plugin loaded with:
 ```bash
 openclaw plugins list
 # Should show: verifiable-execution | enabled | 0.1.1
+```
+
+> **Note on restart timing:** `gateway restart` defers if there's an
+> active task run (you'll see "restart still deferred after Xms with
+> N task run(s) active" in the log). It can take 30 seconds to
+> several minutes for the actual SIGTERM to fire. To force-restart
+> immediately, kill the gateway process: `pkill -TERM -f 'openclaw'`
+> — supervisor will restart it.
+
+Optionally, suppress the "discovered non-bundled plugin" warning by
+explicitly allowlisting:
+
+```bash
+jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)' \
+  ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
 ```
 
 ---
