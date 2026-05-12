@@ -485,15 +485,50 @@ function parseTokenId(raw: string): bigint {
 
 function parseSessionIdFromDescription(dataDescription: string): string {
   // ADR-08: "exec-log:<sessionId>:<modelId>".
-  const parts = dataDescription.split(":");
-  if (parts.length < 3 || parts[0] !== "exec-log") {
+  //
+  // OpenClaw sessionKeys contain `:` — real VPS traces look like
+  // "agent:core:telegram:direct:8028166336" — so a naive split-on-`:`
+  // returns the wrong sessionId. The plugin writes the sessionKey
+  // VERBATIM into dataDescription, so the parser must reason about
+  // the FORMAT, not split arbitrarily.
+  //
+  // Format: "exec-log:<sessionId>:<modelId>" where:
+  //   - prefix is literally "exec-log:"
+  //   - modelId is the FINAL `:`-delimited segment (single token, no
+  //     colons — e.g., "claude-sonnet-4-6")
+  //   - sessionId is everything between the prefix and the last colon
+  //     (may contain any number of colons)
+  //
+  // (Codex round-4 P1 — earlier `split(":")` truncated VPS sessionIds
+  // to "agent" and caused SESSION_ID_MISMATCH on legacy plaintext + a
+  // garbled sessionId on encrypted locked-state metadata.)
+  const PREFIX = "exec-log:";
+  if (!dataDescription.startsWith(PREFIX)) {
     throw new ProofResolutionError({
       status: 422,
       code: "MALFORMED_DATA_DESCRIPTION",
       message: `dataDescription must follow ADR-08 "exec-log:<sessionId>:<modelId>"; got "${dataDescription}".`,
     });
   }
-  return parts[1];
+  const rest = dataDescription.slice(PREFIX.length);
+  const lastColon = rest.lastIndexOf(":");
+  if (lastColon <= 0) {
+    throw new ProofResolutionError({
+      status: 422,
+      code: "MALFORMED_DATA_DESCRIPTION",
+      message: `dataDescription must follow ADR-08 "exec-log:<sessionId>:<modelId>" with a non-empty sessionId and modelId; got "${dataDescription}".`,
+    });
+  }
+  const sessionId = rest.slice(0, lastColon);
+  // Defense in depth: empty modelId is also malformed.
+  if (lastColon === rest.length - 1) {
+    throw new ProofResolutionError({
+      status: 422,
+      code: "MALFORMED_DATA_DESCRIPTION",
+      message: `dataDescription has empty modelId after final ":"; got "${dataDescription}".`,
+    });
+  }
+  return sessionId;
 }
 
 async function downloadStorageBlob(

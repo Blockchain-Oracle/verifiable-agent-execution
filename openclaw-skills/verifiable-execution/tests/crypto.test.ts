@@ -106,6 +106,20 @@ describe("decryptSessionLog — tamper detection", () => {
     expect(() => decryptSessionLog(tampered, key)).toThrow();
   });
 
+  // BDD m1: "tampering with any of {iv, ciphertext, tag} causes
+  // decryption to throw." Codex round-4 caught that we tested
+  // ciphertext + tag but not IV. With AES-GCM, the IV is bound into
+  // the auth tag computation — flipping it MUST fail decryption.
+  it("rejects a flipped IV byte (auth tag mismatch)", () => {
+    const key = generateKey();
+    const env = encryptSessionLog(PLAINTEXT_SHORT, key);
+    const tampered: EncryptedSessionLogEnvelope = {
+      ...env,
+      iv: (env.iv.startsWith("00") ? "ff" : "00") + env.iv.slice(2),
+    };
+    expect(() => decryptSessionLog(tampered, key)).toThrow();
+  });
+
   it("rejects a different key (wrong-key decryption fails)", () => {
     const key = generateKey();
     const env = encryptSessionLog(PLAINTEXT_SHORT, key);

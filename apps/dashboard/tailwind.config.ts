@@ -27,6 +27,13 @@ const config: Config = {
         "accent-mock": "#F59E0B",   // mock / warning
         "accent-unverified": "#EF4444", // unverified / error
         link: "#3B82F6",
+        // v0.3.0 alias: components written against the UX-spec
+        // palette use `accent-link`. Codex round-4 caught that the
+        // config only defined `link`, so JIT skipped generating
+        // `bg-accent-link/15` and `text-accent-link` — the encrypted
+        // StatusBadge rendered without color. Both names route to the
+        // same blue so existing `text-link` callsites don't churn.
+        "accent-link": "#3B82F6",
       },
       fontFamily: {
         // Geist Sans for body + headings; Geist Mono for hashes /

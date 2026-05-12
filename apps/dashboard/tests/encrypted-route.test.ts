@@ -187,6 +187,102 @@ describe("GET /api/verify/[tokenId] — encrypted receipt", () => {
   });
 });
 
+// Codex round-4 P1: real OpenClaw sessionKeys contain ":" — the
+// plugin writes them VERBATIM into dataDescription as
+// "exec-log:<colon-laden-sessionId>:<modelId>". The dashboard parser
+// must round-trip them correctly, both for encrypted locked-state
+// metadata and for legacy plaintext SESSION_ID_MISMATCH guard.
+describe("GET /api/verify/[tokenId] — colon-containing sessionId (real VPS sessions)", () => {
+  const COLON_SESSION = "agent:core:telegram:direct:8028166336";
+  const COLON_DESCRIPTION = `exec-log:${COLON_SESSION}:${MODEL_ID}`;
+
+  it("returns full sessionId (not the prefix truncated at the first colon) for encrypted blobs", async () => {
+    const { arrayBuffer } = makeEncryptedBlob('{"sessionId":"x","entries":[]}');
+    __setCachedClientsForTests({
+      provider: {} as never,
+      agenticIdClient: {
+        contractAddress: process.env.AGENTICID_ADDRESS!,
+        getIntelligentDatas: async () => [
+          { dataDescription: COLON_DESCRIPTION, dataHash: VALID_ROOT_HASH },
+        ],
+      } as never,
+      indexer: { downloadToBlob: async () => [{ arrayBuffer }, null] } as never,
+      verifier: {} as never,
+      env: {
+        ZG_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
+        AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
+        CHAIN_ID: 16602,
+        TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
+      },
+    });
+    const response = await getProof(new Request("http://localhost:3000/api/verify/8028"), {
+      params: Promise.resolve({ tokenId: "8028" }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.sessionId).toBe(COLON_SESSION);
+  });
+
+  it("legacy plaintext receipt with colon-sessionId does NOT trip SESSION_ID_MISMATCH", async () => {
+    // The blob's sessionId is the same colon-laden string the
+    // dataDescription encodes. Pre-fix, parseSessionIdFromDescription
+    // returned "agent" while the blob said the full path → 422.
+    const json = JSON.stringify({
+      sessionId: COLON_SESSION,
+      startedAt: 1700000000000,
+      endedAt: 1700000000500,
+      agentId: `0x${"a".repeat(40)}`,
+      containerHash: `0x${"c".repeat(64)}`,
+      modelId: MODEL_ID,
+      entries: [
+        {
+          seq: 0,
+          ts: 1700000000050,
+          type: "tool_call",
+          tool: "web_search",
+          inputHash: "a".repeat(64),
+          outputHash: "b".repeat(64),
+        },
+      ],
+      entryCount: 1,
+    });
+    const bytes = new TextEncoder().encode(json);
+    const blob = {
+      arrayBuffer: async () => {
+        const buf = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(buf).set(bytes);
+        return buf;
+      },
+    };
+    __setCachedClientsForTests({
+      provider: {} as never,
+      agenticIdClient: {
+        contractAddress: process.env.AGENTICID_ADDRESS!,
+        getIntelligentDatas: async () => [
+          { dataDescription: COLON_DESCRIPTION, dataHash: VALID_ROOT_HASH },
+        ],
+      } as never,
+      indexer: { downloadToBlob: async () => [blob, null] } as never,
+      verifier: {} as never,
+      env: {
+        ZG_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
+        AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
+        CHAIN_ID: 16602,
+        TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
+      },
+    });
+    const response = await getProof(new Request("http://localhost:3000/api/verify/8028"), {
+      params: Promise.resolve({ tokenId: "8028" }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.sessionId).toBe(COLON_SESSION);
+    expect(body.verified).toBe("preview"); // unsigned entries
+  });
+});
+
 describe("GET /api/verify/[tokenId]/blob — encrypted envelope passthrough", () => {
   it("returns the envelope JSON for an encrypted blob", async () => {
     const { arrayBuffer, envelope } = makeEncryptedBlob('{"sessionId":"x","entries":[]}');
