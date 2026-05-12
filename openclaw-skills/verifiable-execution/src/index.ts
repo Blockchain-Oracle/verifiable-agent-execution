@@ -71,6 +71,7 @@ import {
 import { sha256Hex } from "./hash.js";
 import { Keystore } from "./keystore.js";
 import { SessionManager } from "./SessionManager.js";
+import { handleShareCommand } from "./share-command.js";
 import { printFirstRunBanner, resolveWallet } from "./wallet.js";
 
 const PLUGIN_ID = "verifiable-execution";
@@ -1179,6 +1180,69 @@ export default {
     });
     api.on("agent_end", async (event, ctx) => {
       await handleAgentEnd(state, event, ctx);
+    });
+
+    // v0.3.0: /share slash command. Operator-facing UX for delivering
+    // share URLs WITHOUT polluting every agent reply (Abu's UX critique
+    // 2026-05-12). Pattern mirrors stock `codex` plugin —
+    // /tmp/openclaw-src/extensions/codex/index.ts:32-38.
+    //
+    // registerCommand auto-registers the slash command with channel
+    // providers (Telegram bot menu, Discord slash commands, CLI tab
+    // complete). The inbound_claim handler fires when the runtime
+    // routes a matching inbound to us.
+    //
+    // Wrapped in try/catch so a runtime missing registerCommand (older
+    // OpenClaw versions or non-standard channel providers) doesn't
+    // crash the whole plugin load — degrades to "inbound_claim
+    // listener only" which still works on channels that pass `/share`
+    // as a regular message + set commandAuthorized=true based on
+    // text prefix matching.
+    try {
+      type RegisterCommandFn = (cmd: {
+        name: string;
+        description: string;
+        nativeNames?: { default?: string };
+      }) => void;
+      const reg = (
+        api as unknown as { registerCommand?: RegisterCommandFn }
+      ).registerCommand;
+      if (typeof reg === "function") {
+        reg.call(api, {
+          name: "share",
+          description:
+            "Get a verifiable receipt URL for your last agent action (or `/share <tokenId>`).",
+        });
+      }
+    } catch (cause) {
+      structuredLog("WARN", "register", "registerCommand(share) failed; falling back to inbound_claim text-match only", {
+        cause: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+    // api.on() is overloaded by event name; the inbound_claim variant
+    // expects a different ctx than the message hooks we already use.
+    // Cast through a permissive intersection so TS picks the right
+    // overload without us depending on internal SDK types.
+    (api.on as unknown as (
+      name: "inbound_claim",
+      handler: (event: {
+        content?: unknown;
+        commandAuthorized?: unknown;
+        args?: unknown;
+      }) => { handled: boolean; reply?: { text: string } } | undefined,
+    ) => void)("inbound_claim", (event) => {
+      const isOurCommand =
+        event.commandAuthorized === true ||
+        (typeof event.content === "string" &&
+          /^\s*\/share(\s|$)/i.test(event.content));
+      if (!isOurCommand) return { handled: false };
+      return handleShareCommand(
+        {
+          keystore: state.keystore,
+          verifyUrlBase: state.config.verifyUrlBase,
+        },
+        event,
+      );
     });
 
     structuredLog("INFO", "register", "Plugin loaded with full runtime state", {

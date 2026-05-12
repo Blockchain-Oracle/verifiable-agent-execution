@@ -128,15 +128,16 @@ describe("verifiable-execution plugin — shape", () => {
 // ---------------------------------------------------------------------------
 
 describe("register() — happy path with full config", () => {
-  it("registers all 6 capture+anchor hooks via api.on", () => {
+  it("registers all 7 hooks via api.on (v0.3.0: + inbound_claim for /share)", () => {
     const { api, onSpy } = makeFakeApi(FULL_CONFIG);
     plugin.register(api);
 
-    // v0.2.0: 6 hooks (evermemos-style set).
+    // v0.3.0: 7 hooks.
     //   Capture (4): message_received, before_prompt_build,
     //                after_tool_call, llm_output
     //   Anchor (2):  session_end, agent_end
-    expect(onSpy).toHaveBeenCalledTimes(6);
+    //   Command (1): inbound_claim — routes /share to handleShareCommand
+    expect(onSpy).toHaveBeenCalledTimes(7);
     const events = onSpy.mock.calls.map((call) => call[0]);
     expect(events).toEqual(
       expect.arrayContaining([
@@ -146,6 +147,7 @@ describe("register() — happy path with full config", () => {
         "llm_output",
         "session_end",
         "agent_end",
+        "inbound_claim",
       ]),
     );
   });
@@ -181,14 +183,13 @@ describe("register() — degraded mode on missing config", () => {
     expect(() => plugin.register(api)).not.toThrow();
   });
 
-  it("still registers all 6 hooks in degraded mode (so OpenClaw sees the plugin as healthy)", () => {
+  it("still registers all 7 hooks in degraded mode (so OpenClaw sees the plugin as healthy)", () => {
     const { api, onSpy } = makeFakeApi({});
     plugin.register(api);
-    // Same number of hooks registered, same event names — only the
-    // handler bodies differ (no-op vs real). This keeps the plugin
-    // surface consistent so an operator can fix config + restart
-    // without re-reading the registration log.
-    expect(onSpy).toHaveBeenCalledTimes(6);
+    // v0.3.0: 7 hooks (same as happy path — config defaults make even
+    // {} a valid config). Empty-config still hits the full register
+    // path because resolveConfig fills Galileo defaults.
+    expect(onSpy).toHaveBeenCalledTimes(7);
     const events = onSpy.mock.calls.map((call) => call[0]);
     expect(events).toEqual(
       expect.arrayContaining([
@@ -198,6 +199,7 @@ describe("register() — degraded mode on missing config", () => {
         "llm_output",
         "session_end",
         "agent_end",
+        "inbound_claim",
       ]),
     );
   });
