@@ -16,7 +16,7 @@ restart.
 |---|---|---|
 | [OpenClaw CLI](https://openclaw.ai) (≥ 2026.5.0) | required | required |
 | Node.js 20+ | `brew install node@20` | use [`nvm`](https://github.com/nvm-sh/nvm) or `apt-get install nodejs` |
-| pnpm 9+ | `npm i -g pnpm` | `npm i -g pnpm` |
+| pnpm 9+ (optional) | `npm i -g pnpm` | `npm i -g pnpm` |
 | `jq` | `brew install jq` | `apt-get install jq` |
 | `git` | preinstalled | `apt-get install git` |
 | Funded 0G testnet wallet | claim 0.1 0G/day at [faucet.0g.ai](https://faucet.0g.ai) | same |
@@ -38,7 +38,9 @@ openclaw gateway restart
 
 `./install.sh` handles `pnpm install --frozen-lockfile` for you —
 the plugin imports `ethers` and our chain client, so workspace deps
-have to be on disk before OpenClaw's jiti loader can load us.
+have to be on disk before OpenClaw's jiti loader can load us. If
+`pnpm` isn't on your PATH the installer falls back to `npx -y
+pnpm@9.15.4`, so the only hard runtime requirement is Node.js 20+.
 
 The script is idempotent — re-run as many times as you like; it
 never clobbers an existing `agentId` you've set.

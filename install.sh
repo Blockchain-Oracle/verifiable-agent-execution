@@ -62,11 +62,24 @@ command -v openclaw >/dev/null 2>&1 \
 command -v jq >/dev/null 2>&1 \
   || fail "'jq' not found. Install it with 'brew install jq' (mac) or 'apt-get install jq' (ubuntu)."
 
-command -v pnpm >/dev/null 2>&1 \
-  || fail "'pnpm' not found. Install with 'npm i -g pnpm' or 'corepack enable'."
+# We pin to pnpm@9.15.4 (matches root package.json `packageManager`). If
+# pnpm isn't on PATH we shell out via `npx -y pnpm@9.15.4` — npx ships
+# with every Node install, so the only hard requirement is Node 20+.
+# This removes the "I only have npm" friction without committing us to
+# maintaining a second lockfile (npm and pnpm produce different
+# workspace symlink layouts; one source-of-truth is safer).
+if command -v pnpm >/dev/null 2>&1; then
+  PNPM_CMD=(pnpm)
+  PKG_MGR_LABEL="pnpm $(pnpm --version) (system)"
+else
+  command -v npx >/dev/null 2>&1 \
+    || fail "'npx' not found — install Node.js 20+ from https://nodejs.org (npx ships with it)."
+  PNPM_CMD=(npx -y pnpm@9.15.4)
+  PKG_MGR_LABEL="pnpm@9.15.4 via npx (system pnpm not found)"
+fi
 
 ok "openclaw $(openclaw --version 2>/dev/null | head -1 || echo '?')"
-ok "pnpm $(pnpm --version)"
+ok "$PKG_MGR_LABEL"
 ok "jq $(jq --version)"
 ok "plugin source: $PLUGIN_DIR"
 
@@ -76,7 +89,7 @@ ok "plugin source: $PLUGIN_DIR"
 # evermemos (zero runtime deps), we have a chain client to bring along.
 echo
 info "Step 0/3 — installing workspace dependencies"
-( cd "$SCRIPT_DIR" && pnpm install --frozen-lockfile 2>&1 | tail -5 | sed 's/^/    /' )
+( cd "$SCRIPT_DIR" && "${PNPM_CMD[@]}" install --frozen-lockfile 2>&1 | tail -5 | sed 's/^/    /' )
 ok "deps installed"
 
 # ── Step 1: link the plugin via OpenClaw CLI ─────────────────────────────────
