@@ -114,28 +114,13 @@ info "Step 0b/3 — building self-contained plugin bundle"
   || fail "Bundle missing openclaw.plugin.json at $PLUGIN_DIR"
 ok "bundled to $PLUGIN_DIR"
 
-# ── Step 1: link the bundled plugin into OpenClaw ────────────────────────────
+# ── Step 1: seed config FIRST (openclaw validates on install) ────────────────
+# OpenClaw 2026.4.25 runs configSchema validation against the existing
+# entry as part of `plugins install`. If the block is missing, install
+# fails with "must have required property 'rpcUrl'…". So we patch the
+# config block BEFORE linking.
 echo
-info "Step 1/3 — linking plugin into OpenClaw"
-if openclaw plugins install --link "$PLUGIN_DIR" 2>&1 | sed 's/^/    /'; then
-  ok "linked $PLUGIN_ID"
-else
-  fail "'openclaw plugins install --link' failed — see output above"
-fi
-
-# ── Step 2: enable the plugin ────────────────────────────────────────────────
-echo
-info "Step 2/3 — enabling plugin"
-if openclaw plugins enable "$PLUGIN_ID" 2>&1 | sed 's/^/    /'; then
-  ok "enabled $PLUGIN_ID"
-else
-  # Non-fatal — may already be enabled from a previous run.
-  warn "'openclaw plugins enable' exited non-zero (probably already enabled)"
-fi
-
-# ── Step 3: seed ~/.openclaw/openclaw.json config block ──────────────────────
-echo
-info "Step 3/3 — seeding ~/.openclaw/openclaw.json with network defaults"
+info "Step 1/3 — seeding ~/.openclaw/openclaw.json with network defaults"
 
 mkdir -p "$(dirname "$OPENCLAW_CONFIG")"
 [ -f "$OPENCLAW_CONFIG" ] || echo '{}' > "$OPENCLAW_CONFIG"
@@ -188,6 +173,27 @@ jq \
 
 mv "$TMP" "$OPENCLAW_CONFIG"
 ok "patched $OPENCLAW_CONFIG (backup: $BACKUP)"
+
+# ── Step 2: link the bundled plugin into OpenClaw ────────────────────────────
+# The dist-plugin/ output is self-contained (esbuild inlined every npm
+# dep) so OpenClaw's symlink-outside-install-root safety scan passes.
+echo
+info "Step 2/3 — linking plugin into OpenClaw"
+if openclaw plugins install --link "$PLUGIN_DIR" 2>&1 | sed 's/^/    /'; then
+  ok "linked $PLUGIN_ID"
+else
+  fail "'openclaw plugins install --link' failed — see output above"
+fi
+
+# ── Step 3: enable the plugin ────────────────────────────────────────────────
+echo
+info "Step 3/3 — enabling plugin"
+if openclaw plugins enable "$PLUGIN_ID" 2>&1 | sed 's/^/    /'; then
+  ok "enabled $PLUGIN_ID"
+else
+  # Non-fatal — may already be enabled from a previous run.
+  warn "'openclaw plugins enable' exited non-zero (probably already enabled)"
+fi
 
 # ── Footer — what the user does next ─────────────────────────────────────────
 EXISTING_AGENT_ID="$(jq -r ".plugins.entries.\"$PLUGIN_ID\".config.agentId // \"\"" "$OPENCLAW_CONFIG")"
