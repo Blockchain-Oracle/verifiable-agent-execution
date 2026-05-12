@@ -45,6 +45,7 @@
 import {
   Contract,
   JsonRpcProvider,
+  recoverAddress,
   type Provider,
 } from "ethers";
 
@@ -510,36 +511,61 @@ export async function verifyOneEntry(
   }
   const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
   const digest = signingMessageDigestFromString(message);
-  let ok: boolean;
+
+  // v0.2.0 verification model: agent's OWN wallet is the trusted
+  // signer for ITS entries. We `ecrecover` locally and check the
+  // result against `entry.agentId`. Falls back to the legacy
+  // MockTEEVerifier.verifyTEESignature path (which checks against a
+  // GLOBAL teeOracleAddress) only when recovery doesn't match agentId
+  // — that handles the SYNTHETIC demo (token 0) which is signed by
+  // the deployer wallet, not by an agent-bound key. New plugin-
+  // captured entries (token 1+) verify in-process; legacy/demo entries
+  // still go through the on-chain verifier as before.
+  let ok = false;
+  let reason: string | undefined;
   try {
-    ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
-  } catch (cause) {
-    const code = (cause as { code?: string } | null)?.code;
-    const reason = (cause as { reason?: string | null } | null)?.reason;
-    if (code === "CALL_EXCEPTION" && typeof reason === "string" && reason.length > 0) {
-      console.error(
-        "[verify-proof] verifier reverted on entry %d: %s",
-        entry.seq,
-        reason,
-      );
-      return {
-        seq: entry.seq,
-        verified: "unverified",
-        reason,
-        durationMs: Date.now() - start,
-      };
+    const recovered = recoverAddress(digest, entry.teeSignature);
+    if (recovered.toLowerCase() === entry.agentId.toLowerCase()) {
+      ok = true;
     }
-    const message = cause instanceof Error ? cause.message : String(cause);
-    throw new ProofResolutionError({
-      status: 502,
-      code: "VERIFIER_CALL_FAILED",
-      message: `Verifier RPC call failed for entry ${entry.seq} (${code ?? "unknown code"}): ${message}`,
-      cause,
-    });
+  } catch (cause) {
+    // Bad signature shape — falls through to the verifier contract
+    // which may still consider it valid under its own rules.
+    reason = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  if (!ok) {
+    try {
+      ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
+    } catch (cause) {
+      const code = (cause as { code?: string } | null)?.code;
+      const revertReason = (cause as { reason?: string | null } | null)?.reason;
+      if (code === "CALL_EXCEPTION" && typeof revertReason === "string" && revertReason.length > 0) {
+        console.error(
+          "[verify-proof] verifier reverted on entry %d: %s",
+          entry.seq,
+          revertReason,
+        );
+        return {
+          seq: entry.seq,
+          verified: "unverified",
+          reason: revertReason,
+          durationMs: Date.now() - start,
+        };
+      }
+      const errMessage = cause instanceof Error ? cause.message : String(cause);
+      throw new ProofResolutionError({
+        status: 502,
+        code: "VERIFIER_CALL_FAILED",
+        message: `Verifier RPC call failed for entry ${entry.seq} (${code ?? "unknown code"}): ${errMessage}`,
+        cause,
+      });
+    }
   }
   return {
     seq: entry.seq,
     verified: ok ? "verified" : "unverified",
+    ...(reason !== undefined && !ok ? { reason } : {}),
     durationMs: Date.now() - start,
   };
 }
@@ -581,11 +607,26 @@ async function computeVerificationStatus(
     // response body, lowercase hex no 0x prefix — that's what
     // agent-wrapper writes into the signing message per the upstream
     // Go convention; see tee-adapter/signing-message.ts).
+    // entriesWithSigs filter above guarantees teeSignature is defined;
+    // narrow it for TypeScript via a local const.
+    const teeSignature = entry.teeSignature;
+    if (teeSignature === undefined) continue; // unreachable, satisfies TS
     const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
     const digest = signingMessageDigestFromString(message);
-    let ok: boolean;
+    // v0.2.0: try local ecrecover first; fall back to the on-chain
+    // verifier for legacy entries signed by an off-agent oracle.
+    let ok = false;
     try {
-      ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
+      const recovered = recoverAddress(digest, teeSignature);
+      if (recovered.toLowerCase() === entry.agentId.toLowerCase()) {
+        ok = true;
+      }
+    } catch {
+      // Falls through to verifier contract.
+    }
+    if (ok) continue;
+    try {
+      ok = (await verifier.verifyTEESignature(digest, teeSignature)) as boolean;
     } catch (cause) {
       // Discriminate verifier-said-no from infrastructure-failure.
       //
