@@ -1263,14 +1263,20 @@ export default {
       // doesn't set commandAuthorized, /share simply doesn't fire,
       // which is the safe default. Operators should upgrade OpenClaw.
       if (event.commandAuthorized !== true) return { handled: false };
-      // Defense in depth: confirm the inbound matches /share. The
-      // OpenClaw command router SHOULD only route /share matches to
-      // us via this hook, but a misconfigured channel provider could
-      // forward unrelated inbound. Check the text or args.
+      // SECURITY (Codex round-8 P1): the share-command discriminator
+      // MUST be the command name, not the presence of args. Earlier
+      // we accepted `Array.isArray(event.args)` as a "Discord-style
+      // slash command" hint, but `inbound_claim` is dispatched for
+      // ANY registered command — if the operator also registered
+      // /upload, /summarize, etc., an authorized non-share command
+      // with args would route here and leak a receipt URL. Tighten
+      // to require `content` to start with `/share` (case-insensitive).
+      // Channels that pre-split args without providing the raw text
+      // need to set `content` to "/share" too — handleShareCommand
+      // still consumes `event.args` once routed here.
       const isShareCommand =
-        (typeof event.content === "string" &&
-          /^\s*\/share(\s|$)/i.test(event.content)) ||
-        Array.isArray(event.args);
+        typeof event.content === "string" &&
+        /^\s*\/share(\s|$)/i.test(event.content);
       if (!isShareCommand) return { handled: false };
       return handleShareCommand(
         {

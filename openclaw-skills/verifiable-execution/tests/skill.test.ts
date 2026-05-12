@@ -233,6 +233,37 @@ describe("register() — inbound_claim authorization gate", () => {
     expect(result.handled).toBe(false);
     expect(result.reply).toBeUndefined();
   });
+
+  // Codex round-8 P1: previously the gate accepted `Array.isArray(args)`
+  // as a "Discord-style slash command" hint. OpenClaw dispatches
+  // inbound_claim for ANY registered command — if the operator also
+  // registers /upload, /summarize, etc., an authorized non-share
+  // command with args would route here and leak a receipt URL.
+  // Tightened to require `content` to start with `/share`.
+  it("rejects an authorized command with args[] but non-/share content (no args-only bypass)", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({
+      content: "/upload file.png",
+      commandAuthorized: true,
+      args: ["file.png"],
+    }) ?? { handled: false };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it("rejects an authorized event with ONLY args[] and no /share content", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({
+      commandAuthorized: true,
+      args: ["42"],
+    }) ?? { handled: false };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import { createCipheriv, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  checkDecryptedConsistency,
   decryptSessionLog,
   isEncryptedEnvelope,
   shareStringToKey,
@@ -112,6 +113,60 @@ describe("EncryptedReveal client flow — WebCrypto decrypt path", () => {
     expect(isEncryptedEnvelope({ hello: "world" })).toBe(false);
     expect(isEncryptedEnvelope(null)).toBe(false);
     expect(isEncryptedEnvelope("string")).toBe(false);
+  });
+});
+
+// Codex round-8 P1: encrypted-mode client decryption must verify the
+// decrypted body matches the server-anchored metadata. Otherwise an
+// attacker who controls 0G Storage could swap the envelope after
+// mint and the dashboard would render a valid-looking proof for the
+// wrong sessionId.
+describe("checkDecryptedConsistency — decrypted-body vs anchored-metadata", () => {
+  const OK_SESSION = "agent:core:telegram:direct:8028166336";
+
+  it("returns null when sessionId + entryCount agree", () => {
+    expect(
+      checkDecryptedConsistency(
+        { sessionId: OK_SESSION, entryCount: 2, entries: [{}, {}] },
+        { sessionId: OK_SESSION },
+      ),
+    ).toBeNull();
+  });
+
+  it("flags sessionId mismatch with a copy-paste-clear error", () => {
+    const err = checkDecryptedConsistency(
+      { sessionId: "ses_b", entryCount: 1, entries: [{}] },
+      { sessionId: "ses_a" },
+    );
+    expect(err).toMatch(/sessionId mismatch/);
+    expect(err).toContain("ses_a");
+    expect(err).toContain("ses_b");
+  });
+
+  it("flags entryCount drift (header disagrees with array length)", () => {
+    const err = checkDecryptedConsistency(
+      { sessionId: OK_SESSION, entryCount: 5, entries: [{}] },
+      { sessionId: OK_SESSION },
+    );
+    expect(err).toMatch(/entryCount mismatch/);
+  });
+
+  it("flags missing entries array", () => {
+    expect(
+      checkDecryptedConsistency(
+        { sessionId: OK_SESSION, entryCount: 0 },
+        { sessionId: OK_SESSION },
+      ),
+    ).toMatch(/entries array/);
+  });
+
+  it("flags missing/non-string sessionId", () => {
+    expect(
+      checkDecryptedConsistency(
+        { entryCount: 0, entries: [] },
+        { sessionId: "x" },
+      ),
+    ).toMatch(/missing sessionId/);
   });
 });
 

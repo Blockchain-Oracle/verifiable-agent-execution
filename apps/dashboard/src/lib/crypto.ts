@@ -174,6 +174,50 @@ export async function decryptSessionLog(
 }
 
 /**
+ * Validate that a client-decrypted SessionLog is consistent with the
+ * server-side metadata anchored on AgenticID. Without this check, an
+ * encrypted receipt whose anchored `dataDescription` claims sessionId
+ * "ses_alpha" but whose decrypted body says "ses_beta" would render
+ * as a valid proof — the cryptographic chain is intact, but the
+ * IDENTITY chain (token → exec-log:sessionId → blob.sessionId) is not.
+ * The plaintext server path already enforces this via SESSION_ID_MISMATCH
+ * (verify-proof.ts:378). Codex round-8 caught that the encrypted-mode
+ * client path skipped the equivalent check; this helper closes that gap.
+ *
+ * Returns `null` on success (consistent) or an error message string
+ * naming the specific mismatch.
+ */
+export function checkDecryptedConsistency(
+  decrypted: { sessionId?: unknown; entryCount?: unknown; entries?: unknown },
+  metadata: { sessionId: string },
+): string | null {
+  if (typeof decrypted.sessionId !== "string") {
+    return "Decrypted payload missing sessionId.";
+  }
+  if (decrypted.sessionId !== metadata.sessionId) {
+    return (
+      `sessionId mismatch: server anchored "${metadata.sessionId}" but ` +
+      `decrypted body says "${decrypted.sessionId}". Either the wrong ` +
+      `key was used or the receipt's storage anchor is inconsistent with ` +
+      `its on-chain dataDescription.`
+    );
+  }
+  if (!Array.isArray(decrypted.entries)) {
+    return "Decrypted payload missing entries array.";
+  }
+  if (
+    typeof decrypted.entryCount === "number" &&
+    decrypted.entryCount !== decrypted.entries.length
+  ) {
+    return (
+      `entryCount mismatch: header says ${String(decrypted.entryCount)} ` +
+      `but entries array has ${decrypted.entries.length.toString()}.`
+    );
+  }
+  return null;
+}
+
+/**
  * Decode a base64url share-link key string back to raw 32 bytes.
  * Browser-safe (no `Buffer`).
  *

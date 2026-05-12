@@ -29,6 +29,7 @@ import { Mono } from "@/components/Mono";
 import { SessionView } from "@/components/SessionView";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
+  checkDecryptedConsistency,
   decryptSessionLog,
   isEncryptedEnvelope,
   shareStringToKey,
@@ -108,12 +109,17 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
         const key = shareStringToKey(keyStr);
         const plaintextJson = await decryptSessionLog(envelope, key);
         const decoded = JSON.parse(plaintextJson) as DecodedSessionLog;
-        if (
-          typeof decoded !== "object" ||
-          decoded === null ||
-          !Array.isArray(decoded.entries)
-        ) {
-          throw new Error("Decrypted payload missing entries array.");
+        // Integrity check (Codex round-8 P1): the decrypted body must
+        // agree with the server's anchored metadata. Otherwise an
+        // attacker who controls 0G Storage could swap the envelope's
+        // sessionId after mint — the cryptographic chain still
+        // verifies but the identity chain (token → dataDescription
+        // → blob.sessionId) would be broken silently.
+        const integrity = checkDecryptedConsistency(decoded, {
+          sessionId: initialProof.sessionId,
+        });
+        if (integrity !== null) {
+          throw new Error(integrity);
         }
         // Synthesize a ProofResponse so SessionView can render. We
         // keep the server-provided metadata (rootHash, explorer URLs,
