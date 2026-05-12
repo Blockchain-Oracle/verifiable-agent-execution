@@ -135,17 +135,21 @@ export function handleShareCommand(
  *   - explicit "last" keyword: `/share last` → null (use last)
  *   - empty content: null (use last)
  *
- * NOTE (Codex round-9, partial accept): handleShareCommand reads
- * `event.args[0]` when present — that path was added for Discord-style
- * channels that pre-split slash-command args. The registered
- * `inbound_claim` handler in src/index.ts gates entry on
- * `content.startsWith("/share")` to prevent OTHER authorized commands
- * (e.g. `/upload`) from accidentally routing here. Channels that
- * dispatch authorized /share events without raw content must also
- * pass `content: "/share"` for the v0.3.0 cycle — making the gate
- * "command-name-aware" would require a `command` field on the
- * inbound event that OpenClaw 2026.4.x doesn't surface. Tracked
- * for v0.4.0.
+ * NOTE (Codex rounds 6-13 resolution): handleShareCommand reads
+ * `event.args[0]` when present, but the registered `inbound_claim`
+ * handler in src/index.ts requires BOTH `commandAuthorized === true`
+ * AND `content.startsWith("/share")` before routing here. The OpenClaw
+ * SDK type PluginHookInboundClaimEvent
+ * (/tmp/openclaw-src/src/plugins/hook-message.types.ts:26) lacks a
+ * `command` / `commandName` field, so plugins must self-discriminate
+ * by content text — otherwise OpenClaw can dispatch ANY authorized
+ * inbound to all plugins listening on inbound_claim, and
+ * getLast()-fallback would leak the most-recent receipt's URL via
+ * an unrelated command like /upload. Discord-style channels that
+ * pre-split slash-command args MUST also pass `content: "/share"`
+ * or `"/share <tokenId>"` — pure args-only events are intentionally
+ * rejected in v0.3.0 and tracked as v0.4.0 scope (would require
+ * wiring ctx.pluginBinding like the stock codex plugin does).
  */
 function parseTokenIdArg(event: ShareCommandEvent): string | null {
   // 1. structured args (channel pre-split — Discord slash command etc.)

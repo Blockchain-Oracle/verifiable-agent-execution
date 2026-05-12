@@ -222,28 +222,56 @@ describe("register() — inbound_claim authorization gate", () => {
     expect(result?.reply?.text).toMatch(/no receipts yet/i);
   });
 
-  // Codex round-11 reconciled (replacing round-8 paranoia): the stock
-  // OpenClaw codex plugin
-  // (/tmp/openclaw-src/extensions/codex/src/conversation-binding.ts:143)
-  // demonstrates that OpenClaw 2026.4.x routes inbound_claim PER
-  // registered command — a plugin's handler only fires for ITS own
-  // command name. So a Discord-style "args-only" /share event is
-  // (a) valid and (b) safely distinct from /upload or /summarize.
-  // Trust the runtime; only check commandAuthorized.
-  it("accepts an authorized structured (args-only) /share event — channel pre-split args", () => {
+  // Codex round-13 FINAL (this is round 7 of the args-only oscillation):
+  // The SDK type PluginHookInboundClaimEvent
+  // (/tmp/openclaw-src/src/plugins/hook-message.types.ts:26) has NO
+  // command/commandName field. OpenClaw can dispatch any authorized
+  // inbound to ALL plugins listening on inbound_claim; the stock
+  // codex plugin discriminates via ctx.pluginBinding (which we don't
+  // wire up). Without that signal, handleShareCommand falls through
+  // to getLast() and would leak the most-recent receipt's URL to a
+  // stranger typing /upload, /summarize, etc.
+  //
+  // Restored: text content gate (`/^\s*\/share/i`). Discord-style
+  // pre-split args without raw content are unsupported in v0.3.0 —
+  // channels must also pass `content: "/share"` or `"/share <id>"`.
+  it("rejects an authorized non-/share inbound (defense in depth: no last-receipt leak via /upload etc.)", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({
+      content: "/upload file.png",
+      commandAuthorized: true,
+      args: ["file.png"],
+    }) ?? { handled: false };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it("rejects an authorized event with args[] only (no /share content) — args-only Discord shape unsupported in v0.3.0", () => {
     const { api, onSpy } = makeFakeApi(FULL_CONFIG);
     plugin.register(api);
     const handler = getInboundClaimHandler(onSpy);
     const result = handler({
       commandAuthorized: true,
       args: ["42"],
+    }) ?? { handled: false };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it("accepts /share <tokenId> when content is present AND args are pre-split", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({
+      content: "/share 42",
+      commandAuthorized: true,
+      args: ["42"],
     });
-    // handleShareCommand reads args[0] as the tokenId. The keystore is
-    // empty in this fresh test, so the friendly "no key on host"
-    // reply fires — the gate let the handler through, which is what
-    // we're pinning.
     expect(result?.handled).toBe(true);
-    expect(result?.reply?.text).toMatch(/No key on this host/i);
+    // No key for tokenId 42 in fresh keystore → friendly reply.
+    expect(result?.reply?.text).toMatch(/No key on this host for tokenId 42/i);
   });
 
 });

@@ -1285,25 +1285,36 @@ export default {
         args?: unknown;
       }) => { handled: boolean; reply?: { text: string } } | undefined,
     ) => void)("inbound_claim", (event) => {
-      // SECURITY (Codex round-6 + round-11 reconciled): require
-      // commandAuthorized === true MANDATORY. Trust OpenClaw's runtime
-      // to route inbound_claim PER REGISTERED COMMAND — the stock
-      // codex plugin (/tmp/openclaw-src/extensions/codex/src/conversation-binding.ts:143)
-      // confirms this pattern: it checks commandAuthorized then runs
-      // its handler with no command-name discrimination, because
-      // OpenClaw 2026.4.x only fires inbound_claim for the plugin's
-      // own registered command name.
+      // SECURITY (Codex round-6 + round-13 final): require BOTH
+      // commandAuthorized === true AND content.startsWith("/share").
       //
-      // The earlier text-prefix guard (round-6 `content.startsWith("/share")`)
-      // was defensive paranoia against a hypothetical broad-dispatch
-      // runtime, but it broke Discord-style channels that send
-      // structured args without raw content (round-9/10/11). Dropping
-      // it lets `handleShareCommand` read `event.args[0]` cleanly when
-      // present. If a future runtime DOES broad-dispatch inbound_claim,
-      // we get spurious /share replies — much milder than the
-      // original key-in-URL leak (round-1) since the share URL no
-      // longer carries the key via auto-log (round-9).
+      // After cross-checking the OpenClaw SDK type
+      // (/tmp/openclaw-src/src/plugins/hook-message.types.ts:26),
+      // PluginHookInboundClaimEvent has NO `command` / `commandName`
+      // field — only `content`, `body`, `bodyForAgent`, and
+      // `commandAuthorized`. The stock codex plugin
+      // (/tmp/openclaw-src/extensions/codex/src/conversation-binding.ts:143)
+      // discriminates via `ctx.pluginBinding`, which we haven't wired
+      // up. Without it, OpenClaw can dispatch ANY authorized inbound
+      // to ALL plugins that registered an inbound_claim listener —
+      // and `handleShareCommand` falls back to `getLast()` when no
+      // args/content are present, leaking the most-recent receipt's
+      // share URL to a stranger sending `/upload` etc.
+      //
+      // Round-11 round-tripped through "trust the runtime" based on
+      // pattern-matching the stock plugin; round-13 caught the
+      // real-world implication. Restoring the content gate:
+      //
+      // Trade-off: Discord-style channels that pre-split slash-command
+      // args without raw content are NOT supported in v0.3.0 — they
+      // must ALSO pass `content: "/share"`. handleShareCommand's
+      // `event.args[0]` parser still runs once routed here, so an
+      // event with `content: "/share"` AND `args: ["42"]` works.
       if (event.commandAuthorized !== true) return { handled: false };
+      const isShareCommand =
+        typeof event.content === "string" &&
+        /^\s*\/share(\s|$)/i.test(event.content);
+      if (!isShareCommand) return { handled: false };
       return handleShareCommand(
         {
           keystore: state.keystore,
