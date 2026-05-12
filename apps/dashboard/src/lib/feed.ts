@@ -65,10 +65,22 @@ const CEILING_TTL_MS = 30_000;
 const AGENTICID_FEED_ABI = [
   "function getIntelligentDatas(uint256 tokenId) view returns ((string dataDescription, bytes32 dataHash)[])",
   "function ownerOf(uint256 tokenId) view returns (address)",
-  // Older AgenticID example contracts expose `_nextTokenId` only as
-  // an internal var; the deployed example exposes a public getter.
-  // Fallback strategy: probe a high ceiling if the call reverts.
+  // Ceiling-resolution chain (cheapest first, most expensive last):
+  //   1. _nextTokenId() — public getter on newer AgenticID variants.
+  //      Reverts on our Epic-7 deploys (which use the upstream
+  //      `agenticID-examples/01` source where it's private).
+  //   2. totalSupply() — ERC-721 standard, exposed by every AgenticID
+  //      variant since it inherits from OpenZeppelin's ERC721Enumerable.
+  //      Returns the COUNT of minted tokens. For sequentially-minted
+  //      ids starting at 0 this equals (nextTokenId), so latest = N - 1.
+  //   3. binarySearchLatestTokenId — last-resort 16-32 RPC walk if
+  //      both reverted. The old default before adding totalSupply()
+  //      fallback (which made the dashboard cold-start 30s+ on every
+  //      cache miss). VPS E2E 2026-05-12: confirmed _nextTokenId()
+  //      reverts on 0xd4a5eA…0E38, dashboard binary-searched every
+  //      uncached request.
   "function _nextTokenId() view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
 ] as const;
 
 export interface FeedRow {
@@ -168,7 +180,16 @@ async function resolveCeiling(
     const next = (await contract._nextTokenId()) as bigint;
     latest = next - 1n;
   } catch {
-    latest = await binarySearchLatestTokenId(contract);
+    // Fall to ERC-721 totalSupply() before the binary search — that's
+    // a single RPC call and works on every standard AgenticID variant.
+    // We only hit binarySearchLatestTokenId for non-enumerable forks
+    // where neither getter is exposed.
+    try {
+      const supply = (await contract.totalSupply()) as bigint;
+      latest = supply > 0n ? supply - 1n : 0n;
+    } catch {
+      latest = await binarySearchLatestTokenId(contract);
+    }
   }
   cachedCeiling = { value: latest, at: now };
   return latest - offset;
