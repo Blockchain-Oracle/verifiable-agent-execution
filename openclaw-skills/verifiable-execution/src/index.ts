@@ -45,7 +45,7 @@
 
 import { createHash } from "node:crypto";
 
-import { Wallet } from "ethers";
+import { JsonRpcProvider, Wallet } from "ethers";
 import {
   Indexer,
 } from "@0gfoundation/0g-storage-ts-sdk";
@@ -161,10 +161,16 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
     });
   }
 
-  // Wallet without a connected provider — StorageClient internally
-  // wires the rpcUrl to its 0G Storage upload signer; AgenticIDClient
-  // gets the signer + an explicit JsonRpcProvider via fromRpc().
-  const storageSigner = new Wallet(wallet.privateKey);
+  // Storage signer needs a provider attached — ethers v6.13 throws
+  // `missing provider (UNSUPPORTED_OPERATION)` on ANY chain call
+  // (including `eth_getTransactionCount` that StorageClient does to
+  // build its upload tx). Discovered on VPS E2E v0.1.3: anchor.anchor()
+  // reached AGEND_ANCHORING, then threw `StorageUploadError: Upload
+  // threw instead of returning [result, err]: missing provider`.
+  // Pre-v0.1.4 used `new Wallet(privateKey)` (no provider) which only
+  // worked in tests because the test fixtures don't actually upload.
+  const storageProvider = new JsonRpcProvider(config.rpcUrl);
+  const storageSigner = new Wallet(wallet.privateKey, storageProvider);
 
   const indexer = new Indexer(config.indexerUrl);
   const storageClient = new StorageClient({
