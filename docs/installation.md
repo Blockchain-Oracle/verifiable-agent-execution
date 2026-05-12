@@ -32,10 +32,13 @@ openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
 # OpenClaw 2026.4.25 with "protocol specs are not allowed". The bare
 # spec resolves through ClawHub which proxies the same npm registry.)
 
-# After install, you MUST also allowlist the plugin id OR the gateway
-# silently won't dispatch events to it (the plugin LOADS but never
-# fires hooks). One-liner:
-jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)' \
+# After install, you MUST also (a) allowlist the plugin id AND
+# (b) grant conversation access — OpenClaw has TWO permission gates
+# for non-bundled plugins, and skipping either leaves the plugin in
+# a silent no-op state. Combined one-liner:
+jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)
+    | .plugins.entries."verifiable-execution".hooks //= {}
+    | .plugins.entries."verifiable-execution".hooks.allowConversationAccess = true' \
   ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
 openclaw gateway restart
 ```
@@ -185,24 +188,35 @@ openclaw plugins list
 > immediately, kill the gateway process: `pkill -TERM -f 'openclaw'`
 > — supervisor will restart it.
 
-**Allowlist (REQUIRED — not optional):** OpenClaw 2026.4.25 silently
-quarantines event dispatch for "non-bundled discovered" plugins
-unless their id is in `plugins.allow`. The plugin will install and
-appear as enabled in `openclaw plugins list`, but its `api.on()`
-handlers will never receive events — so no anchor will ever happen.
+**Two permission gates (BOTH REQUIRED — discovered on VPS E2E):**
+OpenClaw 2026.4.25 has two independent gates that block non-bundled
+plugins from working until the operator explicitly opts in. Each
+gate fails silently — the plugin loads, registers, appears in
+`plugins list` as enabled, but its hooks never receive events.
 
-`./install.sh` adds the allowlist entry automatically. If you
-installed via raw `openclaw plugins install <pkg>` (skipping the
-script), you must run this yourself:
+| Gate | What it blocks | Where to set |
+|---|---|---|
+| `plugins.allow` | Plugin loading + ANY event dispatch | top-level `plugins.allow: ["verifiable-execution"]` |
+| `hooks.allowConversationAccess` | Hooks that read message content (llm_output, agent_end, after_tool_call) | `plugins.entries.verifiable-execution.hooks.allowConversationAccess: true` |
+
+`./install.sh` sets both automatically. If you installed via raw
+`openclaw plugins install <pkg>` (skipping the script), run this
+yourself:
 
 ```bash
-jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)' \
+jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)
+    | .plugins.entries."verifiable-execution".hooks //= {}
+    | .plugins.entries."verifiable-execution".hooks.allowConversationAccess = true' \
   ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
 openclaw gateway restart
 ```
 
-Verify with `jq '.plugins.allow' ~/.openclaw/openclaw.json` — the
-output must include `"verifiable-execution"`.
+Verify with:
+
+```bash
+jq '.plugins.allow, .plugins.entries."verifiable-execution".hooks' ~/.openclaw/openclaw.json
+# Must output: ["verifiable-execution", ...] and {"allowConversationAccess": true}
+```
 
 ---
 

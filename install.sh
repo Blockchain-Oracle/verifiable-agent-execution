@@ -227,7 +227,20 @@ jq \
     # fire — the gateway sandboxes "non-bundled discovered" plugins by
     # default and only allowlisted ids get the event stream. We learned
     # this the hard way on the VPS E2E: 8 sessions, nonce 0, no anchor.
-    .plugins.allow = ((.plugins.allow // []) + [$pluginId] | unique)
+    .plugins.allow = ((.plugins.allow // []) + [$pluginId] | unique) |
+    # SECOND CRITICAL gate: OpenClaw blocks "conversation-reading" hooks
+    # (llm_output, agent_end, after_tool_call, message_received, ...) for
+    # non-bundled plugins unless the operator explicitly opts in. Without
+    # this, the gateway log shows:
+    #   "[plugins] typed hook \"llm_output\" blocked because non-bundled
+    #    plugins must set plugins.entries.<id>.hooks.allowConversationAccess=true"
+    # …and our anchor hooks never fire even though `plugins.allow` is set.
+    # This is the sane default — verifiable-execution genuinely reads the
+    # agent's responses to hash + attest them, so flipping the bit is the
+    # right answer; just doing it in code so operators don't hit two
+    # consecutive silent-no-op gates.
+    .plugins.entries[$pluginId].hooks //= {} |
+    .plugins.entries[$pluginId].hooks.allowConversationAccess = true
   ' "$OPENCLAW_CONFIG" > "$TMP"
 
 mv "$TMP" "$OPENCLAW_CONFIG"
