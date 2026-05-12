@@ -11,11 +11,11 @@
     ]
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
@@ -24,11 +24,12 @@
     "ethers": "~6.13.1"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.5.0"
+    "openclaw": ">=2026.4.25"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
     "@vitest/coverage-v8": "^2.0.0",
+    "esbuild": "^0.24.0",
     "openclaw": "^2026.5.4",
     "typescript": "^5.5.4",
     "vitest": "^2.0.0"

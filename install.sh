@@ -38,7 +38,13 @@ DEFAULT_MODEL_ID="${MODEL_ID:-claude-sonnet-4-6}"
 
 PLUGIN_ID="verifiable-execution"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$SCRIPT_DIR/openclaw-skills/$PLUGIN_ID"
+# Source (workspace) location — what we type-check + test against:
+PLUGIN_SRC_DIR="$SCRIPT_DIR/openclaw-skills/$PLUGIN_ID"
+# Bundled location — what we actually --link into OpenClaw. The bundle
+# is self-contained (esbuild inlines ethers + the 0G SDK + workspace
+# packages) so the install dir has no node_modules at all, which is
+# what OpenClaw's safety scan expects from a `--link` target.
+PLUGIN_DIR="$SCRIPT_DIR/dist-plugin/$PLUGIN_ID"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 
 # ── Pretty output helpers ────────────────────────────────────────────────────
@@ -54,8 +60,9 @@ echo " verifiable-agent-execution — OpenClaw plugin installer"
 echo "════════════════════════════════════════════════════════════════"
 echo
 
-[ -d "$PLUGIN_DIR" ] || fail "Plugin source not found at $PLUGIN_DIR"
-[ -f "$PLUGIN_DIR/openclaw.plugin.json" ] || fail "Missing $PLUGIN_DIR/openclaw.plugin.json"
+[ -d "$PLUGIN_SRC_DIR" ] || fail "Plugin source not found at $PLUGIN_SRC_DIR"
+[ -f "$PLUGIN_SRC_DIR/openclaw.plugin.json" ] || fail "Missing $PLUGIN_SRC_DIR/openclaw.plugin.json"
+[ -f "$PLUGIN_SRC_DIR/build.mjs" ] || fail "Missing build script at $PLUGIN_SRC_DIR/build.mjs"
 
 command -v openclaw >/dev/null 2>&1 \
   || fail "'openclaw' CLI not found in PATH. Install it from https://openclaw.ai"
@@ -83,27 +90,34 @@ ok "$PKG_MGR_LABEL"
 ok "jq $(jq --version)"
 ok "plugin source: $PLUGIN_DIR"
 
-# ── Step 0: install workspace deps so OpenClaw's jiti loader can resolve them
+# ── Step 0a: install workspace deps (so the build script can bundle them)
 # Our plugin imports `@verifiable-agent-execution/chain-client` (workspace:*)
-# and `ethers` — both need to be on disk before OpenClaw can load us. Unlike
-# evermemos (zero runtime deps), we have a chain client to bring along.
+# and `ethers` — both have to be on disk for esbuild to inline them.
 echo
-info "Step 0/3 — installing workspace dependencies"
+info "Step 0a/3 — installing workspace dependencies"
 ( cd "$SCRIPT_DIR" && "${PNPM_CMD[@]}" install --frozen-lockfile 2>&1 | tail -5 | sed 's/^/    /' )
 ok "deps installed"
 
-# ── Step 1: link the plugin via OpenClaw CLI ─────────────────────────────────
-#
-# `--dangerously-force-unsafe-install` is required because pnpm workspaces
-# put third-party deps in a shared `.pnpm/` store and symlink to them from
-# the plugin's `node_modules/`. OpenClaw's security scanner flags these
-# "symlink target outside install root" as a potential local-dev attack
-# vector — for our plugin it's just the normal pnpm workspace layout.
-# When we publish to npm (TODO post-hackathon) the tarball is flat and
-# this flag goes away. The plugin source is open & reviewable either way.
+# ── Step 0b: bundle the plugin into a self-contained dist
+# esbuild inlines ethers, the 0G storage SDK, and the workspace packages
+# into one ESM file at `dist-plugin/verifiable-execution/index.js`. The
+# dist dir has no `node_modules/` at all, which sidesteps OpenClaw's
+# symlink-outside-install-root safety scan that blocked our first `--link`
+# attempt on the VPS (the workspace dir's node_modules has pnpm-store
+# symlinks). This same dist is the artifact we npm-publish.
+echo
+info "Step 0b/3 — building self-contained plugin bundle"
+( cd "$PLUGIN_SRC_DIR" && "${PNPM_CMD[@]}" run build 2>&1 | tail -8 | sed 's/^/    /' )
+[ -f "$PLUGIN_DIR/index.js" ] \
+  || fail "Bundle build produced no index.js at $PLUGIN_DIR — see output above"
+[ -f "$PLUGIN_DIR/openclaw.plugin.json" ] \
+  || fail "Bundle missing openclaw.plugin.json at $PLUGIN_DIR"
+ok "bundled to $PLUGIN_DIR"
+
+# ── Step 1: link the bundled plugin into OpenClaw ────────────────────────────
 echo
 info "Step 1/3 — linking plugin into OpenClaw"
-if openclaw plugins install --link "$PLUGIN_DIR" --dangerously-force-unsafe-install 2>&1 | sed 's/^/    /'; then
+if openclaw plugins install --link "$PLUGIN_DIR" 2>&1 | sed 's/^/    /'; then
   ok "linked $PLUGIN_ID"
 else
   fail "'openclaw plugins install --link' failed — see output above"

@@ -1,6 +1,7 @@
 node_modules/
 .next/
 dist/
+dist-plugin/
 *.tsbuildinfo
 
 # Hardhat — `artifacts/`, `cache/`, `typechain-types/` (no slash in the
