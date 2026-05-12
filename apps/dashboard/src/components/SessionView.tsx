@@ -22,7 +22,7 @@
  * an interactive experiment.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import { EntryCard, type EntryStatus } from "./EntryCard";
@@ -73,7 +73,11 @@ export function SessionView({
   // omit it). SessionView only renders when entries are present — the
   // caller (page.tsx or EncryptedReveal-decrypted-state) is responsible
   // for not handing us a locked proof.
-  const entries = proof.entries ?? [];
+  //
+  // useMemo so the array identity is stable across renders (the verify
+  // cascade depends on it; without memoization the useCallback below
+  // would re-derive on every render and re-fire the badge cascade).
+  const entries = useMemo(() => proof.entries ?? [], [proof.entries]);
   const [statuses, setStatuses] = useState<EntryStatus[]>(() =>
     entries.map(() => ({ state: "pending" })),
   );

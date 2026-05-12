@@ -10,18 +10,38 @@
  *   instead and keep both implementations in lockstep against the SPEC
  *   documented in the plugin's crypto.ts header.
  *
+ * **WebCrypto, not node:crypto.** Earlier revisions used Node's
+ * `createDecipheriv` API, but this module is imported by the
+ * `EncryptedReveal` client component — Next.js webpack rejects
+ * `node:crypto` in client bundles (`next build` fails). WebCrypto
+ * (`globalThis.crypto.subtle`) is available in both Node 20+ (server
+ * components / route handlers) and every modern browser, so one
+ * implementation runs in both runtimes. AES-GCM is a Web standard.
+ *
  * The dashboard only needs DECRYPT (not encrypt) — encryption happens
- * at plugin write-time. Decryption happens here when a viewer hits
- * /verify/<tokenId>?k=<base64url-key>.
+ * at plugin write-time. Decryption happens client-side in the browser
+ * when EncryptedReveal reads `window.location.hash` for `#k=...`.
  */
 
-import { createDecipheriv } from "node:crypto";
+/** Decoded base64url key — always 32 raw bytes for AES-256. */
+export type SessionKey = Uint8Array;
 
 export interface EncryptedSessionLogEnvelope {
   v: 1;
+  /**
+   * Wire format alg name — lowercase to match the on-wire bytes the
+   * plugin's node:crypto encrypter produces (`createCipheriv("aes-256-gcm",
+   * ...)`). The Node identifier and the WebCrypto identifier differ
+   * (`"aes-256-gcm"` vs `"AES-GCM"`); we normalize to the Node form
+   * because the plugin writes the envelope and that's what's on
+   * storage.
+   */
   alg: "aes-256-gcm";
+  /** 12-byte IV, hex (no 0x prefix). */
   iv: string;
+  /** Ciphertext bytes, hex (no 0x prefix). */
   ciphertext: string;
+  /** 16-byte GCM auth tag, hex (no 0x prefix). */
   tag: string;
 }
 
@@ -29,8 +49,8 @@ export interface EncryptedSessionLogEnvelope {
  * Type guard for the v1 envelope. Distinguishes encrypted receipts
  * (v0.3.0+) from legacy plaintext SessionLog blobs (token 0 + all
  * pre-v0.3.0 receipts). Dashboard's parse path branches on this:
- * envelope + key → decrypt + parse SessionLog; plaintext → parse
- * directly.
+ * envelope detected → server returns key-blind locked state; plaintext
+ * → server returns full entries.
  */
 export function isEncryptedEnvelope(
   value: unknown,
@@ -47,9 +67,40 @@ export function isEncryptedEnvelope(
 }
 
 /**
- * Decrypt an envelope back to its plaintext SessionLog JSON. The key
- * arrives base64url-encoded in the share-link's `?k=` query param
- * (forwarded server-side after the client reads `window.location.hash`).
+ * Decode a hex string (no 0x prefix) into raw bytes. Mirrors the
+ * plugin's wire encoding for envelope fields.
+ */
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) {
+    throw new Error(`Hex string has odd length: ${hex.length}`);
+  }
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    if (Number.isNaN(byte)) {
+      throw new Error(`Invalid hex byte at offset ${i * 2}: "${hex.slice(i * 2, i * 2 + 2)}"`);
+    }
+    out[i] = byte;
+  }
+  return out;
+}
+
+/**
+ * Concatenate two Uint8Arrays into one. WebCrypto's AES-GCM decrypt
+ * expects ciphertext + tag as a single buffer (unlike Node's API which
+ * takes them as separate setAuthTag()/update() calls).
+ */
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/**
+ * Decrypt a v1 envelope back to its plaintext SessionLog JSON using
+ * WebCrypto's AES-GCM primitive. Runs in both Node 20+ (route
+ * handlers) and the browser (EncryptedReveal client component).
  *
  * Throws on:
  *   - unsupported version / algorithm
@@ -57,15 +108,17 @@ export function isEncryptedEnvelope(
  *   - malformed IV / tag (length mismatch)
  *   - GCM auth-tag mismatch (tampered ciphertext OR wrong key)
  *
- * `authTagLength: 16` is pinned defensively — without it, the decipher
- * silently accepts shorter tags which are trivially forgeable
- * (CWE-310). Defense-in-depth with the explicit `tag.length !== 16`
- * check above.
+ * The 16-byte tag is part of the standard GCM auth check —
+ * `crypto.subtle.decrypt` rejects any envelope whose tag doesn't
+ * verify, so we get authenticated decryption for free without a
+ * separate `setAuthTag()` call (the WebCrypto API treats the
+ * `cipherWithTag` last 16 bytes as the auth tag automatically when
+ * `tagLength: 128` is passed).
  */
-export function decryptSessionLog(
+export async function decryptSessionLog(
   envelope: EncryptedSessionLogEnvelope,
-  key: Buffer,
-): string {
+  key: SessionKey,
+): Promise<string> {
   if (envelope.v !== 1) {
     throw new Error(`Unsupported envelope version: ${envelope.v}`);
   }
@@ -75,32 +128,76 @@ export function decryptSessionLog(
   if (key.length !== 32) {
     throw new Error(`Key must be 32 bytes (AES-256); got ${key.length}`);
   }
-  const iv = Buffer.from(envelope.iv, "hex");
-  const ciphertext = Buffer.from(envelope.ciphertext, "hex");
-  const tag = Buffer.from(envelope.tag, "hex");
+  const iv = hexToBytes(envelope.iv);
+  const ciphertext = hexToBytes(envelope.ciphertext);
+  const tag = hexToBytes(envelope.tag);
   if (iv.length !== 12) {
     throw new Error(`IV must be 12 bytes; got ${iv.length}`);
   }
   if (tag.length !== 16) {
     throw new Error(`GCM tag must be 16 bytes; got ${tag.length}`);
   }
-  const decipher = createDecipheriv("aes-256-gcm", key, iv, { authTagLength: 16 });
-  decipher.setAuthTag(tag);
-  const plaintext = Buffer.concat([
-    decipher.update(ciphertext),
-    decipher.final(),
-  ]);
-  return plaintext.toString("utf8");
+  // WebCrypto wants ciphertext + tag as a single buffer.
+  const cipherWithTag = concatBytes(ciphertext, tag);
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle === undefined) {
+    throw new Error("crypto.subtle is unavailable in this runtime");
+  }
+  // The `as BufferSource` casts work around a TS strictness quirk:
+  // `Uint8Array<ArrayBufferLike>` doesn't satisfy `ArrayBufferView<ArrayBuffer>`
+  // because `ArrayBufferLike` includes `SharedArrayBuffer`. WebCrypto
+  // accepts both at runtime; the cast asserts the intended subset.
+  const cryptoKey = await subtle.importKey(
+    "raw",
+    key as BufferSource,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"],
+  );
+  let plaintextBytes: ArrayBuffer;
+  try {
+    plaintextBytes = await subtle.decrypt(
+      { name: "AES-GCM", iv: iv as BufferSource, tagLength: 128 },
+      cryptoKey,
+      cipherWithTag as BufferSource,
+    );
+  } catch (cause) {
+    // WebCrypto throws an opaque OperationError on auth-tag mismatch.
+    // Wrap so callers can show a friendly "decryption failed" message
+    // without leaking the implementation-specific error name.
+    throw new Error(
+      `AES-GCM authentication failed (tampered ciphertext or wrong key)`,
+      { cause },
+    );
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(plaintextBytes);
 }
 
 /**
  * Decode a base64url share-link key string back to raw 32 bytes.
- * Throws if the decoded form is anything other than 32 bytes.
+ * Browser-safe (no `Buffer`).
+ *
+ * base64url uses `-` and `_` instead of `+` and `/`, and may omit
+ * padding. We normalize back to base64 before calling `atob`.
  */
-export function shareStringToKey(s: string): Buffer {
-  const buf = Buffer.from(s, "base64url");
-  if (buf.length !== 32) {
-    throw new Error(`Decoded key must be 32 bytes; got ${buf.length}`);
+export function shareStringToKey(s: string): SessionKey {
+  // base64url → base64
+  let b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  // re-pad to multiple of 4
+  while (b64.length % 4 !== 0) b64 += "=";
+  let binary: string;
+  try {
+    binary = atob(b64);
+  } catch (cause) {
+    throw new Error(
+      `Failed to decode base64url key: not valid base64`,
+      { cause },
+    );
   }
-  return buf;
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  if (out.length !== 32) {
+    throw new Error(`Decoded key must be 32 bytes; got ${out.length}`);
+  }
+  return out;
 }

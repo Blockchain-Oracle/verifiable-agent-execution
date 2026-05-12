@@ -98,14 +98,15 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
         }
         return res.json() as Promise<unknown>;
       })
-      .then((envelope) => {
+      .then(async (envelope) => {
         if (!isEncryptedEnvelope(envelope)) {
           throw new Error("Server returned non-envelope payload.");
         }
-        // Decrypt in the browser. shareStringToKey throws on malformed
-        // input; decryptSessionLog throws on AES-GCM auth-tag mismatch.
+        // Decrypt in the browser via WebCrypto. shareStringToKey
+        // throws on malformed input; decryptSessionLog throws on
+        // AES-GCM auth-tag mismatch (wrong key or tampered bytes).
         const key = shareStringToKey(keyStr);
-        const plaintextJson = decryptSessionLog(envelope, key);
+        const plaintextJson = await decryptSessionLog(envelope, key);
         const decoded = JSON.parse(plaintextJson) as DecodedSessionLog;
         if (
           typeof decoded !== "object" ||
