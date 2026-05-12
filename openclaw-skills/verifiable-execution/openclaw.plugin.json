@@ -38,6 +38,7 @@
       },
       "privateKeyEnvVar": {
         "type": "string",
+        "default": "PRIVATE_KEY",
         "description": "Name of the environment variable that holds the signer private key (default 'PRIVATE_KEY'). The plugin reads `process.env[<name>]` at session-end time so the key never sits in OpenClaw config files."
       }
     }

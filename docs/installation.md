@@ -222,10 +222,13 @@ verify with `openclaw --version`. If you have `~/.openclaw/` but no
 binary on `$PATH`, add `~/.openclaw/bin` to your `$PATH`.
 
 **Q: Plugin loads in "degraded mode" — sessions don't anchor**
-A: Check `~/.openclaw/openclaw.json` — every key in `configSchema.required`
-must be set. The most common miss is `agentId` left at the zero-address
-placeholder. The plugin intentionally no-ops in that case to prevent
-silent mis-tagged proofs from being minted.
+A: Every config field has a Galileo testnet default, so the only way
+to hit degraded mode is to supply an **invalid override** in
+`~/.openclaw/openclaw.json` (e.g. a non-0x-prefixed `agentId`, or a
+malformed contract address). Check the plugin's stderr at startup —
+it logs a structured warning naming every invalid field. Fix the
+value or delete it (deleted = default applies) and restart the
+gateway.
 
 **Q: `iMint` reverts with `insufficient funds`**
 A: Your plugin wallet (auto-generated or `PRIVATE_KEY`-overridden)

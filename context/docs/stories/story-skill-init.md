@@ -95,6 +95,34 @@ types directly + the canonical reference plugin `0g-memory/openclaw-skills/everm
    `chainId` is required at validation time; the plugin degrades to
    no-op if missing.
 
+4. **v0.1.1 supersedes #3: defaults replace required fields.**
+   When we tried to publish the plugin to npm (so end-users could run
+   `openclaw plugins install @blockchainoracle/openclaw-verifiable-execution`
+   and be done), OpenClaw 2026.4.25 rejected the install because its
+   plugin-install pipeline validates `configSchema.required` against
+   the entry it just created with an empty config block — a
+   chicken-and-egg that no operator can resolve from the CLI alone.
+   v0.1.1 moves validation from the JSON schema (declarative,
+   install-time) into the TypeScript code (imperative, register-time):
+   - `openclaw.plugin.json` drops `required`; every field is optional.
+   - `src/config.ts` bakes Galileo testnet defaults (rpcUrl, indexer,
+     contract addresses, chainId=16602, modelId) into resolveConfig.
+   - Invalid overrides (malformed address, non-positive chainId) still
+     fail loudly into degraded mode — we can't guess what the operator
+     meant.
+   - The first-run banner explicitly prints `Network: 0G Galileo
+     testnet (chainId 16602)` so operators always know which network
+     they're on. Mainnet still requires explicit override of every
+     network field — no auto-switch. The "silent mainnet leak" risk
+     from #3 is mitigated by the loud banner, not by a required field.
+
+5. **v0.1.1 supersedes peer dep ">=2026.5.0".** The VPS test
+   environment runs OpenClaw 2026.4.25 (current stable) and our
+   plugin works correctly there. Bumping the peer to 2026.5.0 would
+   lock out our own test environment for no functional gain — every
+   API we depend on (`api.on`, `pluginConfig`) was stable from
+   2026.4.x. peerDependencies is `">=2026.4.25"`.
+
 ---
 
 ## File modification map
