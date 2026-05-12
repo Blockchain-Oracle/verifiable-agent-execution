@@ -82,6 +82,14 @@ interface PluginState {
   config: VerifiableExecutionConfig;
   sessions: SessionManager;
   agenticIdClient: AgenticIDClient;
+  /**
+   * Plugin's signing wallet — used to ECDSA-sign every entry so the
+   * dashboard renders "Signed by <agentId>" instead of "Unsigned".
+   * The wallet's address == config.agentId (auto-bound at register),
+   * so the dashboard verifies `ecrecover(digest, sig) === entry.agentId`
+   * without needing MockTEEVerifier's global oracle to match.
+   */
+  signer: Wallet;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,14 +100,38 @@ interface PluginState {
 
 type LogLevel = "INFO" | "WARN" | "ERROR";
 
+/**
+ * Module-scope OpenClaw logger ref. Populated in `register(api)` so
+ * runtime hooks can route log lines through OpenClaw's gateway logger
+ * (which gets captured in /tmp/openclaw/openclaw-*.log). `console.log`
+ * from runtime hooks is silenced by the gateway (goes to the agent
+ * subprocess's stdout, not the gateway's). VPS E2E 2026-05-12: 8
+ * sessions ran with our `structuredLog → stderr` calls invisible in
+ * the gateway log; only the install-time validation pass surfaced
+ * them. Reference: openclaw@2026.5.4 plugin-sdk/src/plugins/types.d.ts
+ * (PluginLogger interface).
+ */
+type PluginLoggerLike = {
+  info: (message: string) => void;
+  warn: (message: string) => void;
+  error: (message: string) => void;
+  debug?: (message: string) => void;
+};
+let pluginLogger: PluginLoggerLike | null = null;
+
+export function setPluginLogger(logger: PluginLoggerLike | null): void {
+  pluginLogger = logger;
+}
+
 function structuredLog(
   level: LogLevel,
   component: string,
   msg: string,
   data?: unknown,
 ): void {
+  let entry: string;
   try {
-    const entry = JSON.stringify({
+    entry = JSON.stringify({
       ts: new Date().toISOString(),
       level,
       plugin: PLUGIN_ID,
@@ -107,10 +139,139 @@ function structuredLog(
       msg,
       ...(data !== undefined ? { data } : {}),
     });
+  } catch {
+    return;
+  }
+  if (pluginLogger !== null) {
+    const sink =
+      level === "WARN"
+        ? pluginLogger.warn
+        : level === "ERROR"
+          ? pluginLogger.error
+          : pluginLogger.info;
+    try {
+      sink(entry);
+      return;
+    } catch {
+      // Fall through to stderr if the logger throws.
+    }
+  }
+  try {
     process.stderr.write(entry + "\n");
   } catch {
     // Logging failures must never crash the plugin host.
   }
+}
+
+// ---------------------------------------------------------------------------
+// Entry signing — per-entry ECDSA via the plugin's wallet.
+// ---------------------------------------------------------------------------
+//
+// Convention is the agent-wrapper signing format (ADR-07):
+//   message = `${agentId}|${sealId}|${signedAt}|${outputHash}`
+//   digest  = keccak256(message)   (raw, NO EIP-191 prefix)
+//   sig     = wallet.signingKey.sign(digest).serialized
+//
+// Verification (dashboard): ecrecover(digest, sig) === entry.agentId.
+// This is the SAME convention defi-swap-demo.ts uses, and the same
+// MockTEEVerifier.verifyTEESignature recovers — except instead of
+// checking the recovered address against a global teeOracleAddress,
+// the dashboard checks it against the entry's own agentId. That
+// removes the "MockTEEVerifier oracle === plugin wallet" coupling
+// that previously made every real plugin-captured entry show as
+// "Unsigned" (VPS E2E 2026-05-12 finding).
+
+import { keccak256, toUtf8Bytes } from "ethers";
+
+function deriveSealId(sessionKey: string, seq: number): string {
+  // bytes32 hex, deterministic per (session, seq) so verification can
+  // reproduce the seal without storing it separately.
+  const digest = createHash("sha256")
+    .update(`seal:${sessionKey}:${seq}`, "utf8")
+    .digest("hex");
+  return `0x${digest}`;
+}
+
+function signEntryDigest(
+  signer: Wallet,
+  agentId: string,
+  sealId: string,
+  signedAt: number,
+  outputHash: string,
+): string {
+  // Match defi-swap-demo.ts exactly: keccak256 over the
+  // pipe-delimited string, signed RAW (no EIP-191 prefix). The
+  // wallet's signingKey.sign accepts a 32-byte digest directly.
+  const message = `${agentId}|${sealId}|${signedAt}|${outputHash}`;
+  const digest = keccak256(toUtf8Bytes(message));
+  return signer.signingKey.sign(digest).serialized;
+}
+
+/**
+ * Build a fully-signed ExecutionLogEntry from a raw payload, using the
+ * plugin's wallet as the signing key. agentId is taken from state.config
+ * (which is auto-bound to signer.address at register time), sealId is
+ * derived deterministically from (sessionKey, seq), signedAt = now().
+ *
+ * Hashes use sha256 (per ADR-08's ExecutionLogEntry schema), the
+ * signing digest uses keccak256 (per agent-wrapper's signing
+ * convention). The two are intentionally different — sha256 hashes
+ * are content-addressable identifiers; keccak signatures are EVM-
+ * native and verify in Solidity ecrecover without extra preprocessing.
+ */
+function buildSignedEntry(
+  state: PluginState,
+  sessionKey: string,
+  seq: number,
+  raw: {
+    type: "tool_call" | "session_start" | "session_end";
+    tool?: string;
+    modelId?: string;
+    inputHash: string;
+    outputHash: string;
+    params?: unknown;
+    result?: unknown;
+  },
+): {
+  seq: number;
+  ts: number;
+  type: "tool_call" | "session_start" | "session_end";
+  tool?: string;
+  modelId?: string;
+  inputHash: string;
+  outputHash: string;
+  agentId: string;
+  sealId: string;
+  signedAt: number;
+  teeSignature: string;
+  params?: unknown;
+  result?: unknown;
+} {
+  const ts = Date.now();
+  const signedAt = Math.floor(ts / 1000);
+  const sealId = deriveSealId(sessionKey, seq);
+  const teeSignature = signEntryDigest(
+    state.signer,
+    state.config.agentId,
+    sealId,
+    signedAt,
+    raw.outputHash,
+  );
+  return {
+    seq,
+    ts,
+    type: raw.type,
+    ...(raw.tool !== undefined ? { tool: raw.tool } : {}),
+    ...(raw.modelId !== undefined ? { modelId: raw.modelId } : {}),
+    inputHash: raw.inputHash,
+    outputHash: raw.outputHash,
+    agentId: state.config.agentId,
+    sealId,
+    signedAt,
+    teeSignature,
+    ...(raw.params !== undefined ? { params: raw.params } : {}),
+    ...(raw.result !== undefined ? { result: raw.result } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +348,12 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
   );
 
   const sessions = new SessionManager({ storageClient });
-  return { config, sessions, agenticIdClient };
+  // The storageSigner (already provider-connected) doubles as our
+  // entry-signing key. agentId is the wallet's address, so signatures
+  // recover to the agentId field on each entry — that's how the
+  // dashboard's "Signed by 0x…" badge becomes green without needing
+  // MockTEEVerifier's global teeOracleAddress to match.
+  return { config, sessions, agenticIdClient, signer: storageSigner };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +434,7 @@ export function handleAfterToolCall(
     // long-running sessions on agents that hammer tools every few
     // seconds this would dominate session-end memory + CPU. (Closes
     // Codex web R3 P2 on PR #20.)
-    logger.appendEntry({
-      seq: logger.getStatus().entryCount,
-      ts: Date.now(),
+    const entry = buildSignedEntry(state, sessionKey, logger.getStatus().entryCount, {
       type: "tool_call",
       tool: toolName,
       inputHash,
@@ -281,6 +445,7 @@ export function handleAfterToolCall(
       ...(decodedParams !== undefined ? { params: decodedParams } : {}),
       ...(decodedResult !== undefined ? { result: decodedResult } : {}),
     });
+    logger.appendEntry(entry);
   } catch (cause) {
     // appendEntry can throw on schema-mismatch or post-flush; sha256Hex
     // is now hardened so the only realistic causes are the former.
@@ -377,9 +542,7 @@ export function handleLlmOutput(
     const decodedInput = safeJsonRoundtrip(inputDescriptor);
     const decodedOutput = safeJsonRoundtrip(outputPayload);
 
-    logger.appendEntry({
-      seq: logger.getStatus().entryCount,
-      ts: Date.now(),
+    const entry = buildSignedEntry(state, sessionKey, logger.getStatus().entryCount, {
       type: "tool_call",
       tool: "llm_call",
       inputHash,
@@ -387,6 +550,7 @@ export function handleLlmOutput(
       ...(decodedInput !== undefined ? { params: decodedInput } : {}),
       ...(decodedOutput !== undefined ? { result: decodedOutput } : {}),
     });
+    logger.appendEntry(entry);
   } catch (cause) {
     structuredLog("ERROR", "llm_output", "Failed to append llm_output entry", {
       sessionKey,
@@ -609,6 +773,14 @@ export default {
   description: PLUGIN_DESCRIPTION,
 
   register(api: OpenClawPluginApi): void {
+    // Wire OpenClaw's gateway logger BEFORE any structuredLog() calls.
+    // Otherwise our log lines go to stderr (silenced at runtime by the
+    // gateway — see VPS E2E 2026-05-12 finding). The api.logger
+    // interface is documented in openclaw@2026.5.4 plugin-sdk types.
+    if (typeof (api as { logger?: PluginLoggerLike }).logger === "object") {
+      pluginLogger = (api as { logger: PluginLoggerLike }).logger;
+    }
+
     const resolution = resolveConfig(api.pluginConfig);
     if (!resolution.ok) {
       structuredLog(

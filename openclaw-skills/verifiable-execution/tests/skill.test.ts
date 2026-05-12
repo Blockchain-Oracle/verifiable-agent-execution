@@ -19,7 +19,7 @@
 
 import { createHash } from "node:crypto";
 
-import { Wallet } from "ethers";
+import { Wallet, keccak256, recoverAddress, toUtf8Bytes } from "ethers";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -392,6 +392,7 @@ function buildPluginStateForTests(opts?: {
     datas: ReadonlyArray<IntelligentData>,
     confirmations?: number,
   ) => Promise<MintResult>;
+  signerPrivateKey?: string;
 }) {
   const config = buildResolvedConfig(opts?.configOverrides);
   const storageClient = buildStorageClient({ uploadOverride: opts?.uploadOverride });
@@ -399,7 +400,14 @@ function buildPluginStateForTests(opts?: {
   const { client: agenticIdClient, mintSpy } = buildAgenticIdClient({
     mintImpl: opts?.mintImpl,
   });
-  return { state: { config, sessions, agenticIdClient }, mintSpy };
+  // Deterministic test signer (privkey defaults to 0x...01). Override
+  // via opts.signerPrivateKey when a test cares that signer.address
+  // matches config.agentId (signature-verification tests).
+  const signer = new Wallet(
+    opts?.signerPrivateKey ??
+      "0x0000000000000000000000000000000000000000000000000000000000000001",
+  );
+  return { state: { config, sessions, agenticIdClient, signer }, mintSpy };
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +775,110 @@ describe("handleAgentEnd — v0.1.2 alternative anchor trigger", () => {
 // ---------------------------------------------------------------------------
 // handleSessionEnd — story-skill-close
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// v0.2.0 — per-entry ECDSA signing (agent-wrapper convention)
+// ---------------------------------------------------------------------------
+
+describe("v0.2.0 entry signing — agent-wrapper convention", () => {
+  it("signs every after_tool_call entry; signature recovers to config.agentId", () => {
+    // Match signer.address to config.agentId — that's the dashboard's
+    // verification model: ecrecover(digest, sig) === entry.agentId,
+    // no separate global oracle required.
+    const pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    const signerForTest = new Wallet(pk);
+    const { state } = buildPluginStateForTests({
+      configOverrides: { agentId: signerForTest.address },
+      signerPrivateKey: pk,
+    });
+    const sessionKey = "ses_sign_01";
+
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "0g news" }, result: { hits: 3 } },
+      { sessionKey },
+    );
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+
+    // The five TEE fields are NOW populated per ADR-07/13 (v0.2.0).
+    expect(entry.agentId).toBe(signerForTest.address);
+    expect(entry.sealId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(typeof entry.signedAt).toBe("number");
+    expect(entry.teeSignature).toMatch(/^0x[0-9a-f]{130}$/);
+
+    // ecrecover the signature → must equal entry.agentId.
+    const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
+    const digest = keccak256(toUtf8Bytes(message));
+    const recovered = recoverAddress(digest, entry.teeSignature!);
+    expect(recovered.toLowerCase()).toBe(signerForTest.address.toLowerCase());
+  });
+
+  it("each entry in a multi-tool-call session has a UNIQUE sealId (sessionKey,seq derivation)", () => {
+    const pk = "0x0000000000000000000000000000000000000000000000000000000000000002";
+    const signerForTest = new Wallet(pk);
+    const { state } = buildPluginStateForTests({
+      configOverrides: { agentId: signerForTest.address },
+      signerPrivateKey: pk,
+    });
+    const sessionKey = "ses_sign_seq";
+
+    for (let i = 0; i < 3; i++) {
+      handleAfterToolCall(
+        state,
+        { toolName: `tool_${i}`, params: { i }, result: { ok: true, i } },
+        { sessionKey },
+      );
+    }
+
+    const entries = state.sessions.getOrCreate(sessionKey).getEntries();
+    expect(entries).toHaveLength(3);
+    const sealIds = entries.map((e) => e.sealId);
+    expect(new Set(sealIds).size).toBe(3); // all distinct
+
+    // Every signature still recovers to agentId.
+    for (const e of entries) {
+      const message = `${e.agentId}|${e.sealId}|${e.signedAt}|${e.outputHash}`;
+      const digest = keccak256(toUtf8Bytes(message));
+      const recovered = recoverAddress(digest, e.teeSignature!);
+      expect(recovered.toLowerCase()).toBe(signerForTest.address.toLowerCase());
+    }
+  });
+
+  it("signs llm_output entries with the same convention", () => {
+    const pk = "0x0000000000000000000000000000000000000000000000000000000000000003";
+    const signerForTest = new Wallet(pk);
+    const { state } = buildPluginStateForTests({
+      configOverrides: { agentId: signerForTest.address },
+      signerPrivateKey: pk,
+    });
+    const sessionKey = "ses_sign_llm";
+
+    handleLlmOutput(
+      state,
+      {
+        runId: "run-sign",
+        sessionId: sessionKey,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        assistantTexts: ["signed response"],
+        lastAssistant: "signed response",
+      },
+      { sessionKey },
+    );
+
+    const entry = state.sessions.getOrCreate(sessionKey).getEntries()[0];
+    expect(entry.agentId).toBe(signerForTest.address);
+    expect(entry.teeSignature).toMatch(/^0x[0-9a-f]{130}$/);
+    const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
+    const digest = keccak256(toUtf8Bytes(message));
+    expect(recoverAddress(digest, entry.teeSignature!).toLowerCase()).toBe(
+      signerForTest.address.toLowerCase(),
+    );
+  });
+});
 
 describe("handleSessionEnd — story-skill-close", () => {
   it("flushes + mints + releases on success, with full verifyUrl built from config.verifyUrlBase", async () => {
