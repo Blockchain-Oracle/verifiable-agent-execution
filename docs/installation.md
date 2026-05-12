@@ -5,8 +5,8 @@
 > on-chain as an iNFT — shareable as `https://verifiable.0g.ai/verify/<tokenId>`.
 
 The plugin runs entirely inside OpenClaw — no separate service, no
-Docker, no Python. One install command, one config edit, one gateway
-restart.
+Docker, no Python. One install command, fund a wallet, one gateway
+restart. Done.
 
 ---
 
@@ -14,11 +14,8 @@ restart.
 
 | Requirement | macOS | Ubuntu / Debian |
 |---|---|---|
-| [OpenClaw CLI](https://openclaw.ai) (≥ 2026.5.0) | required | required |
+| [OpenClaw CLI](https://openclaw.ai) (≥ 2026.4.25) | required | required |
 | Node.js 20+ | `brew install node@20` | use [`nvm`](https://github.com/nvm-sh/nvm) or `apt-get install nodejs` |
-| pnpm 9+ (optional) | `npm i -g pnpm` | `npm i -g pnpm` |
-| `jq` | `brew install jq` | `apt-get install jq` |
-| `git` | preinstalled | `apt-get install git` |
 | Funded 0G testnet wallet | claim 0.1 0G/day at [faucet.0g.ai](https://faucet.0g.ai) | same |
 
 > If you want to anchor to **mainnet** (Aristotle, chainId 16661) you'll
@@ -27,7 +24,63 @@ restart.
 
 ---
 
-## Install (testnet — default)
+## Install — one command (testnet, the default)
+
+```bash
+openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
+openclaw gateway restart
+```
+
+That's it. The plugin is now wired into every OpenClaw session you
+run — every tool call gets captured, every session-end is flushed to
+0G Storage and anchored as an iNFT on AgenticID.
+
+### What just happened
+
+OpenClaw pulled the tarball from npm
+([@blockchainoracle/openclaw-verifiable-execution](https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution)),
+extracted it to `~/.openclaw/extensions/verifiable-execution/`, and
+added a config block to `~/.openclaw/openclaw.json` with Galileo
+testnet defaults baked into the plugin code (RPC, indexer, contract
+addresses, chainId, modelId).
+
+When you run your first OpenClaw session, the plugin:
+
+1. **Auto-generates a signing wallet** at
+   `~/.openclaw/verifiable-execution/wallet.json` (mode 0600)
+2. **Auto-binds `agentId` to that wallet's address** — the wallet IS
+   the agent identity by default
+3. **Prints a one-time first-run banner** with the wallet address +
+   faucet URL
+
+### Fund the wallet
+
+Look for a banner in your OpenClaw stderr that looks like:
+
+```
+═══════════════════════════════════════════════════════════════
+  Verifiable Execution — First Run Setup
+═══════════════════════════════════════════════════════════════
+
+  Wallet:    0xC156E52882b4AF03f2FFe96374ccB46bbc639103
+  Network:   0G Galileo testnet (chainId 16602)
+
+  Fund this wallet ONCE so the plugin can mint proofs:
+    1. Visit https://faucet.0g.ai
+    2. Paste your address
+    3. Claim 0.1 0G (free, daily limit)
+```
+
+Send 0.1 0G to that address. After it lands (~10 seconds on Galileo),
+every subsequent session anchors automatically and prints a
+`/verify/<tokenId>` URL you can share with anyone.
+
+---
+
+## Install from source (for plugin contributors)
+
+If you're hacking on the plugin code itself, clone + `./install.sh`
+links the local workspace build:
 
 ```bash
 git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
@@ -36,36 +89,16 @@ cd verifiable-agent-execution
 openclaw gateway restart
 ```
 
-`./install.sh` handles `pnpm install --frozen-lockfile` for you —
-the plugin imports `ethers` and our chain client, so workspace deps
-have to be on disk before OpenClaw's jiti loader can load us. If
-`pnpm` isn't on your PATH the installer falls back to `npx -y
-pnpm@9.15.4`, so the only hard runtime requirement is Node.js 20+.
+`./install.sh` runs `pnpm install` (falls back to `npx pnpm@9.15.4`
+if pnpm isn't on PATH), builds a self-contained ESM bundle via
+esbuild, links it via `openclaw plugins install --link`, and seeds
+the same Galileo defaults in `~/.openclaw/openclaw.json`. The script
+is idempotent — re-run after any source change.
 
-The script is idempotent — re-run as many times as you like; it
-never clobbers an existing `agentId` you've set.
-
-### What `install.sh` does
-
-1. **Installs workspace deps** via pnpm (or `npx pnpm@9.15.4` fallback).
-2. **Bundles the plugin** with esbuild into a self-contained
-   `dist-plugin/verifiable-execution/index.js` (no node_modules, no
-   workspace symlinks) — bypasses OpenClaw's safety scan.
-3. **Generates a fresh wallet** at
-   `~/.openclaw/verifiable-execution/wallet.json` (mode 0600) and
-   uses its address as the default `agentId`.
-4. **Seeds the config block** at
-   `~/.openclaw/openclaw.json:plugins.entries.verifiable-execution.config`
-   with Galileo testnet defaults (RPC, indexer, contract addresses,
-   chainId, modelId, agentId = the generated wallet).
-5. **Links the plugin** via `openclaw plugins install --link` against
-   the bundled output.
-6. **Enables it** via `openclaw plugins enable verifiable-execution`.
-7. **Backs up** the original `openclaw.json` to
-   `~/.openclaw/openclaw.json.bak.<date>` before any edit.
-
-That's it — no manual edits required. The end of `install.sh` prints
-your wallet address; fund it once at the faucet and you're done.
+The npm-published artifact and `./install.sh` end up structurally
+identical (same bundled `index.js`, same `openclaw.plugin.json`,
+same config block). The only difference is "where the bytes came
+from".
 
 ---
 
