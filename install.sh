@@ -202,7 +202,19 @@ jq \
     .plugins.entries[$pluginId].config.verifierAddress //= $ver |
     .plugins.entries[$pluginId].config.verifyUrlBase //= $vurl |
     .plugins.entries[$pluginId].config.chainId //= $cid |
-    .plugins.entries[$pluginId].config.agentId //= $agentDefault |
+    # Treat a missing OR zero-address agentId as "not set". A user who
+    # set a real custom agentId on a previous run keeps their value;
+    # someone re-running after a stale placeholder gets the wallet
+    # auto-bound. (Without this, `//=` would preserve the zero address
+    # forever once written, leaving the plugin permanently no-op.)
+    .plugins.entries[$pluginId].config.agentId =
+      (
+        (.plugins.entries[$pluginId].config.agentId // "") as $existing |
+        if ($existing == "") or ($existing | test("^0x0+$"; "i"))
+          then $agentDefault
+          else $existing
+        end
+      ) |
     .plugins.entries[$pluginId].config.modelId //= $mid |
     .plugins.load //= {} |
     .plugins.load.paths //= [] |
