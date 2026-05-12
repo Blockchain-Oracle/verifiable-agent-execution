@@ -1256,32 +1256,25 @@ export default {
         args?: unknown;
       }) => { handled: boolean; reply?: { text: string } } | undefined,
     ) => void)("inbound_claim", (event) => {
-      // SECURITY (Codex round-6 P1): require commandAuthorized === true
-      // MANDATORY. Without it, ANY inbound message starting with
-      // "/share" — including from an untrusted channel sender — would
-      // emit the share URL + key fragment, leaking the receipt to a
-      // stranger. The earlier text-prefix fallback (`/^\s*\/share/i`)
-      // was an attempt to support pre-2026.4.25 OpenClaw runtimes that
-      // didn't surface commandAuthorized, but that fallback bypassed
-      // operator authentication entirely. Drop it: if a runtime
-      // doesn't set commandAuthorized, /share simply doesn't fire,
-      // which is the safe default. Operators should upgrade OpenClaw.
+      // SECURITY (Codex round-6 + round-11 reconciled): require
+      // commandAuthorized === true MANDATORY. Trust OpenClaw's runtime
+      // to route inbound_claim PER REGISTERED COMMAND — the stock
+      // codex plugin (/tmp/openclaw-src/extensions/codex/src/conversation-binding.ts:143)
+      // confirms this pattern: it checks commandAuthorized then runs
+      // its handler with no command-name discrimination, because
+      // OpenClaw 2026.4.x only fires inbound_claim for the plugin's
+      // own registered command name.
+      //
+      // The earlier text-prefix guard (round-6 `content.startsWith("/share")`)
+      // was defensive paranoia against a hypothetical broad-dispatch
+      // runtime, but it broke Discord-style channels that send
+      // structured args without raw content (round-9/10/11). Dropping
+      // it lets `handleShareCommand` read `event.args[0]` cleanly when
+      // present. If a future runtime DOES broad-dispatch inbound_claim,
+      // we get spurious /share replies — much milder than the
+      // original key-in-URL leak (round-1) since the share URL no
+      // longer carries the key via auto-log (round-9).
       if (event.commandAuthorized !== true) return { handled: false };
-      // SECURITY (Codex round-8 P1): the share-command discriminator
-      // MUST be the command name, not the presence of args. Earlier
-      // we accepted `Array.isArray(event.args)` as a "Discord-style
-      // slash command" hint, but `inbound_claim` is dispatched for
-      // ANY registered command — if the operator also registered
-      // /upload, /summarize, etc., an authorized non-share command
-      // with args would route here and leak a receipt URL. Tighten
-      // to require `content` to start with `/share` (case-insensitive).
-      // Channels that pre-split args without providing the raw text
-      // need to set `content` to "/share" too — handleShareCommand
-      // still consumes `event.args` once routed here.
-      const isShareCommand =
-        typeof event.content === "string" &&
-        /^\s*\/share(\s|$)/i.test(event.content);
-      if (!isShareCommand) return { handled: false };
       return handleShareCommand(
         {
           keystore: state.keystore,

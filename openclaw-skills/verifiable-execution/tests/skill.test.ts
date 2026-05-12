@@ -222,48 +222,30 @@ describe("register() — inbound_claim authorization gate", () => {
     expect(result?.reply?.text).toMatch(/no receipts yet/i);
   });
 
-  it("rejects non-/share inbound even when commandAuthorized is true (defense in depth)", () => {
-    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
-    plugin.register(api);
-    const handler = getInboundClaimHandler(onSpy);
-    const result = handler({
-      content: "hello bot",
-      commandAuthorized: true,
-    }) ?? { handled: false };
-    expect(result.handled).toBe(false);
-    expect(result.reply).toBeUndefined();
-  });
-
-  // Codex round-8 P1: previously the gate accepted `Array.isArray(args)`
-  // as a "Discord-style slash command" hint. OpenClaw dispatches
-  // inbound_claim for ANY registered command — if the operator also
-  // registers /upload, /summarize, etc., an authorized non-share
-  // command with args would route here and leak a receipt URL.
-  // Tightened to require `content` to start with `/share`.
-  it("rejects an authorized command with args[] but non-/share content (no args-only bypass)", () => {
-    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
-    plugin.register(api);
-    const handler = getInboundClaimHandler(onSpy);
-    const result = handler({
-      content: "/upload file.png",
-      commandAuthorized: true,
-      args: ["file.png"],
-    }) ?? { handled: false };
-    expect(result.handled).toBe(false);
-    expect(result.reply).toBeUndefined();
-  });
-
-  it("rejects an authorized event with ONLY args[] and no /share content", () => {
+  // Codex round-11 reconciled (replacing round-8 paranoia): the stock
+  // OpenClaw codex plugin
+  // (/tmp/openclaw-src/extensions/codex/src/conversation-binding.ts:143)
+  // demonstrates that OpenClaw 2026.4.x routes inbound_claim PER
+  // registered command — a plugin's handler only fires for ITS own
+  // command name. So a Discord-style "args-only" /share event is
+  // (a) valid and (b) safely distinct from /upload or /summarize.
+  // Trust the runtime; only check commandAuthorized.
+  it("accepts an authorized structured (args-only) /share event — channel pre-split args", () => {
     const { api, onSpy } = makeFakeApi(FULL_CONFIG);
     plugin.register(api);
     const handler = getInboundClaimHandler(onSpy);
     const result = handler({
       commandAuthorized: true,
       args: ["42"],
-    }) ?? { handled: false };
-    expect(result.handled).toBe(false);
-    expect(result.reply).toBeUndefined();
+    });
+    // handleShareCommand reads args[0] as the tokenId. The keystore is
+    // empty in this fresh test, so the friendly "no key on host"
+    // reply fires — the gate let the handler through, which is what
+    // we're pinning.
+    expect(result?.handled).toBe(true);
+    expect(result?.reply?.text).toMatch(/No key on this host/i);
   });
+
 });
 
 // ---------------------------------------------------------------------------
