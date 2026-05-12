@@ -958,14 +958,24 @@ export async function handleSessionEnd(
     // request time). Log only the key-FREE verifyUrl + the metadata
     // an operator needs for ops: tokenId, txHash, rootHash, entryCount.
     const baseUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
+    // PRIVACY (Codex round-16): the routine success log MUST NOT
+    // include `sessionKey`. OpenClaw sessionKeys often encode channel
+    // routing context — e.g.
+    // "agent:core:telegram:direct:8028166336" exposes the Telegram
+    // user ID 8028166336. Auto-logging that on every anchor would
+    // undermine the v0.3.0 privacy pivot by leaking who-uses-the-bot
+    // metadata to gateway / log collectors. sessionKey is retained
+    // only in error/recovery log lines (where the operator needs it
+    // to drive retryMint / commitPending) and in the `/share`
+    // operator reply (consent surface).
     structuredLog("INFO", "session_end", "Session anchored on-chain", {
-      sessionKey,
       tokenId: tokenIdStr,
       txHash: result.txHash,
       rootHash: result.rootHash,
       entryCount: result.entryCount,
       verifyUrl: baseUrl,
       // shareUrl intentionally omitted — type "/share" in chat to fetch it.
+      // sessionKey intentionally omitted — see PRIVACY comment above.
     });
     // Anchor succeeded → flush already sealed the logger; safe to release.
     state.sessions.release(sessionKey);

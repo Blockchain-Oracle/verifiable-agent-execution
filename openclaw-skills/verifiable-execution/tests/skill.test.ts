@@ -1259,14 +1259,15 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
     expect(last?.sessionKey).toBe(sessionKey);
   });
 
-  // Codex round-9 P1 (CRITICAL SECURITY): the reveal key must NEVER
-  // appear in log streams. Earlier revisions auto-logged the full
-  // shareUrl (with `#k=<key>` fragment) on every session_end, leaking
-  // decryption material to gateway logs / log collectors / observability
-  // stacks. The whole encrypted-by-default contract collapses if the
-  // key trivially leaves the process. Pin: structuredLog output for a
-  // successful session_end MUST NOT contain "#k=" or the literal key.
-  it("does NOT log the reveal key on session_end (no #k= leak into stderr)", async () => {
+  // Codex rounds 9 + 16 (CRITICAL SECURITY/PRIVACY): the routine
+  // success log on session_end MUST NOT include:
+  //   - the reveal key / shareUrl / #k= fragment (round-9 cryptographic)
+  //   - the sessionKey itself (round-16 privacy: it encodes channel
+  //     routing — e.g. "agent:core:telegram:direct:<userId>" leaks
+  //     the Telegram user ID on every anchor)
+  // sessionKey is retained ONLY in error/recovery log lines (where the
+  // operator needs it for retryMint/commitPending) and in /share replies.
+  it("success log is privacy-minimal: no reveal key, no shareUrl, no sessionKey", async () => {
     const stderrWrites: string[] = [];
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
@@ -1276,7 +1277,9 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
         return true;
       });
     const { state } = buildPluginStateForTests();
-    const sessionKey = "ses_log_no_key_leak";
+    // Use a realistic OpenClaw sessionKey that ENCODES user routing
+    // info — exactly the metadata we don't want in logs.
+    const sessionKey = "agent:core:telegram:direct:8028166336";
     handleAfterToolCall(
       state,
       { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
@@ -1285,14 +1288,30 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
     await handleSessionEnd(state, { messages: [], success: true }, { sessionKey });
 
     const captured = stderrWrites.join("");
-    // The decryption key never appears in stderr — fragment marker
-    // and the b64url alphabet of the key itself.
+    // Round-9 cryptographic invariants:
     expect(captured).not.toContain("#k=");
     expect(captured).not.toMatch(/shareUrl/);
-    // Confirm a successful session_end DID happen (key-free log line
-    // is present); we're asserting the leak is absent, not that no log
-    // was emitted.
-    expect(captured).toMatch(/Session anchored on-chain/);
+    // Round-16 privacy invariants: the success log line must NOT
+    // contain the sessionKey or the Telegram user ID it encodes.
+    // Filter to the "Session anchored on-chain" line specifically —
+    // error/recovery branches DO log sessionKey by design.
+    const successLines = captured
+      .split("\n")
+      .filter((line) => line.includes("Session anchored on-chain"));
+    expect(successLines.length).toBeGreaterThanOrEqual(1);
+    for (const line of successLines) {
+      expect(line).not.toContain(sessionKey);
+      expect(line).not.toContain("8028166336");
+      expect(line).not.toContain("telegram");
+    }
+    // Positive: the allowed BDD-spec fields ARE in the line.
+    for (const line of successLines) {
+      expect(line).toMatch(/tokenId/);
+      expect(line).toMatch(/txHash/);
+      expect(line).toMatch(/rootHash/);
+      expect(line).toMatch(/entryCount/);
+      expect(line).toMatch(/verifyUrl/);
+    }
     stderrSpy.mockRestore();
   });
 
