@@ -919,12 +919,16 @@ export async function handleSessionEnd(
         });
       }
     }
-    // Build share URL with the #k=<key> fragment. The fragment NEVER
-    // leaves the browser (URL-fragment is client-side only) so the
-    // operator can paste this URL into any channel + the recipient's
-    // browser decrypts locally.
+    // SECURITY (Codex round-9 P1): the reveal key MUST NOT appear in
+    // log streams. Encryption is the v0.3.0 wedge — if the key gets
+    // auto-logged on every session, gateway logs / log collectors /
+    // observability stacks all hold the plaintext-decryption material,
+    // completely defeating the encrypted-by-default contract. The
+    // operator obtains the share URL ON DEMAND via the `/share`
+    // command (handleShareCommand reads the key from the keystore at
+    // request time). Log only the key-FREE verifyUrl + the metadata
+    // an operator needs for ops: tokenId, txHash, rootHash, entryCount.
     const baseUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
-    const shareUrl = `${baseUrl}#k=${keyToShareString(encryptionKey)}`;
     structuredLog("INFO", "session_end", "Session anchored on-chain", {
       sessionKey,
       tokenId: tokenIdStr,
@@ -932,7 +936,7 @@ export async function handleSessionEnd(
       rootHash: result.rootHash,
       entryCount: result.entryCount,
       verifyUrl: baseUrl,
-      shareUrl,
+      // shareUrl intentionally omitted — type "/share" in chat to fetch it.
     });
     // Anchor succeeded → flush already sealed the logger; safe to release.
     state.sessions.release(sessionKey);

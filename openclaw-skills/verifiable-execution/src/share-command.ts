@@ -134,6 +134,18 @@ export function handleShareCommand(
  *   - bare numeric: `/share 7` → "7"
  *   - explicit "last" keyword: `/share last` → null (use last)
  *   - empty content: null (use last)
+ *
+ * NOTE (Codex round-9, partial accept): handleShareCommand reads
+ * `event.args[0]` when present — that path was added for Discord-style
+ * channels that pre-split slash-command args. The registered
+ * `inbound_claim` handler in src/index.ts gates entry on
+ * `content.startsWith("/share")` to prevent OTHER authorized commands
+ * (e.g. `/upload`) from accidentally routing here. Channels that
+ * dispatch authorized /share events without raw content must also
+ * pass `content: "/share"` for the v0.3.0 cycle — making the gate
+ * "command-name-aware" would require a `command` field on the
+ * inbound event that OpenClaw 2026.4.x doesn't surface. Tracked
+ * for v0.4.0.
  */
 function parseTokenIdArg(event: ShareCommandEvent): string | null {
   // 1. structured args (channel pre-split — Discord slash command etc.)

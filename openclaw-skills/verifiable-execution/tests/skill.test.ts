@@ -1249,6 +1249,43 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
     expect(last?.sessionKey).toBe(sessionKey);
   });
 
+  // Codex round-9 P1 (CRITICAL SECURITY): the reveal key must NEVER
+  // appear in log streams. Earlier revisions auto-logged the full
+  // shareUrl (with `#k=<key>` fragment) on every session_end, leaking
+  // decryption material to gateway logs / log collectors / observability
+  // stacks. The whole encrypted-by-default contract collapses if the
+  // key trivially leaves the process. Pin: structuredLog output for a
+  // successful session_end MUST NOT contain "#k=" or the literal key.
+  it("does NOT log the reveal key on session_end (no #k= leak into stderr)", async () => {
+    const stderrWrites: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        if (typeof chunk === "string") stderrWrites.push(chunk);
+        else if (chunk instanceof Buffer) stderrWrites.push(chunk.toString("utf8"));
+        return true;
+      });
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_log_no_key_leak";
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
+      { sessionKey },
+    );
+    await handleSessionEnd(state, { messages: [], success: true }, { sessionKey });
+
+    const captured = stderrWrites.join("");
+    // The decryption key never appears in stderr — fragment marker
+    // and the b64url alphabet of the key itself.
+    expect(captured).not.toContain("#k=");
+    expect(captured).not.toMatch(/shareUrl/);
+    // Confirm a successful session_end DID happen (key-free log line
+    // is present); we're asserting the leak is absent, not that no log
+    // was emitted.
+    expect(captured).toMatch(/Session anchored on-chain/);
+    stderrSpy.mockRestore();
+  });
+
   it("survives a crash between setPending and mint — pending key recoverable by sessionKey", async () => {
     // Force mint to fail. The keystore should retain pending/<sessionKey>.key
     // so the operator can recover (manual commitPending after retryMint).
