@@ -262,13 +262,20 @@ export class Keystore {
 
   /**
    * List all tokenIds with committed keys. Used by the (post-hackathon)
-   * "/my-receipts" command and by ops tooling.
+   * "/my-receipts" command and by ops tooling. Filenames are
+   * base64url-encoded (Codex round-14 fix) — decode back to the
+   * original tokenId string.
    */
   list(): string[] {
     if (!existsSync(this.committedDir)) return [];
-    return readdirSync(this.committedDir)
-      .filter((f) => f.endsWith(".key"))
-      .map((f) => f.slice(0, -4));
+    const out: string[] = [];
+    for (const f of readdirSync(this.committedDir)) {
+      if (!f.endsWith(".key")) continue;
+      const encoded = f.slice(0, -4);
+      const decoded = this.decodeFilename(encoded);
+      if (decoded !== null) out.push(decoded);
+    }
+    return out;
   }
 
   /**
@@ -298,10 +305,31 @@ export class Keystore {
     );
     return keyFiles.map((keyFile) => {
       const sanitizedFilename = keyFile.slice(0, -4);
-      const metaPath = join(
-        this.pendingDir,
-        sanitizedFilename + ".meta.json",
-      );
+      // Primary recovery: base64url-decode the filename (Codex round-14
+      // fix). The filename now IS the original sessionKey, just encoded,
+      // so we don't need the .meta.json sidecar to reverse it.
+      const fromFilename = this.decodeFilename(sanitizedFilename);
+      if (fromFilename !== null) {
+        const metaPath = join(this.pendingDir, sanitizedFilename + ".meta.json");
+        let createdAt: number | null = null;
+        if (existsSync(metaPath)) {
+          try {
+            const meta = JSON.parse(
+              readFileSync(metaPath, "utf8"),
+            ) as Partial<PendingMetadata>;
+            createdAt =
+              typeof meta.createdAt === "number" ? meta.createdAt : null;
+          } catch {
+            // Sidecar corrupt — recover sessionKey from filename anyway.
+          }
+        }
+        return { sessionKey: fromFilename, sanitizedFilename, createdAt };
+      }
+      // Legacy fallback: a .key file written by older pre-round-14 code
+      // would have a sanitized (non-base64url) filename. Read the
+      // sidecar for the original sessionKey. Decommissioned once all
+      // legacy pending entries have been committed or wiped.
+      const metaPath = join(this.pendingDir, sanitizedFilename + ".meta.json");
       if (!existsSync(metaPath)) {
         return { sessionKey: null, sanitizedFilename, createdAt: null };
       }
@@ -376,14 +404,61 @@ export class Keystore {
   }
 
   /**
-   * Sanitize a sessionKey or tokenId for use as a filename. OpenClaw
-   * sessionKeys can contain `:` and `/` (e.g. "agent:core:telegram:direct:8028…")
-   * — both of those break filename rules. Replace with `_`. The mapping
-   * is one-way; if two distinct sessionKeys collide post-sanitize, the
-   * second write wins (rare and acceptable — the temp file is only
-   * alive between flush and mint).
+   * Encode a sessionKey or tokenId for use as a filename. OpenClaw
+   * sessionKeys can contain `:` and `/` (e.g.
+   * "agent:core:telegram:direct:8028..."). Earlier revisions did a
+   * lossy `/[/:?...]/g → "_"` substitution, but Codex round-14 caught
+   * the resulting collision: `a:b` and `a/b` BOTH sanitized to `a_b`,
+   * letting a later setPending overwrite an earlier pending key file.
+   * `commitPending(sessionKey, tokenId)` could then bind the WRONG
+   * AES key to the wrong tokenId — a real cross-session leak (the
+   * resulting `/share <tokenId>` URL would emit a key that decrypts a
+   * DIFFERENT session's content). Severity: high.
+   *
+   * Fix: base64url-encode the full string. Reversible (decodeFilename),
+   * collision-free (the bytes are injective into base64url), and short
+   * enough for filesystem name limits (~250 bytes typical, ~33%
+   * overhead — even a 100-char OpenClaw sessionKey fits comfortably).
+   * Note: base64url uses `A-Za-z0-9_-` plus optional `=` padding, all
+   * filesystem-safe; we strip padding so the filename has no `=`.
+   *
+   * Token IDs are always stringified integers in our flow (BigInt →
+   * decimal string), which encode to ASCII-equivalent base64url that's
+   * 33% longer (e.g. "42" → "NDI"). That's a slight cosmetic regression
+   * in `ls keystore/` output but the security gain dominates.
+   */
+  private encodeFilename(name: string): string {
+    return Buffer.from(name, "utf8").toString("base64url");
+  }
+
+  /**
+   * Inverse of encodeFilename. Returns null on malformed input so a
+   * stray file in the pending/ dir (not produced by us) can't crash
+   * listPending().
+   */
+  private decodeFilename(encoded: string): string | null {
+    try {
+      const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+      // Round-trip check: re-encoding must produce the original
+      // filename. base64url is permissive about padding which would
+      // otherwise let multiple encodings decode the same way.
+      if (Buffer.from(decoded, "utf8").toString("base64url") !== encoded) {
+        return null;
+      }
+      return decoded;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Backwards-compat alias used by older call sites within this file.
+   * All callers now route through encodeFilename, but the old method
+   * name is preserved for line-noise compatibility with the rest of
+   * the class until the refactor settles. (This is a one-line delegate;
+   * future cleanup can inline it.)
    */
   private sanitizeFilename(name: string): string {
-    return name.replace(/[/\\:?"<>|*]/g, "_").replace(/^\.+/, "_");
+    return this.encodeFilename(name);
   }
 }

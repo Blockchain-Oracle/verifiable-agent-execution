@@ -68,7 +68,9 @@ describe("Keystore — put / get round-trip", () => {
     if (process.platform === "win32") return; // skip on Windows
     const k = generateKey();
     ks.put("7", k);
-    const filePath = join(root, "keystore", "7.key");
+    // Filename is base64url(tokenId) post-round-14 fix.
+    const encoded = Buffer.from("7", "utf8").toString("base64url");
+    const filePath = join(root, "keystore", encoded + ".key");
     const mode = statSync(filePath).mode & 0o777;
     expect(mode.toString(8)).toBe("600");
   });
@@ -92,10 +94,14 @@ describe("Keystore — put / get round-trip", () => {
 });
 
 describe("Keystore — setPending / commitPending (crash-recovery ordering)", () => {
-  it("setPending writes under pending/<sessionKey>.key", () => {
+  // Helper: convert sessionKey/tokenId → base64url filename (Codex
+  // round-14 fix — replaces the old lossy `:`→`_` sanitization).
+  const enc = (s: string) => Buffer.from(s, "utf8").toString("base64url");
+
+  it("setPending writes under pending/<base64url(sessionKey)>.key", () => {
     const k = generateKey();
     ks.setPending("ses-xyz", k);
-    expect(existsSync(join(root, "keystore", "pending", "ses-xyz.key"))).toBe(true);
+    expect(existsSync(join(root, "keystore", "pending", enc("ses-xyz") + ".key"))).toBe(true);
   });
 
   it("commitPending promotes pending → committed and writes last-receipt pointer", () => {
@@ -103,9 +109,9 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     ks.setPending("ses-xyz", k);
     const ok = ks.commitPending("ses-xyz", "42");
     expect(ok).toBe(true);
-    // Pending gone, committed present.
-    expect(existsSync(join(root, "keystore", "pending", "ses-xyz.key"))).toBe(false);
-    expect(existsSync(join(root, "keystore", "42.key"))).toBe(true);
+    // Pending gone, committed present (both paths use base64url-encoded names).
+    expect(existsSync(join(root, "keystore", "pending", enc("ses-xyz") + ".key"))).toBe(false);
+    expect(existsSync(join(root, "keystore", enc("42") + ".key"))).toBe(true);
     // Key bytes identical post-rename.
     expect(ks.get("42")!.equals(k)).toBe(true);
     // Last-receipt pointer updated.
@@ -128,7 +134,7 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     const k = generateKey();
     ks.setPending("ses-crashy", k);
     // Verify the operator can manually recover by inspecting pending/:
-    const pendingPath = join(root, "keystore", "pending", "ses-crashy.key");
+    const pendingPath = join(root, "keystore", "pending", enc("ses-crashy") + ".key");
     expect(existsSync(pendingPath)).toBe(true);
     const recovered = readFileSync(pendingPath);
     expect(recovered.equals(k)).toBe(true);
@@ -137,36 +143,35 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     expect(ks.get("55")!.equals(k)).toBe(true);
   });
 
-  it("sanitizes sessionKeys containing OpenClaw's canonical `:` and `/` chars", () => {
-    // Real OpenClaw sessionKey from VPS traces:
-    //   "agent:core:telegram:direct:8028166336"
+  it("encodes sessionKeys with OpenClaw's canonical `:` and `/` chars as base64url (collision-free)", () => {
+    // Real OpenClaw sessionKey from VPS traces.
     const sk = "agent:core:telegram:direct:8028166336";
     const k = generateKey();
     ks.setPending(sk, k);
-    // File should exist with `:` replaced by `_`.
-    const sanitized = "agent_core_telegram_direct_8028166336";
-    expect(existsSync(join(root, "keystore", "pending", sanitized + ".key"))).toBe(true);
-    // commitPending using the SAME sessionKey resolves the same sanitized path.
+    // Codex round-14 fix: filename is base64url(sessionKey), not a
+    // lossy `:` → `_` substitution. Don't hard-code the encoded form
+    // here — assert the round-trip via listPending().
+    const expectedEncoded = Buffer.from(sk, "utf8").toString("base64url");
+    expect(existsSync(join(root, "keystore", "pending", expectedEncoded + ".key"))).toBe(true);
+    // commitPending using the SAME sessionKey resolves the same path.
     expect(ks.commitPending(sk, "100")).toBe(true);
     expect(ks.get("100")!.equals(k)).toBe(true);
   });
 
-  // BDD: "And the original sessionKey is recoverable by callers via list()"
-  // Codex round-3 caught that sanitization was one-way; the sanitized
-  // filename couldn't be reversed. This test pins the listPending()
-  // surface which uses sidecar .meta.json to preserve the original
-  // OpenClaw sessionKey.
-  it("listPending() returns the ORIGINAL sessionKey (not the sanitized filename)", () => {
+  // BDD: "And the original sessionKey is recoverable by callers via listPending()"
+  // Codex rounds 3 + 14: sanitization was lossy + colliding. Resolved
+  // via base64url filename encoding (decodeFilename reverses it).
+  it("listPending() returns the ORIGINAL sessionKey (decoded from filename)", () => {
     const sk = "agent:core:telegram:direct:8028166336";
     const k = generateKey();
     ks.setPending(sk, k);
     const pending = ks.listPending();
     expect(pending).toHaveLength(1);
-    // Sidecar preserves the unsanitized form so a crashed operator
-    // can copy-paste this string into commitPending(sessionKey, tokenId).
     expect(pending[0]?.sessionKey).toBe(sk);
+    // Filename is base64url(sessionKey) — verify round-trip rather
+    // than hard-coding the bytes.
     expect(pending[0]?.sanitizedFilename).toBe(
-      "agent_core_telegram_direct_8028166336",
+      Buffer.from(sk, "utf8").toString("base64url"),
     );
     expect(typeof pending[0]?.createdAt).toBe("number");
   });
@@ -176,11 +181,45 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     const sk = "ses:cleanup:check";
     const k = generateKey();
     ks.setPending(sk, k);
-    const sanitized = "ses_cleanup_check";
-    expect(existsSync(join(root, "keystore", "pending", sanitized + ".meta.json"))).toBe(true);
+    const encoded = Buffer.from(sk, "utf8").toString("base64url");
+    expect(existsSync(join(root, "keystore", "pending", encoded + ".meta.json"))).toBe(true);
     expect(ks.commitPending(sk, "777")).toBe(true);
-    expect(existsSync(join(root, "keystore", "pending", sanitized + ".meta.json"))).toBe(false);
+    expect(existsSync(join(root, "keystore", "pending", encoded + ".meta.json"))).toBe(false);
     expect(ks.listPending()).toHaveLength(0);
+  });
+
+  // Codex round-14 P1 (SECURITY): old `:` → `_` sanitization caused
+  // sessionKeys like "a:b" and "a/b" to collide on the same filename.
+  // The collision let a second setPending overwrite the first pending
+  // key file, so commitPending(sessionKey1, token1) could bind K2 to
+  // token1 — a real cross-session key leak. Fix: base64url-encode the
+  // FULL sessionKey for the filename (injective + reversible).
+  it("colliding-sanitized sessionKeys 'a:b' and 'a/b' map to DISTINCT pending files (no overwrite)", () => {
+    const kA = generateKey();
+    const kB = generateKey();
+    ks.setPending("a:b", kA);
+    ks.setPending("a/b", kB);
+
+    // Both pending entries must coexist.
+    const pending = ks.listPending();
+    expect(pending).toHaveLength(2);
+    const recoveredKeys = pending.map((p) => p.sessionKey).sort();
+    expect(recoveredKeys).toEqual(["a/b", "a:b"]);
+
+    // Filenames must differ. With pre-round-14 sanitization both would
+    // have been "a_b"; with base64url encoding they're different bytes
+    // ("a:b" → "YTpi", "a/b" → "YS9i").
+    const filenames = pending.map((p) => p.sanitizedFilename).sort();
+    expect(filenames[0]).not.toBe(filenames[1]);
+
+    // Committing one MUST NOT consume the other.
+    expect(ks.commitPending("a:b", "111")).toBe(true);
+    expect(ks.commitPending("a/b", "222")).toBe(true);
+    expect(ks.get("111")!.equals(kA)).toBe(true);
+    expect(ks.get("222")!.equals(kB)).toBe(true);
+    // No cross-binding: token111 has K_A, NOT K_B.
+    expect(ks.get("111")!.equals(kB)).toBe(false);
+    expect(ks.get("222")!.equals(kA)).toBe(false);
   });
 
   // BDD crash-recovery: after a process restart with an in-progress
