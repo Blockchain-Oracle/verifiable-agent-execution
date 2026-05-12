@@ -33,7 +33,7 @@ describe("handleShareCommand — happy paths", () => {
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share" },
+      { content: "/share", commandAuthorized: true },
     );
 
     expect(result.handled).toBe(true);
@@ -49,7 +49,7 @@ describe("handleShareCommand — happy paths", () => {
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share 3" },
+      { content: "/share 3", commandAuthorized: true },
     );
 
     expect(result.handled).toBe(true);
@@ -63,7 +63,7 @@ describe("handleShareCommand — happy paths", () => {
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share 99" },
+      { content: "/share 99", commandAuthorized: true },
     );
 
     const match = result.reply!.text.match(/#k=([A-Za-z0-9_-]+)/);
@@ -72,12 +72,15 @@ describe("handleShareCommand — happy paths", () => {
     expect(decoded.equals(k)).toBe(true);
   });
 
-  it("accepts structured args (Discord-style slash command)", () => {
+  // Discord-style channels MUST still pass content: "/share <id>" — the
+  // exported handler's gate requires it (Codex round-19 defense-in-depth).
+  // The args[0] parser then consumes the structured arg as the tokenId.
+  it("accepts /share <tokenId> with structured args (Discord-style) when content is also present", () => {
     keystore.put("42", generateKey());
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { args: ["42"] },
+      { content: "/share", commandAuthorized: true, args: ["42"] },
     );
 
     expect(result.handled).toBe(true);
@@ -91,7 +94,7 @@ describe("handleShareCommand — happy paths", () => {
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share last" },
+      { content: "/share last", commandAuthorized: true },
     );
 
     expect(result.handled).toBe(true);
@@ -99,11 +102,54 @@ describe("handleShareCommand — happy paths", () => {
   });
 });
 
+// Codex round-19 P1: the exported handler MUST enforce the auth + content
+// gate itself, not just rely on the index.ts register block. Defense in
+// depth so a future caller importing `handleShareCommand` directly can't
+// bypass the gate.
+describe("handleShareCommand — authorization gate (defense in depth, in-function)", () => {
+  it("returns {handled:false} when commandAuthorized is missing", () => {
+    keystore.put("7", generateKey());
+    const result = handleShareCommand(
+      { keystore, verifyUrlBase: VERIFY_URL_BASE },
+      { content: "/share" /* no commandAuthorized */ },
+    );
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it("returns {handled:false} when commandAuthorized is explicitly false", () => {
+    keystore.put("7", generateKey());
+    const result = handleShareCommand(
+      { keystore, verifyUrlBase: VERIFY_URL_BASE },
+      { content: "/share", commandAuthorized: false },
+    );
+    expect(result.handled).toBe(false);
+  });
+
+  it("returns {handled:false} when content doesn't start with /share (even with auth + args)", () => {
+    keystore.put("7", generateKey());
+    const result = handleShareCommand(
+      { keystore, verifyUrlBase: VERIFY_URL_BASE },
+      { content: "/upload file.png", commandAuthorized: true, args: ["7"] },
+    );
+    expect(result.handled).toBe(false);
+  });
+
+  it("returns {handled:false} for args-only events (no /share content) — Discord-style is rejected", () => {
+    keystore.put("7", generateKey());
+    const result = handleShareCommand(
+      { keystore, verifyUrlBase: VERIFY_URL_BASE },
+      { commandAuthorized: true, args: ["7"] },
+    );
+    expect(result.handled).toBe(false);
+  });
+});
+
 describe("handleShareCommand — edge cases", () => {
   it("returns a friendly 'no receipts yet' message when keystore is empty", () => {
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share" },
+      { content: "/share", commandAuthorized: true },
     );
 
     expect(result.handled).toBe(true);
@@ -116,7 +162,7 @@ describe("handleShareCommand — edge cases", () => {
   it("returns 'no key on this host' when tokenId exists nowhere in keystore", () => {
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share 999" },
+      { content: "/share 999", commandAuthorized: true },
     );
 
     expect(result.handled).toBe(true);
@@ -130,7 +176,7 @@ describe("handleShareCommand — edge cases", () => {
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share" },
+      { content: "/share", commandAuthorized: true },
     );
 
     expect(result.reply?.text).toContain(
@@ -144,7 +190,7 @@ describe("handleShareCommand — edge cases", () => {
 
     const result = handleShareCommand(
       { keystore, verifyUrlBase: VERIFY_URL_BASE },
-      { content: "/share 7" },
+      { content: "/share 7", commandAuthorized: true },
     );
     // Explicit-tokenId path doesn't include the session footnote.
     expect(result.reply?.text).not.toContain("ses-private");
@@ -154,7 +200,7 @@ describe("handleShareCommand — edge cases", () => {
     keystore.put("7", generateKey());
     const result = handleShareCommand(
       { keystore, verifyUrlBase: "https://verifiable.0g.ai/" },
-      { content: "/share 7" },
+      { content: "/share 7", commandAuthorized: true },
     );
     // Should NOT contain a double-slash before /verify.
     expect(result.reply?.text).not.toMatch(/\.0g\.ai\/\/verify/);

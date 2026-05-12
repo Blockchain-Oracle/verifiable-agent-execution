@@ -67,6 +67,24 @@ export function handleShareCommand(
   ctx: ShareCommandContext,
   event: ShareCommandEvent,
 ): ShareCommandResult {
+  // SECURITY (Codex round-19, defense-in-depth): the authorization
+  // gate moves INSIDE this exported function so a future caller
+  // who imports `handleShareCommand` directly (bypassing the
+  // index.ts register block) cannot accidentally produce a share
+  // URL for an unauthenticated inbound. The same gate also lives at
+  // index.ts:1313 — duplicated intentionally so the contract is
+  // enforced at BOTH the registration site AND the function body.
+  // Both checks must agree: commandAuthorized === true AND
+  // content.startsWith("/share").
+  if (event.commandAuthorized !== true) {
+    return { handled: false };
+  }
+  if (
+    typeof event.content !== "string" ||
+    !/^\s*\/share(\s|$)/i.test(event.content)
+  ) {
+    return { handled: false };
+  }
   // Parse the optional tokenId arg. Three sources, in priority:
   //   1. event.args[0] if the channel pre-split arguments
   //   2. event.content text after the `/share` prefix
