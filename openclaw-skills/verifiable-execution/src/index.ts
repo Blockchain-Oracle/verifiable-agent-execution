@@ -905,19 +905,48 @@ export async function handleSessionEnd(
     // Promote the pending key to a committed key keyed by tokenId.
     // ALSO updates last-receipt.json so `/share` with no args targets
     // this receipt.
-    const committed = state.keystore.commitPending(sessionKey, tokenIdStr);
-    if (!committed) {
-      // Means setPending failed earlier — we still want to TRY to put
-      // the key under tokenId so the operator can /share retroactively.
-      try {
+    //
+    // Codex round-12 P1: wrap this in its OWN try/catch so a
+    // filesystem error here (the rename + chmod + last-receipt write)
+    // doesn't bubble to the outer catch and get misclassified as
+    // "pre-flush failed." Mint already succeeded — the operator
+    // needs the tokenId and a recovery hint pointing at manual
+    // commitPending, not generic flush-retry guidance.
+    try {
+      const committed = state.keystore.commitPending(sessionKey, tokenIdStr);
+      if (!committed) {
+        // setPending failed earlier — try a direct put under tokenId so
+        // the operator can /share retroactively.
         state.keystore.put(tokenIdStr, encryptionKey);
-      } catch (putErr) {
-        structuredLog("WARN", "session_end", "Keystore put after-mint failed", {
+      }
+    } catch (commitErr) {
+      // Mint succeeded; only the keystore promotion failed. The pending
+      // key file may still be on disk under the original sessionKey,
+      // OR the put() retry may have partially landed. Both paths are
+      // recoverable manually.
+      structuredLog(
+        "ERROR",
+        "session_end",
+        "Keystore commit failed AFTER successful mint — receipt is on-chain but local key isn't yet bound to tokenId",
+        {
           sessionKey,
           tokenId: tokenIdStr,
-          cause: putErr instanceof Error ? putErr.message : String(putErr),
-        });
-      }
+          txHash: result.txHash,
+          rootHash: result.rootHash,
+          cause: commitErr instanceof Error ? commitErr.message : String(commitErr),
+          recovery:
+            `Receipt minted as tokenId ${tokenIdStr} (tx ${result.txHash}). ` +
+            `To bind the local key for /share, fix the FS issue then run: ` +
+            `keystore.commitPending("${sessionKey}", "${tokenIdStr}"). ` +
+            `If the pending key file is gone, the receipt's contents are ` +
+            `unrecoverable from THIS host (the rootHash is on 0G Storage ` +
+            `but the AES key was lost).`,
+        },
+      );
+      // Mint succeeded → the SessionLogger has done its job. Release
+      // it; the receipt is on-chain regardless of keystore state.
+      state.sessions.release(sessionKey);
+      return;
     }
     // SECURITY (Codex round-9 P1): the reveal key MUST NOT appear in
     // log streams. Encryption is the v0.3.0 wedge — if the key gets

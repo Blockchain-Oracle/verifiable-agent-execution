@@ -1302,6 +1302,51 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
     // Operator can later: retryMint → get tokenId → commitPending(sessionKey, tokenId).
   });
 
+  // Codex round-12 P1: post-mint commitPending failure must be
+  // handled as its own branch, NOT mislabeled as "pre-flush" via the
+  // outer catch. Operator needs the tokenId + a specific recovery
+  // hint pointing at manual commitPending.
+  it("logs a tokenId-specific recovery hint when commitPending throws AFTER successful mint", async () => {
+    const stderrWrites: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        if (typeof chunk === "string") stderrWrites.push(chunk);
+        else if (chunk instanceof Buffer) stderrWrites.push(chunk.toString("utf8"));
+        return true;
+      });
+    const { state } = buildPluginStateForTests();
+    // Stub commitPending AND put to simulate "FS unwritable after mint."
+    const commitSpy = vi
+      .spyOn(state.keystore, "commitPending")
+      .mockImplementation(() => {
+        throw new Error("EROFS: read-only file system");
+      });
+    const sessionKey = "ses_commit_fails";
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
+      { sessionKey },
+    );
+    await handleSessionEnd(state, { messages: [], success: true }, { sessionKey });
+
+    const captured = stderrWrites.join("");
+    // Specific post-mint message, NOT the generic "pre-flush" label.
+    expect(captured).toMatch(/Keystore commit failed AFTER successful mint/);
+    expect(captured).not.toMatch(/Anchor failed \(pre-flush\)/);
+    // tokenId 99 (the stub mint result) MUST appear in the recovery
+    // hint so the operator knows the receipt is anchored and can
+    // call keystore.commitPending(sessionKey, "99").
+    expect(captured).toContain('tokenId 99');
+    // The recovery hint embeds the manual commitPending call. Logs
+    // are JSON-stringified so quotes appear escaped.
+    expect(captured).toContain('commitPending(\\"ses_commit_fails\\", \\"99\\")');
+    // Reveal-key invariants from round-9 still hold:
+    expect(captured).not.toContain("#k=");
+    commitSpy.mockRestore();
+    stderrSpy.mockRestore();
+  });
+
   // Hard-fail invariant (Codex round-3): if keystore.setPending throws
   // (FS unwritable / disk full), handleSessionEnd MUST abort before
   // upload. Silently degrading to plaintext upload would violate the
