@@ -80,7 +80,14 @@ Then the order is:
   4. 0G Storage receives an encrypted envelope blob, NOT plaintext
   5. AgenticID.mint anchors the rootHash of the encrypted blob
   6. keystore.commitPending(sessionKey, tokenId) — moves to keystore/<tokenId>.key
-  7. structuredLog emits {shareUrl: "https://verifiable.0g.ai/verify/<id>#k=<base64url(K)>"}
+  7. structuredLog emits a KEY-FREE "Session anchored on-chain" line with
+     {tokenId, txHash, rootHash, entryCount, verifyUrl} — the reveal key
+     and `#k=` fragment are intentionally OMITTED from logs (Codex
+     round-9 SECURITY fix: auto-logging the key on every session leaked
+     decryption material to gateway / collector / observability logs,
+     defeating the encrypted-by-default contract). Operators fetch the
+     full share URL on demand via the `/share` command, which reads the
+     committed key from the keystore at request time.
 
 Given flush succeeds but mint fails
 When the operator inspects keystore/pending/
