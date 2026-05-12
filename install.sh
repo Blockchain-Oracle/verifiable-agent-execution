@@ -114,6 +114,46 @@ info "Step 0b/3 — building self-contained plugin bundle"
   || fail "Bundle missing openclaw.plugin.json at $PLUGIN_DIR"
 ok "bundled to $PLUGIN_DIR"
 
+# ── Step 0c: pre-generate the plugin wallet so we can use its address
+# as the default agentId. The plugin's own wallet.ts will create the
+# file lazily on first session-end, but doing it here lets us thread
+# the wallet address into the config as agentId — meaning the user has
+# NOTHING to edit after install. True zero-config for the hackathon
+# demo flow. If a wallet already exists (re-run case) we just read it.
+echo
+info "Step 0c/3 — initializing plugin wallet (so agentId can be auto-set)"
+WALLET_DIR="$HOME/.openclaw/$PLUGIN_ID"
+mkdir -p "$WALLET_DIR"
+chmod 700 "$WALLET_DIR" 2>/dev/null || true
+WALLET_FILE="$WALLET_DIR/wallet.json"
+
+if [ ! -f "$WALLET_FILE" ]; then
+  # Use ethers via the installed workspace deps. Stay in $SCRIPT_DIR so
+  # Node resolves `ethers` from the repo's node_modules. The file
+  # layout matches what openclaw-skills/verifiable-execution/src/wallet.ts
+  # writes itself — same keys, same mode 0600.
+  ( cd "$SCRIPT_DIR" && node --input-type=module -e "
+    import { Wallet } from 'ethers';
+    import { writeFileSync } from 'node:fs';
+    const w = Wallet.createRandom();
+    const body = JSON.stringify({
+      privateKey: w.privateKey,
+      address: w.address,
+      createdAt: new Date().toISOString(),
+      network: 'galileo-testnet'
+    }, null, 2);
+    writeFileSync('$WALLET_FILE', body, { mode: 0o600 });
+    process.stdout.write(w.address);
+  " > /dev/null )
+  chmod 600 "$WALLET_FILE"
+  ok "generated fresh wallet at $WALLET_FILE"
+else
+  ok "reusing existing wallet at $WALLET_FILE"
+fi
+
+PLUGIN_WALLET_ADDRESS="$(jq -r '.address' "$WALLET_FILE")"
+ok "wallet address: $PLUGIN_WALLET_ADDRESS"
+
 # ── Step 1: seed config FIRST (openclaw validates on install) ────────────────
 # OpenClaw 2026.4.25 runs configSchema validation against the existing
 # entry as part of `plugins install`. If the block is missing, install
@@ -129,11 +169,11 @@ mkdir -p "$(dirname "$OPENCLAW_CONFIG")"
 BACKUP="$OPENCLAW_CONFIG.bak.$(date +%Y%m%d)"
 [ -f "$BACKUP" ] || cp "$OPENCLAW_CONFIG" "$BACKUP"
 
-# Build the plugin config block. We thread agentId in as a placeholder
-# string the user must replace; the plugin enters degraded (no-op) mode
-# until it's a real 0x-prefixed address — that's a deliberate guard
-# against silent mis-tagged proofs.
-AGENT_ID_PLACEHOLDER="0x0000000000000000000000000000000000000000"
+# Use the plugin's auto-generated wallet address as the default agentId.
+# The user can override this in openclaw.json to bind the proofs to a
+# different identity, but the default means there's NO required edit
+# after install — true zero-config.
+DEFAULT_AGENT_ID="$PLUGIN_WALLET_ADDRESS"
 
 # jq does the JSON edit atomically (read → modify → write to temp →
 # rename). Far safer than sed/awk on JSON. Idempotent: re-running
@@ -147,7 +187,7 @@ jq \
   --arg vurl "$DEFAULT_VERIFY_URL_BASE" \
   --argjson cid "$DEFAULT_CHAIN_ID" \
   --arg mid "$DEFAULT_MODEL_ID" \
-  --arg agentPlaceholder "$AGENT_ID_PLACEHOLDER" \
+  --arg agentDefault "$DEFAULT_AGENT_ID" \
   --arg pluginId "$PLUGIN_ID" \
   --arg pluginPath "$PLUGIN_DIR" \
   '
@@ -162,7 +202,7 @@ jq \
     .plugins.entries[$pluginId].config.verifierAddress //= $ver |
     .plugins.entries[$pluginId].config.verifyUrlBase //= $vurl |
     .plugins.entries[$pluginId].config.chainId //= $cid |
-    .plugins.entries[$pluginId].config.agentId //= $agentPlaceholder |
+    .plugins.entries[$pluginId].config.agentId //= $agentDefault |
     .plugins.entries[$pluginId].config.modelId //= $mid |
     .plugins.load //= {} |
     .plugins.load.paths //= [] |
@@ -196,31 +236,29 @@ else
 fi
 
 # ── Footer — what the user does next ─────────────────────────────────────────
-EXISTING_AGENT_ID="$(jq -r ".plugins.entries.\"$PLUGIN_ID\".config.agentId // \"\"" "$OPENCLAW_CONFIG")"
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo " ✅ Plugin installed — three steps left for you:"
+echo " ✅ Plugin installed — two steps left:"
 echo "════════════════════════════════════════════════════════════════"
 echo
-echo " 1. Set your agentId in $OPENCLAW_CONFIG:"
-if [ "$EXISTING_AGENT_ID" = "$AGENT_ID_PLACEHOLDER" ]; then
-  echo "       Currently: $EXISTING_AGENT_ID (placeholder — plugin will be no-op)"
-else
-  echo "       Currently: $EXISTING_AGENT_ID"
-fi
-echo "       Set it to any 0x-prefixed 20-byte address — it identifies your agent"
-echo "       in the iNFT dataDescription. Suggested: use your wallet address."
+echo " 1. Fund the plugin wallet (one-time, free on testnet):"
 echo
-echo " 2. Fund the plugin wallet (auto-generated on first run):"
-echo "       The plugin creates ~/.openclaw/verifiable-execution/wallet.json on"
-echo "       first session-end. Claim 0.1 0G from https://faucet.0g.ai to fund it."
-echo "       (Mainnet users: send manually to the address printed on first run.)"
+echo "       Address:  $PLUGIN_WALLET_ADDRESS"
+echo "       Network:  Galileo testnet (chainId $DEFAULT_CHAIN_ID)"
+echo "       Faucet:   https://faucet.0g.ai"
 echo
-echo " 3. Restart the OpenClaw gateway:"
+echo "       Paste the address above, claim 0.1 0G. Mainnet users:"
+echo "       send 0G directly to the address from any exchange."
+echo
+echo " 2. Restart the OpenClaw gateway:"
+echo
 echo "       openclaw gateway restart"
 echo
 echo " Then run an OpenClaw session as usual. Every tool call is captured;"
 echo " on session-end the log is anchored to AgenticID and you get a"
 echo " /verify/<tokenId> URL — share it with anyone."
+echo
+echo " (Advanced) Override agentId by editing $OPENCLAW_CONFIG —"
+echo " currently set to the plugin's wallet address."
 echo "════════════════════════════════════════════════════════════════"
 echo
