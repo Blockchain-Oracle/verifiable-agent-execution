@@ -20,7 +20,7 @@
 
 import { createCipheriv, randomBytes } from "node:crypto";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.ZG_TESTNET_RPC ??= "https://evmrpc-testnet.0g.ai";
 process.env.ZG_INDEXER_RPC ??= "https://indexer-storage-testnet-turbo.0g.ai";
@@ -280,6 +280,60 @@ describe("GET /api/verify/[tokenId] — colon-containing sessionId (real VPS ses
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.sessionId).toBe(COLON_SESSION);
     expect(body.verified).toBe("preview"); // unsigned entries
+  });
+});
+
+// Codex round-15 P1: pin the "server log has NO k= value" BDD line
+// with an explicit test (was implicit via the route signature dropping
+// `?k=` parsing). Drive the hostile-`?k=` path through the route and
+// assert no Node logging surface receives the attacker-supplied key.
+describe("GET /api/verify/[tokenId] — `?k=` attacker value never reaches server logs", () => {
+  it("does NOT write '?k=' or the attacker key to console / stderr / stdout", async () => {
+    const ATTACKER_KEY = "ATTACKER_SUPPLIED_KEY_PAYLOAD";
+    const captured: string[] = [];
+    const record = (chunk: unknown) => {
+      if (typeof chunk === "string") captured.push(chunk);
+      else if (chunk instanceof Buffer) captured.push(chunk.toString("utf8"));
+      else captured.push(String(chunk));
+    };
+    // Cover the full Node logging surface — anything a careless
+    // implementation could plausibly use.
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(record),
+      vi.spyOn(console, "warn").mockImplementation(record),
+      vi.spyOn(console, "error").mockImplementation(record),
+      vi.spyOn(console, "info").mockImplementation(record),
+      vi.spyOn(console, "debug").mockImplementation(record),
+      vi.spyOn(process.stderr, "write").mockImplementation((c: unknown) => {
+        record(c);
+        return true;
+      }),
+      vi.spyOn(process.stdout, "write").mockImplementation((c: unknown) => {
+        record(c);
+        return true;
+      }),
+    ];
+
+    const { arrayBuffer } = makeEncryptedBlob('{"sessionId":"x","entries":[]}');
+    installFakeClients({ arrayBuffer });
+    const response = await getProof(
+      new Request(`http://localhost:3000/api/verify/42?k=${ATTACKER_KEY}`),
+      { params: Promise.resolve({ tokenId: "42" }) },
+    );
+    // Sanity: the route still returns the encrypted state (route is
+    // signature-key-blind; ?k= is silently ignored).
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.verified).toBe("encrypted");
+
+    const all = captured.join("");
+    // The attacker-supplied key MUST NOT appear in ANY log sink.
+    expect(all).not.toContain(ATTACKER_KEY);
+    // Defense in depth: even the `?k=` marker shouldn't show up — if a
+    // request URL were logged it would carry the key by association.
+    expect(all).not.toContain("?k=");
+
+    for (const spy of spies) spy.mockRestore();
   });
 });
 

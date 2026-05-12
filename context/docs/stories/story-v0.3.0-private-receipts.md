@@ -127,11 +127,20 @@ And the key NEVER appears in server logs / reverse proxy logs / APM traces
 
 # --- m5: /share slash command UX ---
 Given the operator types "/share" in the agent's chat (Telegram, CLI)
+And the channel passes `content: "/share"` (or "/share <id>") AND `commandAuthorized: true`
 When the inbound_claim event fires
 Then handleShareCommand(ctx, event) returns {handled: true, reply: {text: ...}}
 And the reply contains a URL of the form
   "https://verifiable.0g.ai/verify/<lastTokenId>#k=<base64url>"
 And the reply mentions the session key for the operator's own debugging
+# v0.3.0 explicitly REQUIRES `content: "/share"` because OpenClaw 2026.4.x
+# does not surface a `command`/`commandName` field on PluginHookInboundClaimEvent
+# (see /tmp/openclaw-src/src/plugins/hook-message.types.ts:26). Without that
+# signal, plugins must self-discriminate by content text. Channels that
+# pre-split slash-command args without raw content (Discord-style) are
+# intentionally rejected — see Out of scope below. The fix requires
+# wiring ctx.pluginBinding like the stock codex plugin, which is v0.4.0
+# scope.
 
 Given the operator types "/share <specificTokenId>"
 Then the reply targets that tokenId, NOT the last receipt
