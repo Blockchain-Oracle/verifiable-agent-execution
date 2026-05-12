@@ -27,20 +27,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  request: Request,
+  _request: Request,
   context: { params: Promise<{ tokenId: string }> },
 ): Promise<NextResponse> {
   const { tokenId } = await context.params;
-  // v0.3.0: optional `?k=<base64url-key>` query forwards the share-link
-  // fragment that the page-level client component reads from
-  // window.location.hash. The fragment NEVER leaves the browser
-  // server-side automatically — we forward it explicitly via this query
-  // param after the client decodes the hash. Without `?k=` an
-  // encrypted token returns `verified: "encrypted"` + empty entries.
-  const url = new URL(request.url);
-  const key = url.searchParams.get("k") ?? undefined;
+  // v0.3.0 SECURITY: this route is intentionally key-blind. The URL
+  // fragment (`#k=...`) NEVER reaches the server — that's the whole
+  // point of using a fragment for the reveal key. For encrypted
+  // receipts, `resolveProof` returns metadata + verified="encrypted"
+  // with `entries` omitted; the client fetches /blob (also key-blind)
+  // and decrypts in the browser. Any attempt to add `?k=` parsing
+  // here is a defense-in-depth violation.
   try {
-    const proof = await resolveProof(tokenId, key);
+    const proof = await resolveProof(tokenId);
     return NextResponse.json(proof, { status: 200 });
   } catch (cause) {
     if (cause instanceof ProofResolutionError) {

@@ -1,24 +1,26 @@
 "use client";
 
 /**
- * EncryptedReveal — client-side wrapper for v0.3.0 "encrypted" receipts.
+ * EncryptedReveal — fully client-side reveal for v0.3.0 encrypted receipts.
  *
- * When the server-side `resolveProof` returns `verified: "encrypted"`,
- * the blob on 0G Storage is an AES-256-GCM envelope and no reveal key
- * was sent server-side. This component:
+ * Server returns metadata with `verified === "encrypted"` and no entries.
+ * This component:
  *
  *   1. Renders the metadata-only "🔒 Encrypted" state immediately
  *   2. On mount, reads `window.location.hash` for `#k=<base64url-key>`
- *   3. If found, re-fetches `/api/verify/[tokenId]?k=<key>` and
- *      hydrates the full SessionView with decrypted entries
+ *   3. If found, fetches the **encrypted envelope** from
+ *      `/api/verify/[tokenId]/blob` (a key-blind passthrough — the
+ *      server never sees `?k=`), decrypts in the browser using
+ *      `apps/dashboard/src/lib/crypto.ts`, and hands SessionView the
+ *      synthesized full proof + a client-side `verifyEntry` callback.
  *   4. If absent, leaves the locked-state UI for the visitor to either
- *      paste a key or close the tab
+ *      paste a key or close the tab.
  *
- * The URL fragment NEVER hits the server (browsers don't include it in
- * HTTP requests). The page-level server component only sees the path
- * + query string. We forward the key via `?k=` ONLY after the client
- * reads the hash — that round-trip keeps the fragment cookie-style
- * private to the visitor's browser.
+ * v0.3.0 SECURITY: the reveal key NEVER leaves the browser. Not via
+ * URL query, not via request body, not via header. Browsers never
+ * include the fragment in any request — that's the whole point of
+ * using a fragment for the reveal key. Server logs, reverse proxies,
+ * and APM traces are all key-blind by construction.
  */
 
 import { useEffect, useState } from "react";
@@ -26,6 +28,12 @@ import { useEffect, useState } from "react";
 import { Mono } from "@/components/Mono";
 import { SessionView } from "@/components/SessionView";
 import { StatusBadge } from "@/components/StatusBadge";
+import {
+  decryptSessionLog,
+  isEncryptedEnvelope,
+  shareStringToKey,
+} from "@/lib/crypto";
+import { verifyEntryClient } from "@/lib/client-verify";
 import { type ProofResponse } from "@/lib/verify-proof";
 
 interface EncryptedRevealProps {
@@ -39,6 +47,28 @@ type RevealState =
   | { status: "decrypted"; proof: ProofResponse }
   | { status: "error"; message: string };
 
+interface SessionLogEntryShape {
+  seq: number;
+  ts: number;
+  type: string;
+  tool?: string;
+  inputHash: string;
+  outputHash: string;
+  teeSignature?: string;
+  agentId?: string;
+  sealId?: string;
+  signedAt?: number;
+  params?: unknown;
+  result?: unknown;
+  redacted?: boolean;
+}
+
+interface DecodedSessionLog {
+  sessionId: string;
+  entryCount: number;
+  entries: SessionLogEntryShape[];
+}
+
 export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
   const [state, setState] = useState<RevealState>({ status: "locked" });
 
@@ -48,12 +78,15 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
     const hash = window.location.hash.replace(/^#/, "");
     if (hash.length === 0) return;
     const params = new URLSearchParams(hash);
-    const key = params.get("k");
-    if (key === null || key.length === 0) return;
+    const keyStr = params.get("k");
+    if (keyStr === null || keyStr.length === 0) return;
 
     setState({ status: "decrypting" });
     const controller = new AbortController();
-    fetch(`/api/verify/${initialProof.tokenId}?k=${encodeURIComponent(key)}`, {
+    // Fetch the encrypted envelope from the key-blind passthrough.
+    // We deliberately do NOT include the key in this request — the
+    // envelope is public bytes (without the key it's unreadable).
+    fetch(`/api/verify/${initialProof.tokenId}/blob`, {
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -61,13 +94,55 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
           const body = (await res.json().catch(() => null)) as
             | { error?: { code?: string; message?: string } }
             | null;
-          const msg =
-            body?.error?.message ?? `${res.status} ${res.statusText}`;
-          throw new Error(msg);
+          throw new Error(body?.error?.message ?? `${res.status} ${res.statusText}`);
         }
-        return res.json() as Promise<ProofResponse>;
+        return res.json() as Promise<unknown>;
       })
-      .then((proof) => {
+      .then((envelope) => {
+        if (!isEncryptedEnvelope(envelope)) {
+          throw new Error("Server returned non-envelope payload.");
+        }
+        // Decrypt in the browser. shareStringToKey throws on malformed
+        // input; decryptSessionLog throws on AES-GCM auth-tag mismatch.
+        const key = shareStringToKey(keyStr);
+        const plaintextJson = decryptSessionLog(envelope, key);
+        const decoded = JSON.parse(plaintextJson) as DecodedSessionLog;
+        if (
+          typeof decoded !== "object" ||
+          decoded === null ||
+          !Array.isArray(decoded.entries)
+        ) {
+          throw new Error("Decrypted payload missing entries array.");
+        }
+        // Synthesize a ProofResponse so SessionView can render. We
+        // keep the server-provided metadata (rootHash, explorer URLs,
+        // rpcUrl, verifierAddress) and only fill in the entries +
+        // verified status from the locally-decrypted log.
+        const proof: ProofResponse = {
+          ...initialProof,
+          sessionId: decoded.sessionId,
+          entryCount: decoded.entryCount,
+          // verified is provisional on the client — SessionView's
+          // verifyEntry callback runs the cascade and the badges
+          // resolve to verified | unverified | unsigned per-entry.
+          verified: "preview",
+          entries: decoded.entries.map((e) => ({
+            seq: e.seq,
+            ts: e.ts,
+            type: e.type,
+            tool: e.tool,
+            inputHash: e.inputHash,
+            outputHash: e.outputHash,
+            hasTeeSignature: e.teeSignature !== undefined,
+            ...(e.teeSignature !== undefined ? { teeSignature: e.teeSignature } : {}),
+            ...(e.agentId !== undefined ? { agentId: e.agentId } : {}),
+            ...(e.sealId !== undefined ? { sealId: e.sealId } : {}),
+            ...(e.signedAt !== undefined ? { signedAt: e.signedAt } : {}),
+            ...(e.params !== undefined ? { params: e.params } : {}),
+            ...(e.result !== undefined ? { result: e.result } : {}),
+            ...(e.redacted === true ? { redacted: true } : {}),
+          })),
+        };
         setState({ status: "decrypted", proof });
       })
       .catch((cause: unknown) => {
@@ -79,10 +154,24 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
       });
 
     return () => controller.abort();
-  }, [initialProof.tokenId]);
+  }, [initialProof]);
 
   if (state.status === "decrypted") {
-    return <SessionView proof={state.proof} />;
+    // Pass a client-side verifyEntry — encrypted-mode SessionView
+    // verifies each entry in the browser via ethers, NOT via
+    // /api/verify/<id>/entry/<seq> (which is key-blind and can't
+    // decrypt the entry).
+    return (
+      <SessionView
+        proof={state.proof}
+        verifyEntry={(entry) =>
+          verifyEntryClient(entry, {
+            rpcUrl: state.proof.meta.rpcUrl,
+            verifierAddress: state.proof.meta.verifierAddress,
+          })
+        }
+      />
+    );
   }
 
   // Locked / decrypting / error all share the metadata-only chrome.
@@ -160,9 +249,10 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
                 <code className="font-mono text-xs text-text-primary">
                   #k=…
                 </code>{" "}
-                that decrypts in your browser without ever being sent to
-                a server. Once you have the URL, the entries appear below
-                automatically.
+                that your browser uses to decrypt locally. The key never
+                leaves your machine — not via this dashboard, not via
+                any server log. Once you have the URL, the entries
+                appear below automatically.
               </p>
             </>
           )}

@@ -72,6 +72,23 @@ describe("Keystore — put / get round-trip", () => {
     const mode = statSync(filePath).mode & 0o777;
     expect(mode.toString(8)).toBe("600");
   });
+
+  // BDD: "Then a file at keystore/<tokenId>.key exists with mode 0600
+  //       And last-receipt.json is updated to point at this tokenId"
+  // Codex round-1 caught that put() wrote the key but skipped the
+  // last-receipt update, so /share with no args silently returned
+  // "no receipts yet" after a direct put. This test pins the fix.
+  it("updates last-receipt pointer so /share no-args returns the put tokenId", () => {
+    const k = generateKey();
+    ks.put("9", k);
+    const last = ks.getLast();
+    expect(last).not.toBeNull();
+    expect(last!.tokenId).toBe("9");
+    // sessionKey for direct-put has a synthetic marker so operators
+    // can distinguish from agent_end commits.
+    expect(last!.sessionKey).toBe("direct-put:9");
+    expect(last!.mintedAt).toBeGreaterThan(0);
+  });
 });
 
 describe("Keystore — setPending / commitPending (crash-recovery ordering)", () => {

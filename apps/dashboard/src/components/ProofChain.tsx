@@ -80,10 +80,10 @@ export function ProofChain({ proof }: ProofChainProps) {
       </header>
 
       <section aria-label="Execution log entries" className="space-y-3">
-        {proof.entries.map((entry) => (
+        {(proof.entries ?? []).map((entry) => (
           <LogEntry key={entry.seq} entry={entry} />
         ))}
-        {proof.entries.length === 0 && (
+        {(proof.entries ?? []).length === 0 && (
           <p className="rounded-lg border border-border bg-surface p-4 text-sm text-text-secondary">
             This session was anchored with zero log entries — the
             agent ran but produced no captured tool calls.

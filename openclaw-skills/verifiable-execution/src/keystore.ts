@@ -154,6 +154,15 @@ export class Keystore {
 
   /**
    * Direct put — for retry paths or manual association.
+   *
+   * Also updates `last-receipt.json` so that `/share` with no args
+   * returns this tokenId (parity with the setPending → commitPending
+   * production flow which also updates the pointer). The sessionKey
+   * field is filled with a synthetic `direct-put:<tokenId>` marker
+   * because `put` is called outside the agent runtime and doesn't
+   * have a real OpenClaw session identifier — share-command renders
+   * the marker in the session footnote so operators can tell apart
+   * "minted via /share" vs. "minted via agent_end."
    */
   put(tokenId: string, key: Buffer): void {
     if (key.length !== 32) {
@@ -165,6 +174,11 @@ export class Keystore {
       this.sanitizeFilename(tokenId) + ".key",
     );
     this.atomicWriteBytes(path, key);
+    this.writeLastReceiptPointer({
+      tokenId,
+      sessionKey: `direct-put:${tokenId}`,
+      mintedAt: Math.floor(Date.now() / 1000),
+    });
   }
 
   /**
