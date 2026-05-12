@@ -1252,11 +1252,26 @@ export default {
         args?: unknown;
       }) => { handled: boolean; reply?: { text: string } } | undefined,
     ) => void)("inbound_claim", (event) => {
-      const isOurCommand =
-        event.commandAuthorized === true ||
+      // SECURITY (Codex round-6 P1): require commandAuthorized === true
+      // MANDATORY. Without it, ANY inbound message starting with
+      // "/share" — including from an untrusted channel sender — would
+      // emit the share URL + key fragment, leaking the receipt to a
+      // stranger. The earlier text-prefix fallback (`/^\s*\/share/i`)
+      // was an attempt to support pre-2026.4.25 OpenClaw runtimes that
+      // didn't surface commandAuthorized, but that fallback bypassed
+      // operator authentication entirely. Drop it: if a runtime
+      // doesn't set commandAuthorized, /share simply doesn't fire,
+      // which is the safe default. Operators should upgrade OpenClaw.
+      if (event.commandAuthorized !== true) return { handled: false };
+      // Defense in depth: confirm the inbound matches /share. The
+      // OpenClaw command router SHOULD only route /share matches to
+      // us via this hook, but a misconfigured channel provider could
+      // forward unrelated inbound. Check the text or args.
+      const isShareCommand =
         (typeof event.content === "string" &&
-          /^\s*\/share(\s|$)/i.test(event.content));
-      if (!isOurCommand) return { handled: false };
+          /^\s*\/share(\s|$)/i.test(event.content)) ||
+        Array.isArray(event.args);
+      if (!isShareCommand) return { handled: false };
       return handleShareCommand(
         {
           keystore: state.keystore,

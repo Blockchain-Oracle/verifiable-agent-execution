@@ -168,6 +168,73 @@ describe("register() — happy path with full config", () => {
   });
 });
 
+// Codex round-6 P1: inbound_claim handler authorization gate.
+//
+// Earlier revisions accepted ANY inbound text starting with "/share"
+// (text-prefix fallback for older OpenClaw runtimes without
+// commandAuthorized). That bypassed operator-identity check — an
+// untrusted channel sender could fire /share and receive a reveal URL.
+// Hardened: require event.commandAuthorized === true mandatorily.
+describe("register() — inbound_claim authorization gate", () => {
+  // Drive the registered handler directly by capturing it from the
+  // api.on spy and invoking with a synthetic event.
+  function getInboundClaimHandler(
+    onSpy: ReturnType<typeof makeFakeApi>["onSpy"],
+  ): (event: {
+    content?: unknown;
+    commandAuthorized?: unknown;
+    args?: unknown;
+  }) => { handled: boolean; reply?: { text: string } } | undefined {
+    const call = onSpy.mock.calls.find((c) => c[0] === "inbound_claim");
+    if (!call) throw new Error("inbound_claim handler not registered");
+    return call[1] as never;
+  }
+
+  it("rejects /share text when commandAuthorized is undefined (no operator auth → no leak)", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({ content: "/share" }) ?? { handled: false };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it("rejects /share text when commandAuthorized is explicitly false", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({ content: "/share 42", commandAuthorized: false }) ?? {
+      handled: false,
+    };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it("accepts /share when commandAuthorized is true (operator-authenticated path)", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    // No receipts yet — handleShareCommand returns the friendly
+    // "no receipts" reply. Important: result.handled is true, so the
+    // gate let it through.
+    const result = handler({ content: "/share", commandAuthorized: true });
+    expect(result?.handled).toBe(true);
+    expect(result?.reply?.text).toMatch(/no receipts yet/i);
+  });
+
+  it("rejects non-/share inbound even when commandAuthorized is true (defense in depth)", () => {
+    const { api, onSpy } = makeFakeApi(FULL_CONFIG);
+    plugin.register(api);
+    const handler = getInboundClaimHandler(onSpy);
+    const result = handler({
+      content: "hello bot",
+      commandAuthorized: true,
+    }) ?? { handled: false };
+    expect(result.handled).toBe(false);
+    expect(result.reply).toBeUndefined();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // register() — degraded mode (BDD: missing config logs warning, NOT crashes)
 // ---------------------------------------------------------------------------
