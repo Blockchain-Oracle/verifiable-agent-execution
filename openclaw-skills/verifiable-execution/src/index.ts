@@ -1263,24 +1263,42 @@ export default {
     // as a regular message + set commandAuthorized=true based on
     // text prefix matching.
     try {
-      // OpenClaw's registerCommand REQUIRES a `handler` function — VPS
-      // round-1 (2026-05-13) caught the gateway error
-      // "command registration failed: Command handler must be a function".
-      // Without it, the command never registers → channels never set
-      // commandAuthorized=true for /share → our inbound_claim gate
-      // always rejects → /share is silently dead.
+      // OpenClaw's registerCommand expects an OpenClawPluginCommandDefinition
+      // shape per /tmp/openclaw-src/src/plugins/types.ts:2000. VPS round-2
+      // (2026-05-13) caught that the v0.3.1 minimal shape (name +
+      // description + handler) registered the command in OpenClaw's
+      // internal registry but DIDN'T propagate to Telegram's
+      // setMyCommands surface — `/share` never appeared in the bot menu
+      // and typing it manually was treated as plain text. Two missing
+      // fields were the issue:
+      //   - `nativeNames: { default: "share" }` — opt-in to native
+      //     command surfaces (Telegram menu, Discord slash, CLI tab)
+      //   - `acceptsArgs: true` — so "/share 64" parses the "64" as
+      //     ctx.args instead of dropping the arg
       //
-      // The handler delegates directly to handleShareCommand. We still
-      // ALSO register the inbound_claim listener below for defense in
-      // depth (older channels or non-command-router paths).
+      // The handler signature is PluginCommandContext (NOT the
+      // inbound_claim event shape) per types.ts:1993. ctx already
+      // carries the authorization result + args, so we adapt the
+      // ctx → ShareCommandEvent shape for handleShareCommand and
+      // pass `commandAuthorized: true` because OpenClaw won't invoke
+      // this handler unless its own per-command auth gate passed
+      // (line 437 of telegram bot-8OTlBs39.js — rejectNotAuthorized
+      // fires BEFORE our handler).
+      interface PluginCommandContextLike {
+        isAuthorizedSender?: boolean;
+        args?: string;
+        commandBody?: string;
+      }
+      type CommandHandler = (
+        ctx: PluginCommandContextLike,
+      ) => { text: string; continueAgent?: boolean } | Promise<{ text: string; continueAgent?: boolean }>;
       type RegisterCommandFn = (cmd: {
         name: string;
         description: string;
         nativeNames?: { default?: string };
-        handler: (
-          event: { content?: unknown; commandAuthorized?: unknown; args?: unknown },
-          ctx: unknown,
-        ) => { handled: boolean; reply?: { text: string } } | undefined;
+        acceptsArgs?: boolean;
+        requireAuth?: boolean;
+        handler: CommandHandler;
       }) => void;
       const reg = (
         api as unknown as { registerCommand?: RegisterCommandFn }
@@ -1288,16 +1306,36 @@ export default {
       if (typeof reg === "function") {
         reg.call(api, {
           name: "share",
+          // nativeNames pin: same on every native command surface.
+          nativeNames: { default: "share" },
           description:
             "Get a verifiable receipt URL for your last agent action (or `/share <tokenId>`).",
-          handler: (event) => {
-            return handleShareCommand(
+          // /share takes an optional tokenId argument.
+          acceptsArgs: true,
+          handler: (ctx) => {
+            // Synthesize a ShareCommandEvent for handleShareCommand.
+            // commandAuthorized is true by construction (OpenClaw
+            // already authorized; this handler wouldn't run otherwise).
+            const argsArr =
+              typeof ctx.args === "string" && ctx.args.trim().length > 0
+                ? [ctx.args.trim()]
+                : undefined;
+            const result = handleShareCommand(
               {
                 keystore: state.keystore,
                 verifyUrlBase: state.config.verifyUrlBase,
               },
-              event,
+              {
+                content: ctx.commandBody ?? "/share",
+                commandAuthorized: true,
+                args: argsArr,
+              },
             );
+            // PluginCommandResult requires { text }. If our handler
+            // returns no reply (handled:false), surface a generic
+            // diagnostic — but that shouldn't happen given we
+            // already validated commandAuthorized + content above.
+            return { text: result.reply?.text ?? "/share: no reply produced" };
           },
         });
       }
