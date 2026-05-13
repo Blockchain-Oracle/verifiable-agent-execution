@@ -1263,10 +1263,24 @@ export default {
     // as a regular message + set commandAuthorized=true based on
     // text prefix matching.
     try {
+      // OpenClaw's registerCommand REQUIRES a `handler` function — VPS
+      // round-1 (2026-05-13) caught the gateway error
+      // "command registration failed: Command handler must be a function".
+      // Without it, the command never registers → channels never set
+      // commandAuthorized=true for /share → our inbound_claim gate
+      // always rejects → /share is silently dead.
+      //
+      // The handler delegates directly to handleShareCommand. We still
+      // ALSO register the inbound_claim listener below for defense in
+      // depth (older channels or non-command-router paths).
       type RegisterCommandFn = (cmd: {
         name: string;
         description: string;
         nativeNames?: { default?: string };
+        handler: (
+          event: { content?: unknown; commandAuthorized?: unknown; args?: unknown },
+          ctx: unknown,
+        ) => { handled: boolean; reply?: { text: string } } | undefined;
       }) => void;
       const reg = (
         api as unknown as { registerCommand?: RegisterCommandFn }
@@ -1276,6 +1290,15 @@ export default {
           name: "share",
           description:
             "Get a verifiable receipt URL for your last agent action (or `/share <tokenId>`).",
+          handler: (event) => {
+            return handleShareCommand(
+              {
+                keystore: state.keystore,
+                verifyUrlBase: state.config.verifyUrlBase,
+              },
+              event,
+            );
+          },
         });
       }
     } catch (cause) {
