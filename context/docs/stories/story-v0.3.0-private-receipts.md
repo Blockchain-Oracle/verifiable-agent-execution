@@ -206,7 +206,7 @@ And contracts/contracts/MockTEEVerifier.sol is exempt per ADR-06
 ## Shell verification
 
 ```bash
-# Plugin unit tests (must report 109/109 passing)
+# Plugin unit tests (must report 129+/129+ passing — as of round-19 close)
 pnpm --filter @verifiable-agent-execution/openclaw-skill test
 
 # Dashboard unit + route tests (encrypted dual-mode coverage)

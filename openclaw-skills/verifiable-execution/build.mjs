@@ -181,10 +181,18 @@ console.log("[build] wrote dist package.json");
 const distReadme = `# @blockchainoracle/openclaw-verifiable-execution
 
 OpenClaw plugin that captures every tool call inside an agent session,
-flushes the log to **0G Storage** at session end, and mints an
-**AgenticID iNFT** anchoring the rootHash on-chain. Outputs a
-\`https://verifiable.0g.ai/verify/<tokenId>\` URL anyone can verify
-cold — share once, anyone can replay the agent's run.
+**encrypts the log with a per-session AES-256-GCM key**, flushes the
+encrypted envelope to **0G Storage**, and mints an **AgenticID iNFT**
+anchoring the rootHash on-chain.
+
+**Encrypted by default.** The plugin outputs a key-free
+\`https://verifiable.0g.ai/verify/<tokenId>\` URL. Cold visitors see
+a 🔒 Encrypted locked-state page (proof chain verifiable cold, content
+hidden). When the operator chooses to share, they type \`/share\` in
+the bot chat — the bot replies with the full URL including a
+\`#k=<base64url-key>\` fragment. Recipients who open that URL decrypt
+client-side in their browser via WebCrypto; the key NEVER reaches the
+verifier server.
 
 ## Install
 

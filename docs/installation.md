@@ -136,7 +136,7 @@ While the agent runs, the plugin silently:
 ```
 
 The session's AES-256-GCM key is written to
-`~/.openclaw/verifiable-execution/keystore/<encoded-tokenId>.key`
+`~/.openclaw/verifiable-execution/keystore/<tokenId>.key` (literal tokenId — digits only)
 (mode 0600). It never appears in stderr, never appears in HTTP
 requests to the verifier server, and never leaves your host
 unless YOU choose to share it via the `/share` command below.
@@ -353,14 +353,27 @@ should see a stderr line like:
 [verifiable-execution] session anchored: tokenId=42 verifyUrl=https://verifiable.0g.ai/verify/42
 ```
 
-Open that URL in a browser. You'll see:
+Open that **key-free** URL in a browser. v0.3.0 encrypts receipts
+by default, so a cold visitor (anyone with just the URL — no
+`#k=` fragment) sees a **🔒 Encrypted** locked-state page:
 
-- **Session header** — sessionId, agentId, modelId, entry count
-- **Per-entry decoded params + result** with seq, timestamp, tool name
-- **TEE Verified** badge if signatures recover to the configured
-  oracle (`MockTEEVerifier.teeOracleAddress`)
-- **0G Storage** badge — links to the rootHash on the indexer
+- **Session header** — tokenId + on-chain anchor (sessionId is
+  visible from the dataDescription; the agent identity is the iNFT
+  owner address)
+- **Per-entry decoded params + result** are **HIDDEN** — visible
+  only after the operator types `/share` in the bot chat and shares
+  the resulting `…/verify/<id>#k=<key>` URL with the recipient
+- **0G Storage** badge — links to the (encrypted) rootHash on the
+  indexer; the cryptographic proof chain is verifiable cold
 - **AgenticID** badge — links to the iNFT on Galileo explorer
+
+To see the decoded entries, the operator runs `/share` (or
+`/share <tokenId>`) in the bot chat. The bot replies with a full
+URL including `#k=<base64url>`. Recipients who open that URL get
+client-side WebCrypto decryption in their browser — the
+**TEE Verified** badges then flip green sequentially as
+client-side ethers calls `MockTEEVerifier.verifyTEESignature` per
+entry. The reveal key never leaves the recipient's device.
 
 ---
 
