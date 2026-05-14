@@ -72,6 +72,11 @@ import { sha256Hex } from "./hash.js";
 import { Keystore } from "./keystore.js";
 import { SessionManager } from "./SessionManager.js";
 import { handleShareCommand } from "./share-command.js";
+import {
+  parseTranscriptToolCalls,
+  resolveClaudeCliTranscriptPath,
+  type TranscriptToolCall,
+} from "./transcript-parser.js";
 import { printFirstRunBanner, resolveWallet } from "./wallet.js";
 
 const PLUGIN_ID = "verifiable-execution";
@@ -126,6 +131,36 @@ interface PluginState {
    * during the upload window (sub-second on Galileo testnet).
    */
   pendingAnchors: Map<string, SessionLogger>;
+  /**
+   * v0.3.5 — per-session run metadata used to capture claude-cli
+   * (and other transcript-emitting providers') INTERNAL tool calls.
+   *
+   * Background: claude-cli runs Claude Code as a subprocess. Its
+   * built-in tools (Read/WebSearch/Bash/Edit/MCP) don't route through
+   * OpenClaw's tool dispatcher, so `after_tool_call` never fires. The
+   * tool calls ARE persisted to Claude Code's session jsonl at
+   * `~/.claude/projects/<encoded-workspaceDir>/<claude-session-id>.jsonl`
+   * — we read that file at `agent_end` time and inject one entry per
+   * `tool_use` block (with the paired `tool_result` as its
+   * `outputHash` source).
+   *
+   * Two metadata fields per sessionKey:
+   *   - `runStartTime`: set when `message_received` fires; used to
+   *     filter jsonl events to "those produced during THIS run". Lets
+   *     us re-read the same jsonl across multiple turns without
+   *     re-anchoring stale tool entries.
+   *   - `transcriptPath`: set when `before_agent_finalize` fires
+   *     (the hook OpenClaw's native-hook-relay provides for claude-cli
+   *     when its `.claude/settings.json` is configured). Lets us
+   *     skip the fallback file-system probe.
+   *
+   * If `transcriptPath` is missing at `agent_end` (e.g. Claude Code's
+   * settings.json hasn't been wired), we fall back to resolving from
+   * `ctx.workspaceDir` + scanning the project directory for the most
+   * recently modified `.jsonl`. The fallback covers operators who
+   * haven't run our install.sh's hook-config step.
+   */
+  runMetadata: Map<string, { runStartTime: number; transcriptPath?: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +435,10 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
     signer: storageSigner,
     keystore,
     pendingAnchors: new Map<string, SessionLogger>(),
+    runMetadata: new Map<
+      string,
+      { runStartTime: number; transcriptPath?: string }
+    >(),
   };
 }
 
@@ -530,6 +569,14 @@ export function handleMessageReceived(
     });
     return;
   }
+  // v0.3.5: pin the run-start timestamp BEFORE any logger work. We
+  // use this at agent_end time to filter the claude-cli session
+  // jsonl to "events emitted during THIS run." Without this, we'd
+  // re-anchor every tool call ever recorded in the jsonl, every turn.
+  // Set BEFORE getOrCreate so a thrown logger allocation still leaves
+  // the metadata in place — handleAgentEnd's read path tolerates
+  // missing logger but needs the runStartTime.
+  state.runMetadata.set(sessionKey, { runStartTime: Date.now() });
   let logger: SessionLogger;
   try {
     logger = state.sessions.getOrCreate(sessionKey);
@@ -1061,6 +1108,202 @@ async function anchorRun(
 }
 
 /**
+ * v0.3.5 helper — reads the claude-cli session jsonl tied to the
+ * given sessionKey, extracts tool_use/tool_result pairs, and appends
+ * one signed `tool_call` entry per pair to the SessionLogger.
+ *
+ * Path resolution priority (so this works with OR without Claude
+ * Code's native hooks configured):
+ *   1. `state.runMetadata.get(sessionKey).transcriptPath` — pinned
+ *      by `before_agent_finalize` (preferred; exact path).
+ *   2. `ctx.workspaceDir` → most-recently-modified jsonl under
+ *      `~/.claude/projects/<encoded-workspaceDir>/` (fallback for
+ *      operators who haven't wired native hooks into Claude Code's
+ *      `.claude/settings.json`).
+ *
+ * Returns without appending if neither resolution succeeds OR if the
+ * transcript has no matching tool calls in this run's window. The
+ * call site treats this whole step as additive — any failure leaves
+ * the existing entries (prompt_build, llm_text, etc.) intact.
+ *
+ * Dedup: existing logger entries' `params.toolCallId` is compared
+ * against each transcript tool_use `id`. Tools already captured by
+ * `handleAfterToolCall` (OpenClaw-routed MCP/gateway tools) don't
+ * get double-counted.
+ */
+function injectTranscriptToolEntries(opts: {
+  state: PluginState;
+  logger: SessionLogger;
+  sessionKey: string;
+  workspaceDir: string | undefined;
+}): void {
+  const { state, logger, sessionKey, workspaceDir } = opts;
+  const meta = state.runMetadata.get(sessionKey);
+
+  // Resolve transcript path: pinned path first, fallback to filesystem
+  // probe if Claude Code's native hooks didn't wire before_agent_finalize.
+  let transcriptPath = meta?.transcriptPath;
+  if (transcriptPath === undefined && workspaceDir !== undefined) {
+    transcriptPath = resolveClaudeCliTranscriptPath(workspaceDir) ?? undefined;
+  }
+  if (transcriptPath === undefined) {
+    // No path resolved — common for non-claude-cli providers (anthropic
+    // direct, codex, etc.). Their tool calls flow through
+    // OpenClaw's tool dispatcher → after_tool_call already captured
+    // them. Silent no-op.
+    return;
+  }
+
+  const runStartTime = meta?.runStartTime ?? Date.now() - 5 * 60 * 1000;
+  // 5-minute lookback for the no-message_received corner case (rare:
+  // agent_end fires without a preceding message_received that set
+  // runStartTime). Better to over-capture one turn's worth of events
+  // than to silently miss every tool call.
+
+  let toolCalls: TranscriptToolCall[];
+  try {
+    toolCalls = parseTranscriptToolCalls(transcriptPath, runStartTime);
+  } catch (cause) {
+    structuredLog(
+      "WARN",
+      "agent_end",
+      "Failed to parse claude-cli transcript; tool entries will be missing from receipt",
+      {
+        sessionKey,
+        transcriptPath,
+        cause: cause instanceof Error ? cause.message : String(cause),
+      },
+    );
+    return;
+  }
+  if (toolCalls.length === 0) return;
+
+  // Dedup against tool calls already captured by handleAfterToolCall.
+  // Each existing tool_call entry MAY carry `params.toolCallId` if it
+  // came from after_tool_call (which forwards the Anthropic id). The
+  // synthetic entries from message_received / prompt_build / llm_text
+  // don't carry one, so they won't match (safe).
+  const existingToolCallIds = new Set<string>();
+  for (const entry of logger.getEntries()) {
+    const params = entry.params;
+    if (params !== null && typeof params === "object") {
+      const id = (params as { toolCallId?: unknown }).toolCallId;
+      if (typeof id === "string" && id.length > 0) existingToolCallIds.add(id);
+    }
+  }
+
+  let injected = 0;
+  for (const tc of toolCalls) {
+    if (existingToolCallIds.has(tc.toolCallId)) continue;
+    try {
+      const inputHash = sha256Hex({ toolCallId: tc.toolCallId, input: tc.input });
+      // Store the full result content. tool_result blocks from
+      // Claude Code's Read/WebSearch/etc. are bounded (search hits
+      // truncate; Read caps at ~30k tokens) so this won't blow up
+      // the SessionLog. Plus the whole log is encrypted at flush
+      // time per v0.3.0 — content stays private behind /share.
+      const outputPayload = tc.isError
+        ? { error: tc.result }
+        : { result: tc.result };
+      const outputHash = sha256Hex(outputPayload);
+      const seq = logger.getStatus().entryCount;
+      const entry = buildSignedEntry(state, sessionKey, seq, {
+        type: "tool_call",
+        tool: tc.toolName,
+        inputHash,
+        outputHash,
+        params: { toolCallId: tc.toolCallId, input: tc.input },
+        result: outputPayload,
+      });
+      logger.appendEntry(entry);
+      injected++;
+    } catch (cause) {
+      structuredLog(
+        "WARN",
+        "agent_end",
+        "Skipped injecting one transcript tool entry due to append failure",
+        {
+          sessionKey,
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          cause: cause instanceof Error ? cause.message : String(cause),
+        },
+      );
+    }
+  }
+  if (injected > 0) {
+    structuredLog(
+      "INFO",
+      "agent_end",
+      "Injected transcript tool entries into receipt",
+      {
+        sessionKey,
+        injected,
+        transcriptPath,
+      },
+    );
+  }
+}
+
+/**
+ * before_agent_finalize handler — v0.3.5 content-fidelity capture.
+ *
+ * Fires from OpenClaw's `native-hook-relay` bridge when Claude Code's
+ * native hooks are wired into `.claude/settings.json` (our install.sh
+ * seeds them; manual setups need to opt in). The event carries the
+ * `transcriptPath` field — the on-disk path to Claude Code's session
+ * jsonl, which contains every `tool_use`/`tool_result` block the
+ * agent invoked during the run (Read, WebSearch, Bash, Edit, MCP
+ * tools — every internal tool claude-cli runs, NONE of which fire
+ * `after_tool_call` because they don't route through OpenClaw's
+ * dispatcher).
+ *
+ * We stash the path against the sessionKey so handleAgentEnd can
+ * read it at anchor time. The fallback for unconfigured Claude Code
+ * setups (no native hooks) is to resolve the jsonl path from
+ * `ctx.workspaceDir` + a most-recent-file scan, handled inside
+ * handleAgentEnd.
+ *
+ * Return value: { action: "continue" } — we don't gate finalization,
+ * just observe. Returning void also works (normalizeBeforeAgentFinalizeResult
+ * treats undefined as "continue").
+ */
+export function handleBeforeAgentFinalize(
+  state: PluginState,
+  event: { transcriptPath?: unknown; runId?: unknown },
+  ctx: { sessionKey?: unknown; sessionId?: unknown },
+): void {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    // No sessionKey context — can't pin the transcriptPath to a
+    // session. Silently no-op (this hook fires routinely; not worth
+    // a WARN log surface for every misrouted event).
+    return;
+  }
+  const transcriptPath =
+    typeof event.transcriptPath === "string" && event.transcriptPath.length > 0
+      ? event.transcriptPath
+      : undefined;
+  if (transcriptPath === undefined) {
+    // No transcriptPath in event — either Claude Code didn't pass one
+    // (older versions, or the stop-hook variant) or the relay didn't
+    // forward it. Leave existing runMetadata in place; handleAgentEnd
+    // will fall back to filesystem-probe resolution.
+    return;
+  }
+  const existing = state.runMetadata.get(sessionKey);
+  // Preserve the earlier runStartTime from handleMessageReceived if
+  // present. Without it (rare: before_agent_finalize fired without a
+  // preceding message_received), set runStartTime now so the jsonl
+  // filter has SOMETHING to compare against — better to over-capture
+  // a turn's worth of events than to drop them all.
+  state.runMetadata.set(sessionKey, {
+    runStartTime: existing?.runStartTime ?? Date.now(),
+    transcriptPath,
+  });
+}
+
+/**
  * agent_end handler — anchors ONE token per agent run. v0.3.4: this
  * is the PRIMARY anchor path. `agent_end` fires when the agent
  * completes its reply to a single user message; "one agent_end = one
@@ -1076,7 +1319,11 @@ async function anchorRun(
 export async function handleAgentEnd(
   state: PluginState,
   event: unknown,
-  ctx: { sessionKey?: unknown; sessionId?: unknown },
+  ctx: {
+    sessionKey?: unknown;
+    sessionId?: unknown;
+    workspaceDir?: unknown;
+  },
 ): Promise<void> {
   const sessionKey = pickSessionKey(ctx);
   if (sessionKey === null) {
@@ -1095,18 +1342,48 @@ export async function handleAgentEnd(
     });
     return;
   }
+  const existingLogger = state.sessions.getOrCreate(sessionKey);
+
+  // v0.3.5 — inject transcript tool entries BEFORE the entryCount
+  // gate. claude-cli's INTERNAL tools (Read/WebSearch/Bash/Edit/MCP)
+  // never fire `after_tool_call`, so without this step the receipt
+  // misses everything the agent actually did between prompt_build and
+  // the final llm_text. The transcript jsonl is the only place these
+  // tool calls are recorded. Failures here MUST NOT abort the
+  // anchor — the in-memory entries still anchor cleanly; the tool
+  // injection is additive.
+  try {
+    injectTranscriptToolEntries({
+      state,
+      logger: existingLogger,
+      sessionKey,
+      workspaceDir:
+        typeof ctx.workspaceDir === "string" ? ctx.workspaceDir : undefined,
+    });
+  } catch (cause) {
+    structuredLog(
+      "WARN",
+      "agent_end",
+      "Transcript tool-entry injection failed; receipt will be missing claude-cli internal tools",
+      {
+        sessionKey,
+        cause: cause instanceof Error ? cause.message : String(cause),
+      },
+    );
+  }
+
   // Codex r9: a SessionLogger can exist with entryCount=0 if a prior
   // entry handler's getOrCreate succeeded but its append/sign block
   // threw (and was swallowed by structuredLog). Anchoring an empty
   // log would mint a content-less receipt — feed inflation. The plan
   // (Section "Architectural change" step 1) says "bail if no entries";
   // enforce it here.
-  const existingLogger = state.sessions.getOrCreate(sessionKey);
   if (existingLogger.getStatus().entryCount === 0) {
     structuredLog("INFO", "agent_end", "SessionLogger has zero entries; skipping empty anchor", {
       sessionKey,
     });
     state.sessions.release(sessionKey);
+    state.runMetadata.delete(sessionKey);
     return;
   }
 
@@ -1196,6 +1473,14 @@ export async function handleAgentEnd(
     "exec-log",
     "agent_end",
   );
+  // v0.3.5: clear per-session run metadata (runStartTime,
+  // transcriptPath) now that the turn is fully anchored. The next
+  // `message_received` on this sessionKey will set fresh values.
+  // Cleanup runs unconditionally (post-success AND post-failure) —
+  // pre-flush failure already retained the SessionLogger in
+  // state.sessions, and the next agent_end will re-establish runMetadata
+  // via the next message_received.
+  state.runMetadata.delete(sessionKey);
 }
 
 /**
@@ -1334,6 +1619,9 @@ export async function handleSessionEnd(
     "exec-log-orphan",
     "session_end",
   );
+  // v0.3.5: orphan-recovery path also clears runMetadata — same
+  // semantics as the primary agent_end path.
+  state.runMetadata.delete(sessionKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -1462,6 +1750,17 @@ export default {
       api.on("agent_end", () => {
         /* noop in degraded mode */
       });
+      // v0.3.5: also register before_agent_finalize so OpenClaw's
+      // `plugins inspect` reports a consistent hook set whether the
+      // plugin is in degraded mode or live mode. Hook surface stays
+      // stable across mode transitions; operators don't see the hook
+      // count "drop" when they fix a config issue.
+      (api.on as unknown as (
+        name: "before_agent_finalize",
+        handler: () => void,
+      ) => void)("before_agent_finalize", () => {
+        /* noop in degraded mode */
+      });
       return;
     }
 
@@ -1495,6 +1794,17 @@ export default {
       api.on("agent_end", () => {
         /* noop in degraded mode */
       });
+      // v0.3.5: also register before_agent_finalize so OpenClaw's
+      // `plugins inspect` reports a consistent hook set whether the
+      // plugin is in degraded mode or live mode. Hook surface stays
+      // stable across mode transitions; operators don't see the hook
+      // count "drop" when they fix a config issue.
+      (api.on as unknown as (
+        name: "before_agent_finalize",
+        handler: () => void,
+      ) => void)("before_agent_finalize", () => {
+        /* noop in degraded mode */
+      });
       return;
     }
 
@@ -1522,6 +1832,30 @@ export default {
     });
     api.on("llm_output", (event, ctx) => {
       handleLlmOutput(state, event, ctx);
+    });
+
+    // v0.3.5 — capture Claude Code's transcriptPath from
+    // before_agent_finalize. Required for surfacing claude-cli's
+    // INTERNAL tool calls (Read, WebSearch, Bash, Edit, MCP) in the
+    // receipt: those tools don't fire after_tool_call (they run inside
+    // the Claude Code subprocess, never reaching OpenClaw's dispatcher).
+    // The transcriptPath lets handleAgentEnd parse claude-cli's session
+    // jsonl at anchor time and inject one entry per tool_use block.
+    //
+    // Cast required because before_agent_finalize is NEW in v0.3.5 and
+    // our SDK overload doesn't enumerate it yet. The runtime accepts
+    // any registered hook name string per OpenClaw 2026.4.25+
+    // hook-runner-global.
+    (api.on as unknown as (
+      name: "before_agent_finalize",
+      handler: (
+        event: { transcriptPath?: unknown; runId?: unknown },
+        ctx: { sessionKey?: unknown; sessionId?: unknown },
+      ) => { action: "continue" } | void,
+    ) => void)("before_agent_finalize", (event, ctx) => {
+      handleBeforeAgentFinalize(state, event, ctx);
+      // Return continue so we don't gate finalization.
+      return { action: "continue" };
     });
 
     // ── Anchor hooks ──────────────────────────────────────────────────────
