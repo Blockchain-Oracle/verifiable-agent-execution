@@ -542,16 +542,22 @@ export function handleMessageReceived(
 
 /**
  * before_prompt_build handler — appends a `prompt_build` entry recording
- * which model + provider the agent is using for this turn. Privacy-
- * conscious: does NOT capture the systemPrompt body (can be 50KB+ of
- * project context with secrets/MCP URLs) or the prompt itself — only
- * metadata. The actual prompt content surfaces via `llm_output`
- * indirectly (assistant's response references context, history etc.).
+ * the FULL prompt + system prompt + history the agent is about to
+ * send to the LLM. v0.2.0 stripped these for privacy; v0.3.0
+ * encrypts the entire session log so storing them is safe — the
+ * operator's `/share` is the only path that surfaces the key.
+ *
+ * Capturing the actual content is what makes the receipt useful
+ * for audit: "agent received X system instructions, X-message
+ * history, and asked the LLM Y" beats "390-char prompt length."
+ * (Abu's feedback on token 65 receipt, 2026-05-13: "it doesn't
+ * really make sense to me ... I'm only seeing prompt build and
+ * hard speed and other name text. Like who the hell wants to do
+ * this? Like, what, why do I even care about it?")
  *
  * Per PluginHookBeforePromptBuildEvent
  * (plugin-sdk/src/plugins/hook-types.d.ts:9, 226): fields include
- * `prompt`, `systemPrompt`, `historyMessages`, model identity. We
- * record provider/model + historyMessages.length only.
+ * `prompt`, `systemPrompt`, `historyMessages`, model identity.
  */
 export function handleBeforePromptBuild(
   state: PluginState,
@@ -588,6 +594,9 @@ export function handleBeforePromptBuild(
     const historyLen = Array.isArray(event.historyMessages)
       ? event.historyMessages.length
       : 0;
+    // FULL CONTENT capture (encrypted at flush). The displayed
+    // receipt now answers "what did the agent send to the LLM?"
+    // not just "the prompt was 390 chars."
     const payload = {
       provider: ctx.modelProviderId,
       model: ctx.modelId,
@@ -595,6 +604,12 @@ export function handleBeforePromptBuild(
       systemPromptLength:
         typeof event.systemPrompt === "string" ? event.systemPrompt.length : 0,
       promptLength: typeof event.prompt === "string" ? event.prompt.length : 0,
+      // Actual content (encrypted in the on-storage envelope per v0.3.0):
+      systemPrompt: typeof event.systemPrompt === "string" ? event.systemPrompt : undefined,
+      prompt: typeof event.prompt === "string" ? event.prompt : undefined,
+      historyMessages: Array.isArray(event.historyMessages)
+        ? event.historyMessages
+        : undefined,
     };
     const inputHash = sha256Hex({ sessionKey });
     const outputHash = sha256Hex(payload);

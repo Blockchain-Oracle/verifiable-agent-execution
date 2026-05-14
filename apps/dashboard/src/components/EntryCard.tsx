@@ -49,9 +49,82 @@ interface EntryProps {
   status: EntryStatus;
 }
 
+/**
+ * Friendly-title + label mapping for the synthetic plugin entry
+ * "tools" (user_input, prompt_build, llm_call) — these aren't real
+ * tools the agent invoked, they're plugin-injected entries that
+ * capture what the agent runtime DID (received a message, built a
+ * prompt, got an LLM response). Rendering them as "tool_call /
+ * user_input" is misleading; rendering as "User message" with
+ * sensible input/output labels makes the receipt read like a
+ * timeline an auditor can follow.
+ *
+ * Real tools (web_search, fetch_url, MCP tools) fall through to
+ * the default branch and render as "Tool: web_search" etc.
+ *
+ * (Abu's 2026-05-13 feedback on token 65: "If you are trying to
+ * trace what an agent does ... we only saw CLI calls. Okay, we saw
+ * the prompt build. The output just says prompt length, everything.
+ * Who wants to care about this?")
+ */
+function entryDisplay(props: EntryProps): {
+  title: string;
+  subtitle: string | null;
+  inputLabel: string;
+  outputLabel: string;
+} {
+  const tool = props.tool ?? props.type;
+  switch (tool) {
+    case "user_input":
+      return {
+        title: "User message",
+        subtitle: "inbound",
+        inputLabel: "Sender",
+        outputLabel: "Message",
+      };
+    case "prompt_build":
+      return {
+        title: "Prompt assembled",
+        subtitle: "agent → LLM",
+        inputLabel: "Session ref",
+        outputLabel: "Prompt + system + history",
+      };
+    case "llm_call":
+    case "llm_text":
+      return {
+        title: "LLM response",
+        subtitle: "LLM → agent",
+        inputLabel: "Run context",
+        outputLabel: "Response content",
+      };
+    case "session_end":
+      return {
+        title: "Session end",
+        subtitle: "lifecycle",
+        inputLabel: "Trigger",
+        outputLabel: "Summary",
+      };
+    case "agent_end":
+      return {
+        title: "Agent end",
+        subtitle: "lifecycle",
+        inputLabel: "Trigger",
+        outputLabel: "Summary",
+      };
+    default:
+      return {
+        title: `Tool: ${tool}`,
+        subtitle: "agent → tool",
+        inputLabel: "Params",
+        outputLabel: "Result",
+      };
+  }
+}
+
 export function EntryCard(props: EntryProps) {
   const [paramsOpen, setParamsOpen] = useState(true);
   const [resultOpen, setResultOpen] = useState(true);
+  const display = entryDisplay(props);
 
   return (
     <article className="group min-w-0 overflow-hidden rounded-md border border-border bg-surface transition-colors hover:border-border/80">
@@ -61,11 +134,13 @@ export function EntryCard(props: EntryProps) {
             #{props.seq.toString().padStart(3, "0")}
           </span>
           <span className="truncate font-sans text-base font-semibold text-text-primary">
-            {props.tool ?? props.type}
+            {display.title}
           </span>
-          <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary sm:inline">
-            {props.type}
-          </span>
+          {display.subtitle !== null && (
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary sm:inline">
+              {display.subtitle}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <time
@@ -80,14 +155,14 @@ export function EntryCard(props: EntryProps) {
 
       <div className="min-w-0 space-y-4 px-4 py-4 sm:px-5">
         <ContentBlock
-          label="Input"
+          label={display.inputLabel}
           value={props.params}
           fallbackHash={props.inputHash}
           open={paramsOpen}
           onToggle={() => setParamsOpen((v) => !v)}
         />
         <ContentBlock
-          label="Output"
+          label={display.outputLabel}
           value={props.result}
           fallbackHash={props.outputHash}
           open={resultOpen}

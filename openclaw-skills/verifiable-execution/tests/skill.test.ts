@@ -1168,18 +1168,26 @@ describe("v0.2.0 handleMessageReceived", () => {
   });
 });
 
-describe("v0.2.0 handleBeforePromptBuild", () => {
-  it("appends a prompt_build entry with model/provider metadata only (no body)", () => {
+describe("v0.3.3 handleBeforePromptBuild (full content capture)", () => {
+  // v0.2.0 stripped body content for privacy. v0.3.3 captures the
+  // FULL prompt + systemPrompt + history because v0.3.0 encryption
+  // protects the content at rest (only the operator's /share emits
+  // the key). Abu's 2026-05-13 feedback on token 65: "we only saw
+  // CLI calls. Okay, we saw the prompt build. The output just says
+  // prompt length, everything. Who wants to care about this?"
+  it("appends a prompt_build entry with FULL prompt + system prompt + history", () => {
     const { state } = buildPluginStateForTests();
     const sessionKey = "ses_pb_01";
+    const prompt = "What's the ETH price and the latest 0G Labs news?";
+    const systemPrompt = "You are a research agent. Use web_search.";
+    const history = [
+      { role: "user", content: "earlier msg" },
+      { role: "assistant", content: "earlier reply" },
+    ];
 
     handleBeforePromptBuild(
       state,
-      {
-        prompt: "this is the actual prompt body — should NOT appear in entry",
-        systemPrompt: "long system prompt 50KB+",
-        historyMessages: [{ role: "user" }, { role: "assistant" }],
-      },
+      { prompt, systemPrompt, historyMessages: history },
       { sessionKey, modelProviderId: "anthropic", modelId: "claude-sonnet-4-6" },
     );
 
@@ -1188,12 +1196,16 @@ describe("v0.2.0 handleBeforePromptBuild", () => {
     expect(entries[0].tool).toBe("prompt_build");
     expect(entries[0].teeSignature).toMatch(/^0x[0-9a-f]{130}$/);
     const result = entries[0].result as Record<string, unknown>;
+    // Metadata fields (preserved for backward compat / quick scan)
     expect(result.provider).toBe("anthropic");
     expect(result.model).toBe("claude-sonnet-4-6");
     expect(result.historyMessagesLength).toBe(2);
-    // Body content NOT stored — only lengths.
-    expect(JSON.stringify(result)).not.toContain("this is the actual prompt");
-    expect(JSON.stringify(result)).not.toContain("long system prompt 50KB");
+    expect(result.promptLength).toBe(prompt.length);
+    expect(result.systemPromptLength).toBe(systemPrompt.length);
+    // FULL content — the audit signal Abu wanted.
+    expect(result.prompt).toBe(prompt);
+    expect(result.systemPrompt).toBe(systemPrompt);
+    expect(result.historyMessages).toEqual(history);
   });
 });
 
