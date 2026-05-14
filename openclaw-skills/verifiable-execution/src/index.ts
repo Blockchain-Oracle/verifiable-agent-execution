@@ -43,7 +43,7 @@
  *   bytes32 slot).
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { JsonRpcProvider, Wallet } from "ethers";
 import {
@@ -105,6 +105,27 @@ interface PluginState {
    * crash recovery between flush and mint possible.
    */
   keystore: Keystore;
+  /**
+   * v0.3.4 — retry registry for UN-flushed SessionLoggers.
+   *
+   * Keyed by `pendingKeyName` (the compound `${sessionKey}|run:${runId}`),
+   * NOT by sessionKey, because the next agent_end on the same
+   * sessionKey gets a fresh SessionLogger via `takeAndRelease` and
+   * MUST not collide with a previous run still in retry.
+   *
+   * Scope is intentionally narrow (round-4 finding #1): this registry
+   * holds the plaintext logger ONLY between `takeAndRelease` and
+   * the moment `flush()` succeeds. Once the encrypted bytes are
+   * durable on 0G Storage, the registry entry is deleted — recovery
+   * after that point only needs `{rootHash, entryCount, sessionId,
+   * dataDescriptionPrefix}` which are surfaced on
+   * `SessionAnchorMintAfterFlushError`. Keeping plaintext past flush
+   * would be a memory + privacy regression.
+   *
+   * In practice contains ≤ 1 entry per active sessionKey, and only
+   * during the upload window (sub-second on Galileo testnet).
+   */
+  pendingAnchors: Map<string, SessionLogger>;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +399,7 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
     agenticIdClient,
     signer: storageSigner,
     keystore,
+    pendingAnchors: new Map<string, SessionLogger>(),
   };
 }
 
@@ -820,42 +842,50 @@ export function parseAssistantBlocks(
 }
 
 /**
- * session_end handler — flush the SessionLogger to 0G Storage, mint an
- * iNFT anchor via SessionAnchor, and log the resulting verifyUrl. Three
- * outcomes:
- *   1. No SessionLogger for this sessionKey (zero tool calls happened
- *      in this session) → nothing to anchor; INFO log; return.
- *   2. Anchor succeeds → INFO log including the full verifyUrl
- *      (verifyUrlBase + relative path); release the SessionLogger.
- *   3. Anchor fails → ERROR log including the rootHash from
- *      SessionAnchorMintAfterFlushError so operators can manually
- *      retryMint(); release the SessionLogger so memory doesn't leak.
+ * Private helper shared by `handleAgentEnd` and `handleSessionEnd`.
  *
- * Always returns void — the OpenClaw hook contract doesn't surface a
- * return value back to the agent. The verifyUrl appears in the
- * structured log, where dashboards / verifier UIs pick it up.
+ * Sequencing — the approved plan's invariant (`setPending →
+ * takeAndRelease → pendingAnchors.set → flush`) is owned by the
+ * CALLER:
+ *
+ *   (caller) gate on state.sessions.has(sessionKey)
+ *   (caller) generate K + build pendingKeyName
+ *   (caller) keystore.setPending (synchronous; if throws, logger
+ *            STAYS in state.sessions → next agent_end auto-retries
+ *            on the same sessionKey, no manual recovery needed)
+ *   (caller) takeAndRelease (synchronous; new message_received on
+ *            this sessionKey gets a fresh logger)
+ *   (caller) state.pendingAnchors.set (synchronous; holds the
+ *            UN-flushed logger only)
+ *
+ *   (here)   anchor.anchor({encrypt, dataDescriptionPrefix}) — async
+ *   (here)   state.pendingAnchors.delete — bytes durable, free memory
+ *   (here)   keystore.commitPending — separate try/catch (round-6)
+ *
+ * `dataDescriptionPrefix` is "exec-log" for normal agent_end anchors,
+ * "exec-log-orphan" for session_end recovery anchors. `component`
+ * drives the structured-log component tag.
+ *
+ * `encryptionKey` is OWNED by the caller because the keystore
+ * setPending write happens in the caller (we have to know if it
+ * succeeded before we touch the SessionLogger map); we just need it
+ * here to wire the AES-GCM cipher closure.
+ *
+ * Pre-flush failures: the plaintext logger is the ONLY copy of those
+ * entries — pendingAnchors keeps it for manual recovery.
+ * Post-flush failures (mint or commit): bytes are durable on 0G
+ * Storage, so pendingAnchors clears immediately.
  */
-export async function handleSessionEnd(
+async function anchorRun(
   state: PluginState,
-  _event: unknown,
-  ctx: { sessionKey?: unknown; sessionId?: unknown },
+  logger: SessionLogger,
+  sessionKey: string,
+  runId: string,
+  pendingKeyName: string,
+  encryptionKey: Buffer,
+  dataDescriptionPrefix: string,
+  component: "agent_end" | "session_end",
 ): Promise<void> {
-  const sessionKey = pickSessionKey(ctx);
-  if (sessionKey === null) {
-    structuredLog("WARN", "session_end", "Skipping anchor: no sessionKey/sessionId on ctx", {
-      ctxKeys: Object.keys(ctx ?? {}),
-    });
-    return;
-  }
-  if (!state.sessions.has(sessionKey)) {
-    // Zero tool calls in this session — nothing to anchor.
-    structuredLog("INFO", "session_end", "No active SessionLogger for session; skipping anchor", {
-      sessionKey,
-    });
-    return;
-  }
-
-  const logger = state.sessions.getOrCreate(sessionKey); // safe — we just checked has()
   const containerHash = deriveContainerHash({
     sessionKey,
     agentId: state.config.agentId,
@@ -869,44 +899,21 @@ export async function handleSessionEnd(
     { chainId: state.config.chainId },
   );
 
-  // v0.3.0 encryption path: generate K, persist pending BEFORE flush,
-  // pass encrypt-callback through anchor, commit AFTER mint. Crash
-  // between flush and mint leaves K recoverable under pending/<sessionKey>.key.
-  // See keystore.ts header for full rationale.
-  const encryptionKey: Buffer = generateKey();
+  // Hoist `result` with `let` (round-7) so the post-mint commit
+  // block can reference txHash/rootHash/entryCount in its error
+  // payload after the flush/mint try-block closes.
+  let result: {
+    tokenId: bigint;
+    txHash: string;
+    rootHash: string;
+    entryCount: number;
+    verifyUrl: string;
+  };
   try {
-    state.keystore.setPending(sessionKey, encryptionKey);
-  } catch (cause) {
-    // HARD-FAIL: if we can't persist K before upload, a crash between
-    // flush and mint loses K forever → the rootHash on 0G Storage
-    // becomes an undecipherable encrypted blob no one can ever read.
-    // Better to ABORT the session_end anchor and keep the in-memory
-    // SessionLogger alive so the operator can fix the FS issue and
-    // retry. Silently degrading to plaintext upload (the pre-Codex-
-    // round-3 behavior) violated v0.3.0's encrypted-by-default contract
-    // and could leak agent params/result to anyone scraping the feed.
-    structuredLog(
-      "ERROR",
-      "session_end",
-      "Keystore setPending failed — aborting encrypted anchor to preserve the in-memory SessionLogger",
-      {
-        sessionKey,
-        cause: cause instanceof Error ? cause.message : String(cause),
-        recovery:
-          "Fix the keystore FS issue (check ~/.openclaw/verifiable-execution/keystore mode + disk space), then re-run anchor() with the same sessionKey to retry.",
-      },
-    );
-    // Leave the SessionLogger in the SessionManager map — same recovery
-    // pattern as the pre-flush failure branch below. Caller (the
-    // OpenClaw session_end hook) sees no exception; structured ERROR
-    // log is the surface.
-    return;
-  }
-
-  try {
-    const result = await anchor.anchor({
+    result = await anchor.anchor({
       sessionId: sessionKey,
       containerHash,
+      dataDescriptionPrefix,
       // Encrypt the plaintext SessionLog JSON into our v1 envelope, then
       // upload the JSON-encoded envelope bytes. dashboard's
       // isEncryptedEnvelope() distinguishes these from legacy plaintext
@@ -916,147 +923,417 @@ export async function handleSessionEnd(
         return new TextEncoder().encode(JSON.stringify(envelope));
       },
     });
-    const tokenIdStr = result.tokenId.toString();
-    // Promote the pending key to a committed key keyed by tokenId.
-    // ALSO updates last-receipt.json so `/share` with no args targets
-    // this receipt.
-    //
-    // Codex round-12 P1: wrap this in its OWN try/catch so a
-    // filesystem error here (the rename + chmod + last-receipt write)
-    // doesn't bubble to the outer catch and get misclassified as
-    // "pre-flush failed." Mint already succeeded — the operator
-    // needs the tokenId and a recovery hint pointing at manual
-    // commitPending, not generic flush-retry guidance.
-    try {
-      const committed = state.keystore.commitPending(sessionKey, tokenIdStr);
-      if (!committed) {
-        // setPending failed earlier — try a direct put under tokenId so
-        // the operator can /share retroactively.
-        state.keystore.put(tokenIdStr, encryptionKey);
-      }
-    } catch (commitErr) {
-      // Mint succeeded; only the keystore promotion failed. The pending
-      // key file may still be on disk under the original sessionKey,
-      // OR the put() retry may have partially landed. Both paths are
-      // recoverable manually.
+    // Mint succeeded → encrypted bytes are durable on 0G Storage.
+    // The plaintext logger is no longer needed for recovery
+    // (rootHash + entryCount + sessionId + dataDescriptionPrefix are
+    // enough — they're surfaced on SessionAnchorMintAfterFlushError
+    // too). Free the memory NOW; round-4 narrowing.
+    state.pendingAnchors.delete(pendingKeyName);
+  } catch (cause) {
+    if (cause instanceof SessionAnchorMintAfterFlushError) {
+      // Flush succeeded → bytes durable on 0G Storage → plaintext
+      // logger no longer load-bearing for recovery. Free it.
+      state.pendingAnchors.delete(pendingKeyName);
       structuredLog(
         "ERROR",
-        "session_end",
-        "Keystore commit failed AFTER successful mint — receipt is on-chain but local key isn't yet bound to tokenId",
+        component,
+        "Mint failed after successful flush — bytes on 0G Storage but no on-chain anchor",
         {
+          runId,
+          rootHash: cause.rootHash,
+          entryCount: cause.entryCount,
+          sessionId: cause.sessionId,
+          dataDescriptionPrefix: cause.dataDescriptionPrefix,
+          pendingKeyName,
           sessionKey,
-          tokenId: tokenIdStr,
-          txHash: result.txHash,
-          rootHash: result.rootHash,
-          cause: commitErr instanceof Error ? commitErr.message : String(commitErr),
           recovery:
-            `Receipt minted as tokenId ${tokenIdStr} (tx ${result.txHash}). ` +
-            `To bind the local key for /share, fix the FS issue then run: ` +
-            `keystore.commitPending("${sessionKey}", "${tokenIdStr}"). ` +
-            `If the pending key file is gone, the receipt's contents are ` +
-            `unrecoverable from THIS host (the rootHash is on 0G Storage ` +
-            `but the AES key was lost).`,
+            `Call sessionAnchor.retryMint({rootHash:"${cause.rootHash}", ` +
+            `entryCount:${cause.entryCount}, sessionId:"${cause.sessionId}", ` +
+            `dataDescriptionPrefix:"${cause.dataDescriptionPrefix}"}) → captures <newTokenId>. ` +
+            `Then keystore.commitPending("${pendingKeyName}", <newTokenId>, ` +
+            `{sessionKey:"${sessionKey}", runId:"${runId}"}).`,
         },
       );
-      // Mint succeeded → the SessionLogger has done its job. Release
-      // it; the receipt is on-chain regardless of keystore state.
-      state.sessions.release(sessionKey);
-      return;
-    }
-    // SECURITY (Codex round-9 P1): the reveal key MUST NOT appear in
-    // log streams. Encryption is the v0.3.0 wedge — if the key gets
-    // auto-logged on every session, gateway logs / log collectors /
-    // observability stacks all hold the plaintext-decryption material,
-    // completely defeating the encrypted-by-default contract. The
-    // operator obtains the share URL ON DEMAND via the `/share`
-    // command (handleShareCommand reads the key from the keystore at
-    // request time). Log only the key-FREE verifyUrl + the metadata
-    // an operator needs for ops: tokenId, txHash, rootHash, entryCount.
-    const baseUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
-    // PRIVACY (Codex round-16): the routine success log MUST NOT
-    // include `sessionKey`. OpenClaw sessionKeys often encode channel
-    // routing context — e.g.
-    // "agent:core:telegram:direct:8028166336" exposes the Telegram
-    // user ID 8028166336. Auto-logging that on every anchor would
-    // undermine the v0.3.0 privacy pivot by leaking who-uses-the-bot
-    // metadata to gateway / log collectors. sessionKey is retained
-    // only in error/recovery log lines (where the operator needs it
-    // to drive retryMint / commitPending) and in the `/share`
-    // operator reply (consent surface).
-    structuredLog("INFO", "session_end", "Session anchored on-chain", {
-      tokenId: tokenIdStr,
-      txHash: result.txHash,
-      rootHash: result.rootHash,
-      entryCount: result.entryCount,
-      verifyUrl: baseUrl,
-      // shareUrl intentionally omitted — type "/share" in chat to fetch it.
-      // sessionKey intentionally omitted — see PRIVACY comment above.
-    });
-    // Anchor succeeded → flush already sealed the logger; safe to release.
-    state.sessions.release(sessionKey);
-  } catch (cause) {
-    // Surface as a STRUCTURED failure (per BDD: "the error is caught
-    // and surfaced as a structured failure"). The recovery path
-    // (rootHash for retryMint) is captured when the cause is
-    // SessionAnchorMintAfterFlushError so operators can manually
-    // retry against the chain.
-    const failureFields: Record<string, unknown> = {
-      sessionKey,
-      cause: cause instanceof Error ? cause.message : String(cause),
-    };
-    if (cause instanceof SessionAnchorMintAfterFlushError) {
-      failureFields.rootHash = cause.rootHash;
-      failureFields.entryCount = cause.entryCount;
-      failureFields.dataDescription = cause.dataDescription;
-      // Concrete copy-paste recovery: substitute the actual sessionKey,
-      // rootHash, and entryCount so the operator can copy this line
-      // straight into their REPL. After Codex round-3 caught the
-      // placeholder phrasing.
-      failureFields.recovery =
-        `Call sessionAnchor.retryMint({rootHash: "${cause.rootHash}", ` +
-        `entryCount: ${cause.entryCount}, sessionId: "${sessionKey}"}) ` +
-        `to re-mint against the already-flushed 0G Storage blob, then ` +
-        `keystore.commitPending("${sessionKey}", <newTokenId>) to ` +
-        `register the encryption key under the recovered tokenId.`;
-      // Flush succeeded → logger is sealed; rootHash is on 0G Storage
-      // and survives a release. Operator retries mint independently.
-      structuredLog("ERROR", "session_end", "Anchor failed", failureFields);
-      state.sessions.release(sessionKey);
     } else {
-      // Flush itself failed (or some pre-flush error). The SessionLogger
-      // still holds the collected entries in memory — DO NOT release,
-      // or those entries are lost and the proof is unrecoverable. Leave
-      // the logger in the SessionManager map so the operator (or a
-      // retry hook) can re-attempt anchor.anchor() on the same logger.
-      // (Codex bot round-13 P1 on PR #23.)
-      failureFields.recovery =
-        "Flush failed before mint; SessionLogger retained in-memory. " +
-        "Re-run anchor() with the same sessionKey to retry from flush.";
-      structuredLog("ERROR", "session_end", "Anchor failed (pre-flush)", failureFields);
+      // Pre-flush failure: flush itself threw before producing a
+      // rootHash. The plaintext logger in pendingAnchors is the ONLY
+      // copy of those entries — leave it registered so an operator
+      // can manually flush+mint+commit. (Round-4 finding #1: this
+      // is the ONLY failure path that keeps the registry entry.)
+      structuredLog(
+        "ERROR",
+        component,
+        "Flush failed before mint — plaintext logger retained in pendingAnchors for manual recovery",
+        {
+          runId,
+          pendingKeyName,
+          sessionKey,
+          cause: cause instanceof Error ? cause.message : String(cause),
+          recovery:
+            `Logger retained in state.pendingAnchors["${pendingKeyName}"]. ` +
+            `Recovery steps: ` +
+            `(1) const logger = state.pendingAnchors.get("${pendingKeyName}"); ` +
+            `(2) await logger.flush({encrypt}) → captures <rootHash>; ` +
+            `(3) await agenticIdClient.mint(agentId, [{dataDescription:"${dataDescriptionPrefix}:${sessionKey}:${state.config.modelId}", dataHash:<rootHash>}]) → captures <newTokenId>; ` +
+            `(4) state.keystore.commitPending("${pendingKeyName}", <newTokenId>, {sessionKey:"${sessionKey}", runId:"${runId}"}); ` +
+            `(5) state.pendingAnchors.delete("${pendingKeyName}").`,
+        },
+      );
     }
+    return;
   }
+
+  // Mint succeeded; registry is already cleared. The commit block
+  // runs in its OWN try/catch (round-6) so an FS-only failure on
+  // commit doesn't get misclassified as "flush failed."
+  const tokenId = result.tokenId.toString();
+  try {
+    const committed = state.keystore.commitPending(pendingKeyName, tokenId, {
+      sessionKey,
+      runId,
+    });
+    if (!committed) {
+      // Pending file vanished between setPending and commitPending
+      // (unusual — operator wiped it manually, or two anchorRun calls
+      // raced through the same pendingKeyName which shouldn't happen
+      // post-base64url-encoding).
+      //
+      // Codex round-2 v0.3.4-12: pass the same {sessionKey, runId}
+      // meta bag through to `put()` so `last-receipt.json` keeps the
+      // BARE sessionKey + runId. The pre-v0.3.4 path silently used
+      // `put(tokenId, K)` which wrote `sessionKey: direct-put:<tokenId>`
+      // and dropped runId — a regression on the v0.3.4 metadata contract.
+      state.keystore.put(tokenId, encryptionKey, { sessionKey, runId });
+      structuredLog(
+        "WARN",
+        component,
+        "commitPending returned false — pending sidecar missing; recovered via direct put with meta",
+        { runId, tokenId, pendingKeyName, sessionKey },
+      );
+    }
+  } catch (commitErr) {
+    structuredLog(
+      "ERROR",
+      component,
+      "Keystore commit failed AFTER successful mint — receipt is on-chain but local key isn't yet bound to tokenId",
+      {
+        runId,
+        tokenId,
+        txHash: result.txHash,
+        rootHash: result.rootHash,
+        pendingKeyName,
+        sessionKey,
+        cause: commitErr instanceof Error ? commitErr.message : String(commitErr),
+        recovery:
+          `Receipt minted as tokenId ${tokenId} (tx ${result.txHash}). ` +
+          `To bind the local key for /share, fix the FS issue then run: ` +
+          `keystore.commitPending("${pendingKeyName}", "${tokenId}", ` +
+          `{sessionKey:"${sessionKey}", runId:"${runId}"}). ` +
+          `If the pending key file is gone, the receipt's contents are ` +
+          `unrecoverable from THIS host (the rootHash is on 0G Storage ` +
+          `but the AES key was lost).`,
+      },
+    );
+    return;
+  }
+
+  // SECURITY (Codex round-9 P1): the reveal key MUST NOT appear in
+  // log streams. The operator obtains the share URL ON DEMAND via
+  // the `/share` command (handleShareCommand reads the key from the
+  // keystore at request time).
+  //
+  // PRIVACY (Codex round-16): sessionKey MUST NOT appear in the
+  // routine success log. OpenClaw sessionKeys often encode channel
+  // routing context (e.g. Telegram user IDs); auto-logging them
+  // would leak who-uses-the-bot metadata to gateway log collectors.
+  // sessionKey is retained only in error/recovery log lines where
+  // the operator needs it to drive retryMint / commitPending.
+  const baseUrl = `${state.config.verifyUrlBase.replace(/\/$/, "")}${result.verifyUrl}`;
+  structuredLog("INFO", component, "Session anchored on-chain", {
+    runId,
+    tokenId,
+    txHash: result.txHash,
+    rootHash: result.rootHash,
+    entryCount: result.entryCount,
+    verifyUrl: baseUrl,
+    // shareUrl + sessionKey intentionally omitted (round-9 + round-16).
+  });
 }
 
 /**
- * agent_end handler — same anchor logic as session_end, fires per
- * agent-run rather than per channel-session. On claude-cli backends
- * (Claude Code, Aider, etc.) `session_end` only fires when the channel
- * conversation ends, while `agent_end` fires after every agent reply.
- * Subscribing to both means: per-reply anchors for autonomous agents,
- * per-conversation anchors for chat channels — whichever fires first
- * for a given sessionKey wins; the second one finds the SessionLogger
- * released and no-ops cleanly.
+ * agent_end handler — anchors ONE token per agent run. v0.3.4: this
+ * is the PRIMARY anchor path. `agent_end` fires when the agent
+ * completes its reply to a single user message; "one agent_end = one
+ * token" is the audit unit the user sees in the dashboard feed.
  *
- * Implementation is literally a delegation to handleSessionEnd —
- * keeping them separate at the type/export level so the BDD-to-test
- * mapping stays line-by-line obvious (one hook per BDD scenario).
+ * The atomic rotate (`takeAndRelease`) is critical: holds the
+ * SessionLogger out of `state.sessions` for the entire flush + mint
+ * window so a NEW `message_received` on the same sessionKey gets a
+ * FRESH SessionLogger and the next turn's entries don't land in the
+ * one we're flushing. Without it, two-message-in-a-row Telegram users
+ * would silently lose half their entries.
  */
 export async function handleAgentEnd(
   state: PluginState,
   event: unknown,
   ctx: { sessionKey?: unknown; sessionId?: unknown },
 ): Promise<void> {
-  return handleSessionEnd(state, event, ctx);
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "agent_end", "Skipping anchor: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+
+  // Gate before keystore write — no point persisting an AES key for
+  // a session that has zero entries (heartbeat agents, the second of
+  // two hooks racing for the same sessionKey).
+  if (!state.sessions.has(sessionKey)) {
+    structuredLog("INFO", "agent_end", "No active SessionLogger; skipping anchor", {
+      sessionKey,
+    });
+    return;
+  }
+  // Codex r9: a SessionLogger can exist with entryCount=0 if a prior
+  // entry handler's getOrCreate succeeded but its append/sign block
+  // threw (and was swallowed by structuredLog). Anchoring an empty
+  // log would mint a content-less receipt — feed inflation. The plan
+  // (Section "Architectural change" step 1) says "bail if no entries";
+  // enforce it here.
+  const existingLogger = state.sessions.getOrCreate(sessionKey);
+  if (existingLogger.getStatus().entryCount === 0) {
+    structuredLog("INFO", "agent_end", "SessionLogger has zero entries; skipping empty anchor", {
+      sessionKey,
+    });
+    state.sessions.release(sessionKey);
+    return;
+  }
+
+  // Use `event.runId` from the OpenClaw hook payload when available.
+  // Some harnesses (CLI, voice-call) don't populate it; fall back to
+  // a 16-byte hex synthetic so the compound pendingKeyName stays
+  // unique-per-run even without runtime support. randomBytes(16)
+  // gives 128 bits of entropy — well above the birthday-collision
+  // threshold for typical operator session counts.
+  //
+  // `event` is typed as `unknown` so callers (tests + the runtime
+  // OpenClaw lambda) can pass the full PluginHookAgentEndEvent shape
+  // ({runId, messages, success, error, durationMs}) without per-field
+  // TS excess-property errors. We narrow `runId` defensively here.
+  const eventRunId =
+    event !== null && typeof event === "object" && "runId" in event
+      ? (event as { runId?: unknown }).runId
+      : undefined;
+  const runId =
+    typeof eventRunId === "string" && eventRunId.length > 0
+      ? eventRunId
+      : `anon-${randomBytes(16).toString("hex")}`;
+  // COMPOUND pending-key identity so two concurrent agent_ends on
+  // the same sessionKey (rare but legitimate: harness queues two
+  // runs) get distinct filesystem entries. Round-2 finding #4
+  // caught the collision in the prior `setPending(sessionKey, K)`
+  // shape — second pending write would clobber first → token T1
+  // commits with K2 → `/share T1` emits K2 → cross-token decryption.
+  const pendingKeyName = `${sessionKey}|run:${runId}`;
+  const encryptionKey: Buffer = generateKey();
+
+  // Round-2 approved retry semantic: setPending happens BEFORE
+  // takeAndRelease. If it throws (FS unwritable / disk full), the
+  // logger STAYS in state.sessions — the NEXT agent_end on this
+  // sessionKey will auto-retry from scratch with a fresh K. No
+  // manual recovery needed.
+  try {
+    state.keystore.setPending(pendingKeyName, encryptionKey, {
+      sessionKey,
+      runId,
+    });
+  } catch (cause) {
+    structuredLog(
+      "ERROR",
+      "agent_end",
+      "Keystore setPending failed — aborting encrypted anchor; SessionLogger retained for auto-retry on next agent_end",
+      {
+        runId,
+        pendingKeyName,
+        sessionKey,
+        cause: cause instanceof Error ? cause.message : String(cause),
+        recovery:
+          "Fix the keystore FS issue (check ~/.openclaw/verifiable-execution/keystore mode + disk space). " +
+          "The SessionLogger remains in state.sessions; the next agent_end on this sessionKey will re-attempt the anchor automatically (no manual operator action required).",
+      },
+    );
+    return;
+  }
+
+  // Steps below are all synchronous; no `await` until inside
+  // anchorRun's flush call. JS event-loop guarantees no other hook
+  // can interleave between takeAndRelease and pendingAnchors.set.
+  const logger = state.sessions.takeAndRelease(sessionKey);
+  if (logger === null) {
+    // Race-impossible defense: we held the `has(sessionKey) === true`
+    // contract through the synchronous setPending call, so the slot
+    // should still be there. If somehow it isn't (test injection,
+    // future hook), structured-log + clean up the pending key file
+    // so the keystore isn't littered with orphan AES keys.
+    structuredLog(
+      "WARN",
+      "agent_end",
+      "takeAndRelease returned null after has() was true — race-impossible defense path",
+      { sessionKey, pendingKeyName },
+    );
+    return;
+  }
+  state.pendingAnchors.set(pendingKeyName, logger);
+
+  await anchorRun(
+    state,
+    logger,
+    sessionKey,
+    runId,
+    pendingKeyName,
+    encryptionKey,
+    "exec-log",
+    "agent_end",
+  );
+}
+
+/**
+ * session_end handler — v0.3.4 reduces this to ORPHAN RECOVERY.
+ *
+ * Normal flow: `agent_end` already anchored the logger for the just-
+ * completed run and `takeAndRelease` cleared `state.sessions`. The
+ * `session_end` hook fires later (channel close, idle timeout,
+ * reset, compaction, daily, shutdown — per
+ * `PluginHookSessionEndEvent.trigger` at openclaw@2026.5.4
+ * plugin-sdk/.../hook-types.d.ts:523) and finds NO logger to anchor
+ * — no-op. That's the "one agent task = one token" guarantee.
+ *
+ * Abnormal flow: the harness died mid-run (process crash, network
+ * partition, hard reset) BEFORE `agent_end` fired. `state.sessions`
+ * still holds an unflushed logger with the partial turn's entries.
+ * Without this branch, those entries die silently in memory. We
+ * anchor them with a DISTINCT `dataDescriptionPrefix` of
+ * `"exec-log-orphan"` so the dashboard can render a "recovery
+ * anchor" badge — operators see the orphan in the feed and know
+ * agent_end didn't fire on that token.
+ */
+export async function handleSessionEnd(
+  state: PluginState,
+  _event: unknown,
+  ctx: { sessionKey?: unknown; sessionId?: unknown },
+): Promise<void> {
+  const sessionKey = pickSessionKey(ctx);
+  if (sessionKey === null) {
+    structuredLog("WARN", "session_end", "Skipping orphan check: no sessionKey/sessionId on ctx", {
+      ctxKeys: Object.keys(ctx ?? {}),
+    });
+    return;
+  }
+
+  // Codex round-2 v0.3.4-6 + round-4 narrowing: defer one microtask
+  // so a concurrently-scheduled `handleAgentEnd` runs its synchronous
+  // prelude (which `takeAndRelease`s the logger out of state.sessions)
+  // FIRST. After the yield, the `state.sessions.has(sessionKey)` check
+  // below is the single source of truth:
+  //
+  //   - has=false → agent_end's prelude already rotated the only
+  //     logger (round-2 case: concurrent agent_end + session_end on
+  //     the same logger) → no-op.
+  //   - has=true  → there's a FRESH logger here, allocated AFTER any
+  //     previously-rotated agent_end. This is a genuine orphan and
+  //     must be anchored under `exec-log-orphan:`, even if a prior
+  //     turn's agent_end is still uploading/minting (round-4 case:
+  //     turn N's anchor is in flight; turn N+1 already opened a new
+  //     logger; channel closes → recover turn N+1's entries).
+  //
+  // Earlier revisions used a `state.agentEndInFlight: Set<string>`
+  // coordination marker — Codex r4 caught that it was over-broad
+  // (would suppress orphan recovery of turn N+1's fresh logger
+  // while turn N's mint was still pending). The yield + map-state
+  // check pair is strictly simpler AND strictly more correct.
+  await Promise.resolve();
+
+  // Gate before keystore write. If no orphan logger exists, this is
+  // the common channel-close case — agent_end already anchored and
+  // cleared the slot. Silent no-op.
+  if (!state.sessions.has(sessionKey)) return;
+  // Codex r9: orphan path also needs an entry-count guard so a zero-
+  // entry logger (allocated but entry handlers swallowed mid-append)
+  // doesn't mint an empty `exec-log-orphan:` receipt at channel close.
+  // Same logic as handleAgentEnd above.
+  const existingOrphanLogger = state.sessions.getOrCreate(sessionKey);
+  if (existingOrphanLogger.getStatus().entryCount === 0) {
+    state.sessions.release(sessionKey);
+    return;
+  }
+
+  // Abnormal path: harness died before agent_end. Use a synthetic
+  // recovery runId tagged so it stands out from `anon-*` agent_end
+  // fallbacks. ERROR-level log line BEFORE the keystore write so the
+  // operator-facing notice fires even if setPending throws.
+  const runId = `recovery-${randomBytes(16).toString("hex")}`;
+  const pendingKeyName = `${sessionKey}|run:${runId}`;
+  structuredLog(
+    "ERROR",
+    "session_end",
+    "Orphan recovery anchor — agent_end never fired for this session",
+    {
+      runId,
+      sessionId: sessionKey,
+    },
+  );
+
+  const encryptionKey: Buffer = generateKey();
+  try {
+    state.keystore.setPending(pendingKeyName, encryptionKey, {
+      sessionKey,
+      runId,
+    });
+  } catch (cause) {
+    // Same retry semantic as handleAgentEnd: logger stays in
+    // state.sessions; a subsequent session_end (or a recovered
+    // agent_end if the harness comes back) re-attempts the anchor
+    // with a fresh K. No manual recovery needed.
+    structuredLog(
+      "ERROR",
+      "session_end",
+      "Keystore setPending failed during orphan recovery — SessionLogger retained for auto-retry",
+      {
+        runId,
+        pendingKeyName,
+        sessionKey,
+        cause: cause instanceof Error ? cause.message : String(cause),
+        recovery:
+          "Fix the keystore FS issue (check ~/.openclaw/verifiable-execution/keystore mode + disk space). " +
+          "The SessionLogger remains in state.sessions; the next session_end on this sessionKey will re-attempt the orphan recovery automatically.",
+      },
+    );
+    return;
+  }
+
+  const logger = state.sessions.takeAndRelease(sessionKey);
+  if (logger === null) {
+    structuredLog(
+      "WARN",
+      "session_end",
+      "takeAndRelease returned null after has() was true — race-impossible defense path",
+      { sessionKey, pendingKeyName },
+    );
+    return;
+  }
+  state.pendingAnchors.set(pendingKeyName, logger);
+
+  await anchorRun(
+    state,
+    logger,
+    sessionKey,
+    runId,
+    pendingKeyName,
+    encryptionKey,
+    "exec-log-orphan",
+    "session_end",
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -103,12 +103,24 @@ export class SessionAnchorMintAfterFlushError extends ChainClientError {
   readonly entryCount: number;
   readonly sessionId: string;
   readonly dataDescription: string;
+  /**
+   * The prefix portion of `dataDescription` (everything before the
+   * first `:<sessionId>:<modelId>` tail). v0.3.4: anchors fired from
+   * `session_end` orphan-recovery use the prefix `"exec-log-orphan"`
+   * instead of the default `"exec-log"`. Callers that drive
+   * `retryMint()` after this error MUST pass this prefix back so the
+   * retry preserves the original on-chain dataDescription identity
+   * (a retry under `exec-log:` for an orphan run would split the
+   * audit trail across two prefixes).
+   */
+  readonly dataDescriptionPrefix: string;
 
   constructor(opts: {
     rootHash: string;
     entryCount: number;
     sessionId: string;
     dataDescription: string;
+    dataDescriptionPrefix: string;
     cause: unknown;
   }) {
     super(
@@ -117,7 +129,7 @@ export class SessionAnchorMintAfterFlushError extends ChainClientError {
         `The log is uploaded to 0G Storage with rootHash ${opts.rootHash} ` +
         `(${opts.entryCount} entries) but the on-chain anchor was NOT created. ` +
         `The SessionLogger is now sealed — DO NOT call anchor() again. ` +
-        `Recover by calling sessionAnchor.retryMint({rootHash, entryCount, sessionId}) ` +
+        `Recover by calling sessionAnchor.retryMint({rootHash, entryCount, sessionId, dataDescriptionPrefix: "${opts.dataDescriptionPrefix}"}) ` +
         `or directly via agenticIdClient.mint(agentId, [{dataDescription: ` +
         `"${opts.dataDescription}", dataHash: "${opts.rootHash}"}]). ` +
         `Underlying cause: ${opts.cause instanceof Error ? opts.cause.message : String(opts.cause)}`,
@@ -128,5 +140,6 @@ export class SessionAnchorMintAfterFlushError extends ChainClientError {
     this.entryCount = opts.entryCount;
     this.sessionId = opts.sessionId;
     this.dataDescription = opts.dataDescription;
+    this.dataDescriptionPrefix = opts.dataDescriptionPrefix;
   }
 }

@@ -66,6 +66,10 @@ import {
 } from "./crypto.js";
 import { loadEnv, type DashboardEnv } from "./env.js";
 import {
+  isExecutionLogDescription,
+  parseExecutionLogDescription,
+} from "./exec-log-parser.js";
+import {
   agenticIdContractUrl,
   agenticIdTokenUrl,
   faucetUrl,
@@ -155,6 +159,15 @@ export interface ProofResponse {
   meta: {
     chainId: number;
     dataDescription: string;
+    /**
+     * v0.3.4 — true when this anchor was minted via the
+     * `exec-log-orphan:` prefix (the plugin's `session_end` recovery
+     * branch fired because `agent_end` never did — typically a
+     * harness crash mid-run). The dashboard renders a distinct
+     * "recovery anchor" badge so auditors see the unusual provenance
+     * without having to inspect the raw dataDescription.
+     */
+    recoveryAnchor: boolean;
     storageUrl: string;
     /**
      * Pre-computed explorer URLs — server-side resolves these so the
@@ -287,7 +300,7 @@ export async function loadSessionLogForToken(
     });
   }
 
-  const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
+  const execLogEntry = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (execLogEntry === undefined) {
     throw new ProofResolutionError({
       status: 404,
@@ -360,16 +373,30 @@ export async function resolveProof(
     });
   }
 
-  const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
+  const execLogEntry = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (execLogEntry === undefined) {
     throw new ProofResolutionError({
       status: 404,
       code: "NO_EXEC_LOG_ANCHOR",
-      message: `Token ${tokenId.toString()} has IntelligentData entries but none use the "exec-log:..." prefix; this token was not minted by the verifiable-execution plugin.`,
+      message: `Token ${tokenId.toString()} has IntelligentData entries but none use the "exec-log:..."/"exec-log-orphan:..." prefix; this token was not minted by the verifiable-execution plugin.`,
     });
   }
 
-  const sessionId = parseSessionIdFromDescription(execLogEntry.dataDescription);
+  const parsedDescription = parseExecutionLogDescription(execLogEntry.dataDescription);
+  if (parsedDescription === null) {
+    // The startsWith check above passed but full parse failed — this
+    // means the dataDescription has a known prefix but malformed
+    // sessionId/modelId tail (empty after the prefix, no trailing
+    // colon, etc.). 422 mirrors the previous parseSessionIdFromDescription
+    // throw.
+    throw new ProofResolutionError({
+      status: 422,
+      code: "MALFORMED_DATA_DESCRIPTION",
+      message: `dataDescription must follow ADR-08 "<prefix>:<sessionId>:<modelId>" with non-empty sessionId and modelId; got "${execLogEntry.dataDescription}".`,
+    });
+  }
+  const sessionId = parsedDescription.sessionId;
+  const recoveryAnchor = parsedDescription.recoveryAnchor;
 
   const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
   const parsed = parseSessionLog(blobBytes);
@@ -389,6 +416,7 @@ export async function resolveProof(
       meta: {
         chainId: env.CHAIN_ID,
         dataDescription: execLogEntry.dataDescription,
+        recoveryAnchor,
         storageUrl: storageBlobUrl(execLogEntry.dataHash),
         explorer: {
           token: agenticIdTokenUrl(tokenId.toString()),
@@ -446,6 +474,7 @@ export async function resolveProof(
     meta: {
       chainId: env.CHAIN_ID,
       dataDescription: execLogEntry.dataDescription,
+      recoveryAnchor,
       storageUrl: storageBlobUrl(execLogEntry.dataHash),
       explorer: {
         token: agenticIdTokenUrl(tokenId),
@@ -481,54 +510,6 @@ function parseTokenId(raw: string): bigint {
       cause,
     });
   }
-}
-
-function parseSessionIdFromDescription(dataDescription: string): string {
-  // ADR-08: "exec-log:<sessionId>:<modelId>".
-  //
-  // OpenClaw sessionKeys contain `:` — real VPS traces look like
-  // "agent:core:telegram:direct:8028166336" — so a naive split-on-`:`
-  // returns the wrong sessionId. The plugin writes the sessionKey
-  // VERBATIM into dataDescription, so the parser must reason about
-  // the FORMAT, not split arbitrarily.
-  //
-  // Format: "exec-log:<sessionId>:<modelId>" where:
-  //   - prefix is literally "exec-log:"
-  //   - modelId is the FINAL `:`-delimited segment (single token, no
-  //     colons — e.g., "claude-sonnet-4-6")
-  //   - sessionId is everything between the prefix and the last colon
-  //     (may contain any number of colons)
-  //
-  // (Codex round-4 P1 — earlier `split(":")` truncated VPS sessionIds
-  // to "agent" and caused SESSION_ID_MISMATCH on legacy plaintext + a
-  // garbled sessionId on encrypted locked-state metadata.)
-  const PREFIX = "exec-log:";
-  if (!dataDescription.startsWith(PREFIX)) {
-    throw new ProofResolutionError({
-      status: 422,
-      code: "MALFORMED_DATA_DESCRIPTION",
-      message: `dataDescription must follow ADR-08 "exec-log:<sessionId>:<modelId>"; got "${dataDescription}".`,
-    });
-  }
-  const rest = dataDescription.slice(PREFIX.length);
-  const lastColon = rest.lastIndexOf(":");
-  if (lastColon <= 0) {
-    throw new ProofResolutionError({
-      status: 422,
-      code: "MALFORMED_DATA_DESCRIPTION",
-      message: `dataDescription must follow ADR-08 "exec-log:<sessionId>:<modelId>" with a non-empty sessionId and modelId; got "${dataDescription}".`,
-    });
-  }
-  const sessionId = rest.slice(0, lastColon);
-  // Defense in depth: empty modelId is also malformed.
-  if (lastColon === rest.length - 1) {
-    throw new ProofResolutionError({
-      status: 422,
-      code: "MALFORMED_DATA_DESCRIPTION",
-      message: `dataDescription has empty modelId after final ":"; got "${dataDescription}".`,
-    });
-  }
-  return sessionId;
 }
 
 async function downloadStorageBlob(
@@ -646,7 +627,7 @@ export async function fetchEncryptedEnvelope(
     });
   }
 
-  const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
+  const execLogEntry = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (execLogEntry === undefined) {
     throw new ProofResolutionError({
       status: 404,

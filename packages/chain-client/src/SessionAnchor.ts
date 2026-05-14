@@ -93,6 +93,23 @@ export interface AnchorInput {
    * (`crypto.ts`) and `TextEncoder.encode` the JSON.
    */
   encrypt?: (plaintextJson: string) => Uint8Array;
+  /**
+   * v0.3.4 — prefix segment of the on-chain `dataDescription`.
+   * Defaults to `"exec-log"`. The orphan-recovery branch in the
+   * plugin's `handleSessionEnd` passes `"exec-log-orphan"` so the
+   * dashboard's centralized parser can render a distinct
+   * "recovery anchor" badge for tokens minted because `agent_end`
+   * never fired.
+   *
+   * Why pass through here vs. baking the convention into the plugin:
+   * `mintAndBuildResult` builds the final `dataDescription` string
+   * itself, so the prefix only lives in one place. Without this hook
+   * the orphan branch would need to call `agenticIdClient.mint()`
+   * directly, duplicating SessionAnchor's flush-then-mint error
+   * handling — including the failure wrap as
+   * `SessionAnchorMintAfterFlushError`.
+   */
+  dataDescriptionPrefix?: string;
 }
 
 export interface AnchorResult {
@@ -225,6 +242,7 @@ export class SessionAnchor {
       input.sessionId,
       flushResult.rootHash,
       flushResult.entryCount,
+      input.dataDescriptionPrefix ?? "exec-log",
     );
   }
 
@@ -250,6 +268,15 @@ export class SessionAnchor {
     rootHash: string;
     entryCount: number;
     sessionId: string;
+    /**
+     * v0.3.4 — same semantics as `AnchorInput.dataDescriptionPrefix`.
+     * Operators recovering from `SessionAnchorMintAfterFlushError`
+     * pass back `error.dataDescriptionPrefix` so the retry preserves
+     * the original prefix (notably for `"exec-log-orphan"` anchors —
+     * a recovery retry under `"exec-log"` would mislabel the token).
+     * Defaults to `"exec-log"` for backwards compat.
+     */
+    dataDescriptionPrefix?: string;
   }): Promise<AnchorResult> {
     if (!bytes32Schema.safeParse(input.rootHash).success) {
       throw new SessionAnchorError(
@@ -270,6 +297,7 @@ export class SessionAnchor {
       input.sessionId,
       input.rootHash,
       input.entryCount,
+      input.dataDescriptionPrefix ?? "exec-log",
     );
   }
 
@@ -288,8 +316,9 @@ export class SessionAnchor {
     sessionId: string,
     rootHash: string,
     entryCount: number,
+    dataDescriptionPrefix: string,
   ): Promise<AnchorResult> {
-    const dataDescription = `exec-log:${sessionId}:${this.modelId}`;
+    const dataDescription = `${dataDescriptionPrefix}:${sessionId}:${this.modelId}`;
     const data: IntelligentData = { dataDescription, dataHash: rootHash };
 
     let mintResult: Awaited<ReturnType<AgenticIDClient["mint"]>>;
@@ -305,6 +334,7 @@ export class SessionAnchor {
         entryCount,
         sessionId,
         dataDescription,
+        dataDescriptionPrefix,
         cause,
       });
     }

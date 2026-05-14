@@ -19,6 +19,10 @@
 import { Contract, JsonRpcProvider } from "ethers";
 
 import { loadEnv } from "./env.js";
+import {
+  isExecutionLogDescription,
+  parseExecutionLogDescription,
+} from "./exec-log-parser.js";
 
 const FEED_PROBE_CEILING_OFFSET = 0n; // probe FROM nextTokenId-1 backward
 const FEED_PROBE_DEPTH = 64; // walk this many tokenIds back
@@ -87,7 +91,11 @@ export interface FeedRow {
   tokenId: string;
   /** Owner address from `ownerOf`. */
   owner: string;
-  /** dataDescription as anchored on-chain — `exec-log:<sessionId>:<modelId>`. */
+  /**
+   * dataDescription as anchored on-chain — `exec-log:<sessionId>:<modelId>`
+   * for normal agent_end anchors, or `exec-log-orphan:<sessionId>:<modelId>`
+   * for session_end recovery anchors (v0.3.4).
+   */
   dataDescription: string;
   /** sessionId parsed out of dataDescription. */
   sessionId: string;
@@ -95,6 +103,12 @@ export interface FeedRow {
   modelId: string;
   /** rootHash bytes32 hex (the 0G Storage anchor). */
   rootHash: string;
+  /**
+   * v0.3.4 — true when this row was minted under the `exec-log-orphan:`
+   * prefix. FeedTable renders a small badge so auditors can spot orphan
+   * recoveries without opening the receipt.
+   */
+  recoveryAnchor: boolean;
 }
 
 /**
@@ -304,7 +318,7 @@ async function fetchOneRow(contract: Contract, id: bigint): Promise<FeedRow | nu
     if (isTokenDoesNotExistRevert(err)) return null;
     throw err;
   }
-  const exec = datas.find((d) => d.dataDescription?.startsWith?.("exec-log:"));
+  const exec = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (exec === undefined) return null;
 
   // ownerOf failure is NOT silently masked anymore. Burned tokens are
@@ -323,16 +337,27 @@ async function fetchOneRow(contract: Contract, id: bigint): Promise<FeedRow | nu
     throw err;
   }
 
-  const parts = exec.dataDescription.split(":");
-  const sessionId = parts[1] ?? "";
-  const modelId = parts.slice(2).join(":");
+  // Centralized parser handles BOTH the `exec-log:` and `exec-log-orphan:`
+  // prefixes AND honors `lastIndexOf(":")` so OpenClaw sessionKeys
+  // containing colons (e.g. `agent:core:telegram:direct:802…`) survive
+  // the round-trip. The pre-v0.3.4 inline `split(":")` here truncated
+  // such sessionIds — same bug Codex round-4 P1 caught in verify-proof.ts.
+  const parsed = parseExecutionLogDescription(exec.dataDescription);
+  if (parsed === null) {
+    // The findByPrefix above accepted this row, but the full parse
+    // failed (empty sessionId/modelId tail). Skip it from the feed
+    // rather than crashing the walk — malformed tokens shouldn't
+    // poison the landing page.
+    return null;
+  }
 
   return {
     tokenId: id.toString(),
     owner,
     dataDescription: exec.dataDescription,
-    sessionId,
-    modelId,
+    sessionId: parsed.sessionId,
+    modelId: parsed.modelId,
     rootHash: exec.dataHash,
+    recoveryAnchor: parsed.recoveryAnchor,
   };
 }

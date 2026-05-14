@@ -130,6 +130,19 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
                     <span className="h-1 w-1 rounded-full bg-accent-verify" />
                     Anchored
                   </span>
+                  {row.recoveryAnchor && (
+                    // v0.3.4 — orphan recovery anchor (session_end fired
+                    // without a preceding agent_end). The mint is real
+                    // and the bytes are durable, but the run terminated
+                    // abnormally. Surfacing this in the feed lets
+                    // auditors spot the rare case at a glance.
+                    <span
+                      className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-accent-mock/40 bg-accent-mock/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-mock"
+                      title="agent_end never fired; this token was minted by the plugin's session_end recovery branch"
+                    >
+                      Recovery
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}

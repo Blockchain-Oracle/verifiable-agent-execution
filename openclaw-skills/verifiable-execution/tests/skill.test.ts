@@ -532,8 +532,20 @@ function buildPluginStateForTests(opts?: {
   // (vitest sandboxes give a fresh dir per worker).
   const keystoreRoot = mkdtempSync(join(tmpdir(), "ve-test-keystore-"));
   const keystore = new Keystore({ root: keystoreRoot });
+  // v0.3.4: retry registry for un-flushed loggers. Empty per-test —
+  // most tests exercise the happy path where flush succeeds and the
+  // registry never accumulates entries; the pre-flush-failure test
+  // observes its contents directly.
+  const pendingAnchors = new Map<string, SessionLogger>();
   return {
-    state: { config, sessions, agenticIdClient, signer, keystore },
+    state: {
+      config,
+      sessions,
+      agenticIdClient,
+      signer,
+      keystore,
+      pendingAnchors,
+    },
     mintSpy,
   };
 }
@@ -897,6 +909,458 @@ describe("handleAgentEnd — v0.1.2 alternative anchor trigger", () => {
       { sessionKey: "ses_empty" },
     );
     expect(mintSpy).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.3.4 — One Agent Task = One Token (atomic rotate, orphan recovery,
+// pendingAnchors retry registry)
+// ---------------------------------------------------------------------------
+
+describe("v0.3.4 — one agent_end = one token", () => {
+  it("agent_end mints with the `exec-log:` prefix (NOT exec-log-orphan)", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_primary";
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
+      { sessionKey },
+    );
+    await handleAgentEnd(
+      state,
+      { runId: "run-primary", messages: [], success: true },
+      { sessionKey },
+    );
+
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    const datas = mintSpy.mock.calls[0]?.[1] as IntelligentData[];
+    expect(datas[0].dataDescription.startsWith("exec-log:")).toBe(true);
+    expect(datas[0].dataDescription.startsWith("exec-log-orphan:")).toBe(false);
+  });
+
+  it("atomic rotate: after agent_end, a NEW message_received gets a FRESH SessionLogger", async () => {
+    // Without atomic-rotate, the second turn's entry would land in
+    // the SAME (now-flushed) SessionLogger and silently drop. With
+    // takeAndRelease, the new turn starts with a fresh logger and
+    // accumulates entries from zero again.
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_rotate";
+
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "first" }, result: { hits: 1 } },
+      { sessionKey },
+    );
+    const loggerBeforeRotate = state.sessions.getOrCreate(sessionKey);
+    expect(loggerBeforeRotate.getStatus().entryCount).toBeGreaterThan(0);
+
+    await handleAgentEnd(
+      state,
+      { runId: "run-first", messages: [], success: true },
+      { sessionKey },
+    );
+
+    // First mint happened
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    // sessions map is empty for this sessionKey — confirms takeAndRelease ran
+    expect(state.sessions.has(sessionKey)).toBe(false);
+
+    // Second turn — should NOT throw "appendEntry on flushed logger"
+    handleAfterToolCall(
+      state,
+      { toolName: "fetch_url", params: { url: "x" }, result: { ok: true } },
+      { sessionKey },
+    );
+    const loggerAfterRotate = state.sessions.getOrCreate(sessionKey);
+    // Fresh logger — different INSTANCE than the rotated one
+    expect(loggerAfterRotate).not.toBe(loggerBeforeRotate);
+    // seq starts from 0 again (a fresh logger), confirming the second
+    // turn isn't reusing the flushed logger's entry counter.
+    expect(loggerAfterRotate.getStatus().entryCount).toBe(1);
+  });
+
+  // Codex r9 v0.3.4-1 edge case: a SessionLogger can exist with
+  // entryCount=0 if an entry handler's getOrCreate succeeded but its
+  // append/sign block then threw (and was swallowed by structuredLog).
+  // Anchoring an empty log would mint a content-less receipt — feed
+  // inflation that the plan explicitly forbids ("bail when no entries").
+  it("v0.3.4-1 (Codex r9): skips anchor when SessionLogger exists but has zero entries — primary path", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_zero_entries";
+    // Seed an empty logger directly (simulating entry handlers that
+    // allocated but threw during append/sign).
+    state.sessions.getOrCreate(sessionKey);
+    expect(state.sessions.has(sessionKey)).toBe(true);
+
+    await handleAgentEnd(
+      state,
+      { runId: "run-zero", messages: [], success: true },
+      { sessionKey },
+    );
+
+    // No mint should fire for an empty logger.
+    expect(mintSpy).not.toHaveBeenCalled();
+    // And the empty logger should be released so it doesn't linger.
+    expect(state.sessions.has(sessionKey)).toBe(false);
+  });
+
+  it("v0.3.4-5 (Codex r9): skips orphan recovery when SessionLogger exists but has zero entries — orphan path", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_zero_entries_orphan";
+    state.sessions.getOrCreate(sessionKey);
+
+    await handleSessionEnd(state, { trigger: "shutdown" }, { sessionKey });
+
+    expect(mintSpy).not.toHaveBeenCalled();
+    expect(state.sessions.has(sessionKey)).toBe(false);
+  });
+
+  it("uses event.runId in the success log when provided", async () => {
+    const stderrWrites: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrWrites.push(String(chunk));
+        return true;
+      });
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_with_runid";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    await handleAgentEnd(
+      state,
+      { runId: "run-explicit-123", messages: [], success: true },
+      { sessionKey },
+    );
+    const captured = stderrWrites.join("");
+    expect(captured).toContain('"runId":"run-explicit-123"');
+    stderrSpy.mockRestore();
+  });
+
+  it("falls back to synthetic `anon-<hex>` runId when event.runId is missing", async () => {
+    const stderrWrites: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrWrites.push(String(chunk));
+        return true;
+      });
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_no_runid";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    // No runId on the event — exercises the randomBytes(16) fallback.
+    await handleAgentEnd(state, { messages: [], success: true }, { sessionKey });
+    const captured = stderrWrites.join("");
+    expect(captured).toMatch(/"runId":"anon-[0-9a-f]{32}"/);
+    stderrSpy.mockRestore();
+  });
+});
+
+describe("v0.3.4 — session_end orphan recovery", () => {
+  it("no-op when no orphan SessionLogger exists (agent_end already anchored)", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_no_orphan";
+    // Run a normal agent_end first — clears state.sessions.
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    await handleAgentEnd(
+      state,
+      { runId: "run-clean", messages: [], success: true },
+      { sessionKey },
+    );
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    // Now session_end fires (channel close). With no orphan logger
+    // present, it must NOT mint a second token.
+    await handleSessionEnd(state, { trigger: "idle" }, { sessionKey });
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("mints with `exec-log-orphan:` prefix AND logs ERROR-level orphan notice when an orphan SessionLogger is present", async () => {
+    const stderrWrites: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrWrites.push(String(chunk));
+        return true;
+      });
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_orphan_path";
+    // Seed an entry, then fire session_end without agent_end first.
+    // Simulates a harness crash mid-run.
+    handleAfterToolCall(
+      state,
+      { toolName: "web_search", params: { q: "z" }, result: { hits: 1 } },
+      { sessionKey },
+    );
+    await handleSessionEnd(state, { trigger: "shutdown" }, { sessionKey });
+
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    const datas = mintSpy.mock.calls[0]?.[1] as IntelligentData[];
+    expect(datas[0].dataDescription.startsWith("exec-log-orphan:")).toBe(true);
+
+    // v0.3.4-5: the BDD "And" line requires an ERROR-level structured
+    // log "Orphan recovery anchor — agent_end never fired" so the
+    // operator can spot the abnormal provenance in their gateway log.
+    const captured = stderrWrites.join("");
+    expect(captured).toMatch(/"level":"ERROR"[^\n]*"component":"session_end"[^\n]*"Orphan recovery anchor — agent_end never fired/);
+    stderrSpy.mockRestore();
+  });
+
+  it("agent_end + session_end on same sessionKey produces EXACTLY ONE token (no double-mint)", async () => {
+    // The atomic rotate is what prevents double-mint. The first
+    // handler (whichever runs first) takeAndReleases the logger;
+    // the second handler finds null and no-ops cleanly.
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_no_double_mint";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    await Promise.all([
+      handleAgentEnd(
+        state,
+        { runId: "run-x", messages: [], success: true },
+        { sessionKey },
+      ),
+      handleSessionEnd(state, { trigger: "idle" }, { sessionKey }),
+    ]);
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Codex round-4 v0.3.4-5: when turn N's agent_end is still uploading
+  // and turn N+1 has already allocated a FRESH SessionLogger under the
+  // same sessionKey, session_end MUST orphan-recover the fresh logger
+  // (NOT skip it because an older anchor is in-flight).
+  it("v0.3.4-5 (Codex r4): orphan-recovers the FRESH logger when a previous agent_end is still in flight", async () => {
+    // Slow mint for turn N's agent_end. The orphan-recovery mint
+    // (turn N+1, dataDescription startsWith "exec-log-orphan:")
+    // resolves immediately so the test doesn't deadlock waiting on
+    // both. `reachedOldMintPromise` lets the test deterministically
+    // wait until agent_end has finished its async flush and entered
+    // the mint stub — no `setTimeout(0)` flakiness.
+    let resolveOldMint: ((v: MintResult) => void) | null = null;
+    const slowOldMint = new Promise<MintResult>((resolve) => {
+      resolveOldMint = resolve;
+    });
+    let signalReachedOldMint: () => void = () => {};
+    const reachedOldMintPromise = new Promise<void>((resolve) => {
+      signalReachedOldMint = resolve;
+    });
+    const mintImpl = async (
+      _to: string,
+      datas: ReadonlyArray<IntelligentData>,
+    ): Promise<MintResult> => {
+      const desc = datas[0]?.dataDescription ?? "";
+      if (desc.startsWith("exec-log-orphan:")) {
+        return { tokenId: 100n, txHash: "0x" + "b".repeat(64) };
+      }
+      // Turn N's mint — signal then hang on the slow promise.
+      signalReachedOldMint();
+      return slowOldMint;
+    };
+    const { state, mintSpy } = buildPluginStateForTests({ mintImpl });
+    const sessionKey = "ses_v034_inflight_orphan";
+
+    // Turn N — seed an entry then fire agent_end (don't await).
+    handleAfterToolCall(
+      state,
+      { toolName: "t1", params: {}, result: { hits: 1 } },
+      { sessionKey },
+    );
+    const agentEndPromise = handleAgentEnd(
+      state,
+      { runId: "run-old", messages: [], success: true },
+      { sessionKey },
+    );
+    // Wait until agent_end's flush+mint has reached the slow mint
+    // stub — confirms takeAndRelease and flush both completed and
+    // mint is now in flight (stuck on slowOldMint).
+    await reachedOldMintPromise;
+    expect(state.sessions.has(sessionKey)).toBe(false);
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+
+    // Turn N+1 — new after_tool_call allocates a FRESH logger.
+    handleAfterToolCall(
+      state,
+      { toolName: "t2", params: {}, result: { ok: true } },
+      { sessionKey },
+    );
+    expect(state.sessions.has(sessionKey)).toBe(true);
+
+    // session_end fires. With the old (over-broad agentEndInFlight)
+    // guard, this would no-op and turn N+1's entries would die in
+    // memory. The corrected impl orphan-recovers the fresh logger.
+    await handleSessionEnd(state, { trigger: "idle" }, { sessionKey });
+
+    // session_end minted ONE token (turn N+1's orphan). agent_end's
+    // mint for turn N is still pending — total mintImpl calls = 2.
+    expect(mintSpy).toHaveBeenCalledTimes(2);
+    const orphanDatas = mintSpy.mock.calls[1]?.[1] as IntelligentData[];
+    expect(orphanDatas[0].dataDescription.startsWith("exec-log-orphan:")).toBe(
+      true,
+    );
+
+    // Resolve turn N's slow mint so agent_end can complete cleanly.
+    resolveOldMint!({ tokenId: 99n, txHash: "0x" + "a".repeat(64) });
+    await agentEndPromise;
+    // Final tally: 2 mints — one for turn N (exec-log:), one for
+    // turn N+1's orphan (exec-log-orphan:). Confirms turn N's anchor
+    // used the normal prefix.
+    expect(mintSpy).toHaveBeenCalledTimes(2);
+    const oldDatas = mintSpy.mock.calls[0]?.[1] as IntelligentData[];
+    expect(oldDatas[0].dataDescription.startsWith("exec-log:")).toBe(true);
+    expect(oldDatas[0].dataDescription.startsWith("exec-log-orphan:")).toBe(
+      false,
+    );
+  });
+
+  // Codex round-2 v0.3.4-6: handleSessionEnd's microtask yield must
+  // make agent_end win the race in BOTH orderings, so a normal run
+  // never gets mislabeled as `exec-log-orphan:`.
+  it("v0.3.4-6 (Codex r2): reverse-order race — session_end scheduled FIRST still produces exec-log: (NOT exec-log-orphan:)", async () => {
+    const { state, mintSpy } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_reverse_race";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    // session_end FIRST in the Promise.all argument order — without
+    // the agentEndInFlight + Promise.resolve() coordination this
+    // would race past agent_end's prelude and mint `exec-log-orphan:`.
+    await Promise.all([
+      handleSessionEnd(state, { trigger: "idle" }, { sessionKey }),
+      handleAgentEnd(
+        state,
+        { runId: "run-reverse", messages: [], success: true },
+        { sessionKey },
+      ),
+    ]);
+    expect(mintSpy).toHaveBeenCalledTimes(1);
+    const datas = mintSpy.mock.calls[0]?.[1] as IntelligentData[];
+    expect(datas[0].dataDescription.startsWith("exec-log:")).toBe(true);
+    expect(datas[0].dataDescription.startsWith("exec-log-orphan:")).toBe(false);
+  });
+});
+
+describe("v0.3.4 — pendingAnchors retry registry", () => {
+  it("logger lands in pendingAnchors when flush fails BEFORE mint — same instance, entries intact", async () => {
+    // Simulate a flush failure via uploadOverride that throws.
+    const { state, mintSpy } = buildPluginStateForTests({
+      uploadOverride: (async () => {
+        throw new Error("ECONNRESET");
+      }) as unknown as IndexerLike["upload"],
+    });
+    const sessionKey = "ses_v034_preflush_fail";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: { q: "x" }, result: { hits: 7 } },
+      { sessionKey },
+    );
+    // Capture the SessionLogger reference BEFORE handleAgentEnd so the
+    // post-failure assertion can verify identity (the stored value is
+    // the actual logger, not just a placeholder). This pins the
+    // "registered logger has not been GC'd" BDD invariant — Codex r7
+    // caught that the map-key-only check didn't prove that.
+    const loggerBeforeAnchor = state.sessions.getOrCreate(sessionKey);
+    expect(loggerBeforeAnchor.getStatus().entryCount).toBe(1);
+
+    await handleAgentEnd(
+      state,
+      { runId: "run-preflush", messages: [], success: true },
+      { sessionKey },
+    );
+
+    expect(mintSpy).not.toHaveBeenCalled();
+    // The plaintext logger is the ONLY copy of those entries — must
+    // stay registered AND BE the same instance for manual recovery.
+    expect(state.pendingAnchors.size).toBe(1);
+    const pendingKey = `${sessionKey}|run:run-preflush`;
+    expect([...state.pendingAnchors.keys()]).toEqual([pendingKey]);
+    const retainedLogger = state.pendingAnchors.get(pendingKey);
+    // Identity: the registered VALUE is the exact unflushed logger
+    // instance we rotated out — not a fresh placeholder or null.
+    expect(retainedLogger).toBe(loggerBeforeAnchor);
+    // Usability: the retained logger still holds the entries that
+    // accumulated before the failed flush, so a manual recovery
+    // (`logger.flush({encrypt})` from the structured-log hint) can
+    // anchor them.
+    expect(retainedLogger?.getStatus().entryCount).toBe(1);
+    expect(retainedLogger?.getStatus().flushed).toBe(false);
+  });
+
+  it("registry is CLEARED on successful mint (bytes durable; plaintext not needed)", async () => {
+    const { state } = buildPluginStateForTests();
+    const sessionKey = "ses_v034_clear_on_success";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    await handleAgentEnd(
+      state,
+      { runId: "run-cleared", messages: [], success: true },
+      { sessionKey },
+    );
+    // Registry must be empty — keeping the plaintext logger past
+    // mint is a memory + privacy regression (round-4 narrowing).
+    expect(state.pendingAnchors.size).toBe(0);
+  });
+
+  it("registry is CLEARED on SessionAnchorMintAfterFlushError AND structured-log carries dataDescriptionPrefix (bytes durable)", async () => {
+    // Mint fails after flush — but flush succeeded, so the encrypted
+    // bytes are on 0G Storage. The plaintext logger is no longer the
+    // only copy: rootHash + entryCount + sessionId +
+    // dataDescriptionPrefix on the error give recovery everything it
+    // needs. Clear the registry.
+    //
+    // v0.3.4-9 BDD "And" line: structured-log MUST include
+    // `dataDescriptionPrefix` so an operator's retryMint() call can
+    // preserve it (orphan-recovery anchors would otherwise silently
+    // re-label as exec-log: on retry).
+    const stderrWrites: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrWrites.push(String(chunk));
+        return true;
+      });
+    const { state } = buildPluginStateForTests({
+      mintImpl: async () => {
+        throw new Error("transient RPC failure");
+      },
+    });
+    const sessionKey = "ses_v034_postflush_fail";
+    handleAfterToolCall(
+      state,
+      { toolName: "noop", params: {}, result: {} },
+      { sessionKey },
+    );
+    await handleAgentEnd(
+      state,
+      { runId: "run-postflush", messages: [], success: true },
+      { sessionKey },
+    );
+    expect(state.pendingAnchors.size).toBe(0);
+
+    const captured = stderrWrites.join("");
+    // The post-flush failure log line must explicitly carry the prefix.
+    expect(captured).toContain('"dataDescriptionPrefix":"exec-log"');
+    // Recovery hint embeds it too so a copy-paste retryMint() call
+    // preserves the prefix on the chain.
+    expect(captured).toContain('dataDescriptionPrefix:\\"exec-log\\"');
+    stderrSpy.mockRestore();
   });
 });
 
@@ -1387,19 +1851,29 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
       { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
       { sessionKey },
     );
-    await handleSessionEnd(state, { messages: [], success: true }, { sessionKey });
+    // v0.3.4: handleAgentEnd is the primary anchor; handleSessionEnd
+    // is orphan recovery. This test exercises the post-mint commit
+    // failure on the primary path.
+    await handleAgentEnd(
+      state,
+      { runId: "run-commit-fail", messages: [], success: true },
+      { sessionKey },
+    );
 
     const captured = stderrWrites.join("");
     // Specific post-mint message, NOT the generic "pre-flush" label.
     expect(captured).toMatch(/Keystore commit failed AFTER successful mint/);
-    expect(captured).not.toMatch(/Anchor failed \(pre-flush\)/);
+    expect(captured).not.toMatch(/Flush failed before mint/);
     // tokenId 99 (the stub mint result) MUST appear in the recovery
     // hint so the operator knows the receipt is anchored and can
-    // call keystore.commitPending(sessionKey, "99").
+    // call keystore.commitPending(...) manually.
     expect(captured).toContain('tokenId 99');
-    // The recovery hint embeds the manual commitPending call. Logs
-    // are JSON-stringified so quotes appear escaped.
-    expect(captured).toContain('commitPending(\\"ses_commit_fails\\", \\"99\\")');
+    // v0.3.4: the recovery hint embeds the COMPOUND pendingKeyName
+    // (`${sessionKey}|run:${runId}`) and the bare sessionKey + runId
+    // meta bag. Logs are JSON-stringified so quotes appear escaped.
+    expect(captured).toContain(
+      'commitPending(\\"ses_commit_fails|run:run-commit-fail\\", \\"99\\", {sessionKey:\\"ses_commit_fails\\", runId:\\"run-commit-fail\\"})',
+    );
     // Reveal-key invariants from round-9 still hold:
     expect(captured).not.toContain("#k=");
     commitSpy.mockRestore();
@@ -1407,10 +1881,14 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
   });
 
   // Hard-fail invariant (Codex round-3): if keystore.setPending throws
-  // (FS unwritable / disk full), handleSessionEnd MUST abort before
-  // upload. Silently degrading to plaintext upload would violate the
-  // v0.3.0 encrypted-by-default contract.
-  it("aborts before upload when keystore.setPending fails — no plaintext leak", async () => {
+  // (FS unwritable / disk full), the anchor MUST abort before upload.
+  // Silently degrading to plaintext upload would violate the v0.3.0
+  // encrypted-by-default contract.
+  //
+  // v0.3.4 strengthens this: the SessionLogger STAYS in state.sessions
+  // (NOT moved to pendingAnchors) so the next agent_end auto-retries
+  // on the same sessionKey without operator intervention.
+  it("aborts before upload when keystore.setPending fails — no plaintext leak; logger retained in state.sessions for auto-retry", async () => {
     let uploadCalls = 0;
     const uploadOverride = async () => {
       uploadCalls++;
@@ -1434,15 +1912,26 @@ describe("v0.3.0 handleSessionEnd — encrypted flush + keystore", () => {
       { toolName: "web_search", params: { q: "x" }, result: { hits: 1 } },
       { sessionKey },
     );
-    await handleSessionEnd(state, { messages: [], success: true }, { sessionKey });
+    // Exercise via handleAgentEnd (the primary anchor in v0.3.4).
+    await handleAgentEnd(
+      state,
+      { runId: "run-setpending-fail", messages: [], success: true },
+      { sessionKey },
+    );
 
     expect(setPendingSpy).toHaveBeenCalledOnce();
-    // CRITICAL: no upload, no mint. The session log remains in-memory
-    // for the operator to retry once the FS is fixed.
+    // CRITICAL: no upload, no mint. The session log remains in-memory.
     expect(uploadCalls).toBe(0);
     expect(mintSpy).not.toHaveBeenCalled();
     // No committed key either — nothing was minted.
     expect(state.keystore.list()).toEqual([]);
+    // v0.3.4 retry semantic: logger STAYS in state.sessions so the
+    // NEXT agent_end on this sessionKey re-attempts with a fresh K.
+    expect(state.sessions.has(sessionKey)).toBe(true);
+    // And it MUST NOT be parked in pendingAnchors (that registry is
+    // for un-flushed loggers POST-rotate; pre-rotate failures never
+    // touch it).
+    expect(state.pendingAnchors.size).toBe(0);
     setPendingSpy.mockRestore();
   });
 });
@@ -1460,7 +1949,16 @@ describe("handleSessionEnd — story-skill-close", () => {
     );
     expect(state.sessions.has(sessionKey)).toBe(true);
 
-    await handleSessionEnd(state, {}, { sessionKey });
+    // v0.3.4: the primary anchor responsibility moved from
+    // handleSessionEnd to handleAgentEnd ("one agent task = one
+    // token"). handleSessionEnd is now the orphan-recovery branch
+    // — see the dedicated orphan-recovery tests below for that
+    // path's BDD.
+    await handleAgentEnd(
+      state,
+      { runId: "run-happy", messages: [], success: true },
+      { sessionKey },
+    );
 
     // mint was called exactly once with the expected payload shape
     expect(mintSpy).toHaveBeenCalledTimes(1);
@@ -1476,7 +1974,7 @@ describe("handleSessionEnd — story-skill-close", () => {
     );
     expect(datas[0].dataHash).toBe(ROOT_HASH);
 
-    // SessionLogger was released after success — no dangling state.
+    // SessionLogger was rotated out on success — no dangling state.
     expect(state.sessions.has(sessionKey)).toBe(false);
   });
 

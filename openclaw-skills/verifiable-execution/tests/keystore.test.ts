@@ -248,6 +248,147 @@ describe("Keystore — setPending / commitPending (crash-recovery ordering)", ()
     expect(ks2.commitPending(sk, "8888")).toBe(true);
     expect(ks2.get("8888")!.equals(k)).toBe(true);
   });
+
+  // ---------------------------------------------------------------------
+  // v0.3.4 — metadata bag (decoupled pendingKeyName + sessionKey/runId)
+  // ---------------------------------------------------------------------
+
+  it("v0.3.4: setPending(pendingKeyName, key, {sessionKey, runId}) records BOTH in sidecar", () => {
+    const sessionKey = "agent:core:telegram:direct:8028166336";
+    const runId = "993accba-f307-458b-ab4c-65d337737ea5";
+    const pendingKeyName = `${sessionKey}|run:${runId}`;
+    const k = generateKey();
+
+    ks.setPending(pendingKeyName, k, { sessionKey, runId });
+
+    const pending = ks.listPending();
+    expect(pending).toHaveLength(1);
+    // listPending surfaces the BARE sessionKey + runId — never the
+    // compound pendingKeyName. Recovery tooling uses these originals
+    // for /share footnotes + operator audit.
+    expect(pending[0]?.sessionKey).toBe(sessionKey);
+    expect(pending[0]?.runId).toBe(runId);
+    // The on-disk filename IS the base64url(pendingKeyName) so the
+    // sidecar key cannot collide on a sessionKey shared between two
+    // concurrent runs.
+    expect(pending[0]?.sanitizedFilename).toBe(
+      Buffer.from(pendingKeyName, "utf8").toString("base64url"),
+    );
+  });
+
+  it("v0.3.4: commitPending writes BARE sessionKey + runId to last-receipt.json (NOT compound)", () => {
+    const sessionKey = "ses_v034_lastreceipt";
+    const runId = "anon-deadbeefcafebabedeadbeefcafebabe";
+    const pendingKeyName = `${sessionKey}|run:${runId}`;
+    const k = generateKey();
+
+    ks.setPending(pendingKeyName, k, { sessionKey, runId });
+    expect(ks.commitPending(pendingKeyName, "42", { sessionKey, runId })).toBe(
+      true,
+    );
+
+    const last = ks.getLast();
+    expect(last).not.toBeNull();
+    expect(last?.tokenId).toBe("42");
+    // The pointer holds the bare sessionKey; /share no-args footnote
+    // reads from here and must show the original sessionKey the
+    // operator's agent runtime issued — NOT the compound form.
+    expect(last?.sessionKey).toBe(sessionKey);
+    expect(last?.runId).toBe(runId);
+    // Defensive: the compound pendingKeyName must NOT leak through.
+    expect(last?.sessionKey).not.toContain("|run:");
+  });
+
+  it("v0.3.4: two concurrent runs on the same sessionKey produce DISTINCT pending entries", () => {
+    // The pre-v0.3.4 `setPending(sessionKey, K)` shape collided when a
+    // harness queued two runs against the same sessionKey: the second
+    // setPending overwrote the first → token T1 commits with K2 →
+    // /share T1 emits K2 → cross-token decryption. Compound
+    // pendingKeyName fixes the collision.
+    const sessionKey = "ses_v034_two_runs_same_key";
+    const runA = "run-a";
+    const runB = "run-b";
+    const kA = generateKey();
+    const kB = generateKey();
+
+    ks.setPending(`${sessionKey}|run:${runA}`, kA, { sessionKey, runId: runA });
+    ks.setPending(`${sessionKey}|run:${runB}`, kB, { sessionKey, runId: runB });
+
+    const pending = ks.listPending();
+    expect(pending).toHaveLength(2);
+    // Both entries surface the same bare sessionKey but DIFFERENT runIds.
+    const sessionKeys = pending.map((p) => p.sessionKey);
+    expect(sessionKeys.every((s) => s === sessionKey)).toBe(true);
+    const runIds = pending.map((p) => p.runId).sort();
+    expect(runIds).toEqual([runA, runB]);
+
+    // Committing one MUST NOT consume the other → no key leak.
+    expect(
+      ks.commitPending(`${sessionKey}|run:${runA}`, "100", {
+        sessionKey,
+        runId: runA,
+      }),
+    ).toBe(true);
+    expect(
+      ks.commitPending(`${sessionKey}|run:${runB}`, "200", {
+        sessionKey,
+        runId: runB,
+      }),
+    ).toBe(true);
+    expect(ks.get("100")!.equals(kA)).toBe(true);
+    expect(ks.get("200")!.equals(kB)).toBe(true);
+    // Cross-binding check: T100 has K_A, NOT K_B.
+    expect(ks.get("100")!.equals(kB)).toBe(false);
+  });
+
+  // Codex round-2 v0.3.4-12: when commitPending() returns false
+  // (pending file vanished mid-run), the anchorRun fallback calls
+  // `put(tokenId, K, {sessionKey, runId})` so last-receipt.json still
+  // carries the bare metadata — the pre-fix path used `put(tokenId, K)`
+  // which wrote `sessionKey: "direct-put:<tokenId>"` and dropped runId.
+  it("v0.3.4-12 (Codex r2): put() with optional meta preserves bare sessionKey + runId in last-receipt.json", () => {
+    const sessionKey = "ses_v034_put_with_meta";
+    const runId = "run-fallback-1";
+    const k = generateKey();
+    ks.put("888", k, { sessionKey, runId });
+
+    const last = ks.getLast();
+    expect(last).not.toBeNull();
+    expect(last?.tokenId).toBe("888");
+    // BARE sessionKey + runId from the meta bag — NOT "direct-put:888".
+    expect(last?.sessionKey).toBe(sessionKey);
+    expect(last?.runId).toBe(runId);
+    expect(last?.sessionKey.startsWith("direct-put:")).toBe(false);
+  });
+
+  // The genuinely-direct put (no meta bag — e.g. an operator's manual
+  // ops tool re-binding an out-of-band tokenId) must still surface the
+  // synthetic marker so /share footnote can distinguish it from a
+  // normal agent_end commit.
+  it("v0.3.4: put() WITHOUT meta keeps the legacy `direct-put:<tokenId>` synthetic marker", () => {
+    const k = generateKey();
+    ks.put("777", k);
+    const last = ks.getLast();
+    expect(last?.tokenId).toBe("777");
+    expect(last?.sessionKey).toBe("direct-put:777");
+    expect(last?.runId).toBeUndefined();
+  });
+
+  it("v0.3.4: legacy pre-v0.3.4 setPending(sessionKey, key) still parses cleanly", () => {
+    // Backwards compat: pending entries written by v0.3.0–v0.3.3
+    // sidecars carry only `sessionKey` (no runId). Recovery tooling on
+    // a v0.3.4 deploy must still surface these — operator can finish
+    // the commit without the runId field.
+    const sk = "ses_legacy_pending";
+    const k = generateKey();
+    ks.setPending(sk, k); // no meta bag — pre-v0.3.4 shape
+
+    const pending = ks.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.sessionKey).toBe(sk);
+    // runId is null on legacy entries (the sidecar predates the field).
+    expect(pending[0]?.runId).toBeNull();
+  });
 });
 
 describe("Keystore — last-receipt pointer", () => {

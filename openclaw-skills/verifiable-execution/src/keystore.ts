@@ -62,19 +62,55 @@ const DEFAULT_ROOT = join(homedir(), ".openclaw", "verifiable-execution");
 export interface LastReceiptPointer {
   tokenId: string;
   sessionKey: string;
+  /**
+   * Optional run identifier (v0.3.4). When the receipt was minted under
+   * the "one agent task = one token" anchor flow, this carries the
+   * `event.runId` (or synthetic `anon-<hex>` fallback) so the operator
+   * can correlate the share URL back to a specific agent run.
+   *
+   * Optional for backwards-compat: pre-v0.3.4 pointers do not include
+   * runId and `getLast()` still returns them. Treat missing as "unknown
+   * run" rather than a parse failure.
+   */
+  runId?: string;
   mintedAt: number; // unix seconds
 }
 
 /**
- * Sidecar metadata written next to each pending key file so the
- * ORIGINAL sessionKey (with separators intact) survives the
- * one-way sanitization that goes into the filename. Used by
- * `listPending()` to give crash-recovery tooling a copy-paste
- * sessionKey for `commitPending(sessionKey, tokenId)`.
+ * Sidecar metadata written next to each pending key file. The
+ * filesystem identity is the (base64url-encoded) `pendingKeyName`
+ * which since v0.3.4 is the COMPOUND `${sessionKey}|run:${runId}` —
+ * but operators want to see the BARE `sessionKey` + `runId` for
+ * recovery + audit, not the compound. The sidecar carries both
+ * fields so `listPending()` can surface the originals without the
+ * caller having to split the compound key themselves.
+ *
+ * Backwards-compat: pre-v0.3.4 sidecars carry only `sessionKey` and
+ * no `runId`. The reader treats missing `runId` as null + still
+ * returns the entry so recovery tooling can finish committing legacy
+ * pending keys without crashing.
  */
 interface PendingMetadata {
   sessionKey: string;
+  /** Optional — v0.3.4 introduced this; pre-v0.3.4 sidecars omit it. */
+  runId?: string;
   createdAt: number; // unix seconds
+}
+
+/**
+ * Optional metadata bag passed to `setPending` + `commitPending` (v0.3.4).
+ * Decouples the filesystem identity (`pendingKeyName`) from the
+ * user-visible `sessionKey` + `runId` so the compound form never leaks
+ * into `last-receipt.json` or `listPending()` output.
+ *
+ * When omitted, the legacy single-arg pattern still works: callers
+ * pass the bare `sessionKey` as `pendingKeyName` and the sidecar
+ * records that string as both filesystem identity and metadata
+ * sessionKey. Keeps pre-v0.3.4 callers compiling.
+ */
+export interface PendingMetadataInput {
+  sessionKey: string;
+  runId?: string;
 }
 
 export class Keystore {
@@ -113,47 +149,70 @@ export class Keystore {
   }
 
   /**
-   * Persist a key BEFORE mint, indexed by sessionKey. If the plugin
-   * crashes between this call and `commitPending`, K survives on disk
-   * so a retry can recover the rootHash association.
+   * Persist a key BEFORE mint, indexed by `pendingKeyName`. If the
+   * plugin crashes between this call and `commitPending`, K survives
+   * on disk so a retry can recover the rootHash association.
    *
-   * sessionKey is whatever the plugin uses to identify the session
-   * (OpenClaw's `ctx.sessionKey` or `ctx.sessionId`); we sanitize for
-   * filesystem safety.
+   * v0.3.4: `pendingKeyName` is the FILESYSTEM identity (typically the
+   * compound `${sessionKey}|run:${runId}` for the "one agent task =
+   * one token" flow). The optional `meta` bag carries the BARE
+   * `sessionKey` + `runId` so the sidecar records them separately and
+   * `listPending()` can surface the originals — never the compound.
+   *
+   * When `meta` is omitted, the function falls back to the legacy
+   * v0.3.0 behavior: `pendingKeyName` IS the sessionKey, sidecar
+   * records it as such, no `runId`. Keeps pre-v0.3.4 callers green
+   * through the transition window.
    */
-  setPending(sessionKey: string, key: Buffer): void {
+  setPending(
+    pendingKeyName: string,
+    key: Buffer,
+    meta?: PendingMetadataInput,
+  ): void {
     if (key.length !== 32) {
       throw new Error(`Key must be 32 bytes; got ${key.length}`);
     }
     this.ensureDirs();
-    const sanitized = this.sanitizeFilename(sessionKey);
+    const sanitized = this.sanitizeFilename(pendingKeyName);
     const keyPath = join(this.pendingDir, sanitized + ".key");
     this.atomicWriteBytes(keyPath, key);
-    // Sidecar metadata preserves the ORIGINAL sessionKey (sanitization
-    // is one-way: ":"/"/" all collapse to "_", so we cannot recover
-    // the agent-runtime sessionKey from the filename alone). After a
-    // crash, listPending() reads these sidecars to give operators a
-    // copy-paste-ready sessionKey for retryMint(sessionKey, tokenId).
+    // Sidecar carries the operator-visible sessionKey + runId, not
+    // the compound pendingKeyName. listPending() reads this back so
+    // recovery tooling sees the bare sessionKey + a distinct runId
+    // field, never the `${sessionKey}|run:${runId}` mash.
     const metaPath = join(this.pendingDir, sanitized + ".meta.json");
-    const meta: PendingMetadata = {
-      sessionKey,
+    const sidecar: PendingMetadata = {
+      sessionKey: meta?.sessionKey ?? pendingKeyName,
+      ...(meta?.runId !== undefined ? { runId: meta.runId } : {}),
       createdAt: Math.floor(Date.now() / 1000),
     };
-    this.atomicWriteText(metaPath, JSON.stringify(meta));
+    this.atomicWriteText(metaPath, JSON.stringify(sidecar));
   }
 
   /**
-   * Promote a pending key (indexed by sessionKey) to a committed key
-   * (indexed by tokenId). Also updates `last-receipt.json` so a
+   * Promote a pending key (indexed by `pendingKeyName`) to a committed
+   * key (indexed by tokenId). Also updates `last-receipt.json` so a
    * subsequent `/share` with no args targets this token.
    *
+   * v0.3.4: `pendingKeyName` is the FILESYSTEM identity (typically the
+   * compound `${sessionKey}|run:${runId}`). The optional `meta` bag
+   * carries the BARE `sessionKey` + `runId` that get written into
+   * `last-receipt.json` so the no-args `/share` footnote renders the
+   * original sessionKey, not the compound. When `meta` is omitted,
+   * the function falls back to legacy v0.3.0 behavior (treating
+   * `pendingKeyName` as the user-visible sessionKey).
+   *
    * Returns true if a pending key was found + promoted, false if no
-   * pending key existed for that sessionKey (e.g., the operator
+   * pending key existed for that pendingKeyName (e.g., the operator
    * manually called `put(tokenId, key)` and is now linking it).
    */
-  commitPending(sessionKey: string, tokenId: string): boolean {
+  commitPending(
+    pendingKeyName: string,
+    tokenId: string,
+    meta?: PendingMetadataInput,
+  ): boolean {
     this.ensureDirs();
-    const sanitized = this.sanitizeFilename(sessionKey);
+    const sanitized = this.sanitizeFilename(pendingKeyName);
     const pendingPath = join(this.pendingDir, sanitized + ".key");
     const pendingMetaPath = join(this.pendingDir, sanitized + ".meta.json");
     const committedPath = join(
@@ -178,9 +237,15 @@ export class Keystore {
         // best-effort
       }
     }
+    // last-receipt.json gets the BARE sessionKey + runId (NOT the
+    // compound pendingKeyName). This is what the no-args `/share`
+    // command surfaces in the footnote — operators need the original
+    // sessionKey to correlate with their agent runtime, not our
+    // internal compound identifier.
     this.writeLastReceiptPointer({
       tokenId,
-      sessionKey,
+      sessionKey: meta?.sessionKey ?? pendingKeyName,
+      ...(meta?.runId !== undefined ? { runId: meta.runId } : {}),
       mintedAt: Math.floor(Date.now() / 1000),
     });
     return true;
@@ -191,14 +256,19 @@ export class Keystore {
    *
    * Also updates `last-receipt.json` so that `/share` with no args
    * returns this tokenId (parity with the setPending → commitPending
-   * production flow which also updates the pointer). The sessionKey
-   * field is filled with a synthetic `direct-put:<tokenId>` marker
-   * because `put` is called outside the agent runtime and doesn't
-   * have a real OpenClaw session identifier — share-command renders
-   * the marker in the session footnote so operators can tell apart
-   * "minted via /share" vs. "minted via agent_end."
+   * production flow which also updates the pointer).
+   *
+   * v0.3.4: accepts an optional `meta` bag so callers from the
+   * commitPending-fallback path (where the AES key was generated
+   * inside an `agent_end` and we know its `sessionKey` + `runId`)
+   * can preserve the metadata contract — `last-receipt.json` ends up
+   * with the BARE sessionKey + runId, not the `direct-put:<tokenId>`
+   * synthetic marker. When `meta` is omitted (genuinely-direct calls
+   * with no agent-runtime context), the synthetic marker still
+   * applies so share-command can tell apart "minted via direct-put"
+   * vs. "minted via agent_end."
    */
-  put(tokenId: string, key: Buffer): void {
+  put(tokenId: string, key: Buffer, meta?: PendingMetadataInput): void {
     if (key.length !== 32) {
       throw new Error(`Key must be 32 bytes; got ${key.length}`);
     }
@@ -210,7 +280,8 @@ export class Keystore {
     this.atomicWriteBytes(path, key);
     this.writeLastReceiptPointer({
       tokenId,
-      sessionKey: `direct-put:${tokenId}`,
+      sessionKey: meta?.sessionKey ?? `direct-put:${tokenId}`,
+      ...(meta?.runId !== undefined ? { runId: meta.runId } : {}),
       mintedAt: Math.floor(Date.now() / 1000),
     });
   }
@@ -240,6 +311,10 @@ export class Keystore {
   /**
    * Return the last-receipt pointer for `/share` with no arguments.
    * null when no receipts have been minted yet on this host.
+   *
+   * v0.3.4 pointers include an optional `runId`; pre-v0.3.4 pointers
+   * omit it. Either is returned successfully — the consumer (`/share`
+   * footnote) treats missing runId as "unknown run."
    */
   getLast(): LastReceiptPointer | null {
     if (!existsSync(this.lastReceiptPath)) return null;
@@ -253,7 +328,13 @@ export class Keystore {
       ) {
         return null;
       }
-      return parsed as LastReceiptPointer;
+      const pointer: LastReceiptPointer = {
+        tokenId: parsed.tokenId,
+        sessionKey: parsed.sessionKey,
+        mintedAt: parsed.mintedAt,
+        ...(typeof parsed.runId === "string" ? { runId: parsed.runId } : {}),
+      };
+      return pointer;
     } catch {
       // Pointer corrupt or unreadable — treat as missing rather than
       // crash the share handler. Operator can manually grep for the
@@ -285,21 +366,28 @@ export class Keystore {
   }
 
   /**
-   * List pending keys awaiting commit, with their ORIGINAL sessionKey
-   * (not the sanitized filename). Used by crash-recovery tooling:
-   * after a process restart, the operator runs `listPending()` to
-   * discover sessions that flushed encrypted bytes to 0G Storage but
-   * never finished mint, and re-issues `commitPending(sessionKey,
-   * tokenId)` once they learn the eventually-minted tokenId.
+   * List pending keys awaiting commit. v0.3.4: returns the BARE
+   * `sessionKey` and a separate `runId` field (NOT the compound
+   * `pendingKeyName` filesystem identity). Recovery tooling uses
+   * these originals to call `commitPending(pendingKeyName, tokenId,
+   * {sessionKey, runId})` once it learns the minted tokenId.
    *
-   * Returns entries whose .key file is intact. A pending .key without
-   * a matching sidecar surfaces with sessionKey === null so the
-   * operator can still see the orphan (rare — only happens if the
-   * sidecar write succeeded but the .meta.json write didn't, or vice
-   * versa, or someone manually placed a .key file).
+   * Resolution order for `sessionKey` + `runId`:
+   *   1. Sidecar `.meta.json` written by setPending (v0.3.4) — has
+   *      both fields cleanly separated. Preferred.
+   *   2. Sidecar `.meta.json` written by pre-v0.3.4 setPending — only
+   *      has `sessionKey`; `runId` returns null. Still recoverable.
+   *   3. No sidecar, decoded filename — fallback to filename as
+   *      `sessionKey`, `runId` null. Rare: only happens when the
+   *      sidecar write failed but the .key landed.
+   *   4. No sidecar, undecodable filename — `sessionKey` null,
+   *      `runId` null. Operator sees the orphan via
+   *      `sanitizedFilename` and decides manually.
    */
   listPending(): Array<{
     sessionKey: string | null;
+    /** v0.3.4 run identifier; null when the sidecar predates v0.3.4 or is missing. */
+    runId: string | null;
     /** Filename minus ".key" extension — the sanitized form on disk. */
     sanitizedFilename: string;
     /** Unix seconds; null when the sidecar is missing. */
@@ -311,48 +399,41 @@ export class Keystore {
     );
     return keyFiles.map((keyFile) => {
       const sanitizedFilename = keyFile.slice(0, -4);
-      // Primary recovery: base64url-decode the filename (Codex round-14
-      // fix). The filename now IS the original sessionKey, just encoded,
-      // so we don't need the .meta.json sidecar to reverse it.
-      const fromFilename = this.decodeFilename(sanitizedFilename);
-      if (fromFilename !== null) {
-        const metaPath = join(this.pendingDir, sanitizedFilename + ".meta.json");
-        let createdAt: number | null = null;
-        if (existsSync(metaPath)) {
-          try {
-            const meta = JSON.parse(
-              readFileSync(metaPath, "utf8"),
-            ) as Partial<PendingMetadata>;
-            createdAt =
-              typeof meta.createdAt === "number" ? meta.createdAt : null;
-          } catch {
-            // Sidecar corrupt — recover sessionKey from filename anyway.
-          }
-        }
-        return { sessionKey: fromFilename, sanitizedFilename, createdAt };
-      }
-      // Legacy fallback: a .key file written by older pre-round-14 code
-      // would have a sanitized (non-base64url) filename. Read the
-      // sidecar for the original sessionKey. Decommissioned once all
-      // legacy pending entries have been committed or wiped.
       const metaPath = join(this.pendingDir, sanitizedFilename + ".meta.json");
-      if (!existsSync(metaPath)) {
-        return { sessionKey: null, sanitizedFilename, createdAt: null };
+      // Primary path: sidecar present. v0.3.4 sidecars carry BOTH
+      // sessionKey + runId; v0.3.0–v0.3.3 sidecars carry only
+      // sessionKey (runId is then surfaced as null).
+      if (existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(
+            readFileSync(metaPath, "utf8"),
+          ) as Partial<PendingMetadata>;
+          return {
+            sessionKey:
+              typeof meta.sessionKey === "string" ? meta.sessionKey : null,
+            runId: typeof meta.runId === "string" ? meta.runId : null,
+            sanitizedFilename,
+            createdAt:
+              typeof meta.createdAt === "number" ? meta.createdAt : null,
+          };
+        } catch {
+          // Sidecar corrupt — fall through to filename-decode fallback.
+        }
       }
-      try {
-        const meta = JSON.parse(
-          readFileSync(metaPath, "utf8"),
-        ) as Partial<PendingMetadata>;
-        return {
-          sessionKey:
-            typeof meta.sessionKey === "string" ? meta.sessionKey : null,
-          sanitizedFilename,
-          createdAt:
-            typeof meta.createdAt === "number" ? meta.createdAt : null,
-        };
-      } catch {
-        return { sessionKey: null, sanitizedFilename, createdAt: null };
-      }
+      // Fallback: try to recover sessionKey from the base64url filename
+      // (the pendingKeyName at write time). For v0.3.4 callers this is
+      // the COMPOUND `${sessionKey}|run:${runId}` form — without the
+      // sidecar we can't safely split it apart (sessionKey itself may
+      // contain `|`), so we leave runId null and surface the compound
+      // as sessionKey so the operator can split it manually. For
+      // pre-v0.3.4 callers the decoded filename IS the sessionKey.
+      const fromFilename = this.decodeFilename(sanitizedFilename);
+      return {
+        sessionKey: fromFilename,
+        runId: null,
+        sanitizedFilename,
+        createdAt: null,
+      };
     });
   }
 

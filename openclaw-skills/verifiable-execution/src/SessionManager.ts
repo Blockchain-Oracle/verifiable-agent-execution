@@ -74,6 +74,33 @@ export class SessionManager {
     this.loggers.delete(sessionId);
   }
 
+  /**
+   * Atomic remove-and-return — the "one agent task = one token" rotate
+   * primitive (v0.3.4). Returns the bound SessionLogger AND immediately
+   * unbinds it from `sessionId` in the same synchronous tick, so the
+   * NEXT `message_received` on the same sessionId allocates a FRESH
+   * logger instead of getting the one we're about to flush.
+   *
+   * Why a single atomic primitive vs. `getOrCreate` + `release`: the
+   * anchor body is async (upload + mint + commit takes seconds). If a
+   * new `message_received` lands during that window, the old non-atomic
+   * pair would race: the new hook calls `getOrCreate(sessionKey)` and
+   * gets the SAME logger that the anchor is about to flush, then
+   * `SessionLogger.appendEntry()` rejects on the now-flushing logger
+   * and the new turn's entry is silently lost. With this single call,
+   * the rotate is a one-tick map mutation that happens before any
+   * `await` — JS event-loop guarantees no other hook interleaves.
+   *
+   * Returns null when no logger is bound (a defensive check; callers
+   * typically gate on `has(sessionId)` first to short-circuit).
+   */
+  takeAndRelease(sessionId: string): SessionLogger | null {
+    const existing = this.loggers.get(sessionId);
+    if (existing === undefined) return null;
+    this.loggers.delete(sessionId);
+    return existing;
+  }
+
   /** Test/diagnostic helper: count of currently-tracked sessions. */
   size(): number {
     return this.loggers.size;

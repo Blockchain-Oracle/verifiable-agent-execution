@@ -159,6 +159,49 @@ describe("GET /api/verify/[tokenId] — happy path", () => {
       inputHash: "a".repeat(64),
       outputHash: "b".repeat(64),
     });
+    // v0.3.4-15: normal `exec-log:` anchor → meta.recoveryAnchor === false.
+    // Asserting BOTH true and false (in the next test) wires the boolean
+    // end-to-end so a future regression that hardcodes `recoveryAnchor:false`
+    // would be caught by the orphan-token test.
+    expect(body.meta?.recoveryAnchor).toBe(false);
+  });
+
+  // Codex round-3 v0.3.4-15: pins the BDD "And" line "SessionView
+  // renders an 'Orphan recovery anchor' badge" via the
+  // ProofResponse.meta.recoveryAnchor field that drives it. The
+  // SessionView render itself is verified by anchor-comparison
+  // Playwright screenshots in Epic 5, not unit tests (would require
+  // jsdom + RTL — new infra for a 5-line conditional badge, not worth
+  // the scope creep on v0.3.4).
+  it("v0.3.4-15: orphan-recovery anchor surfaces meta.recoveryAnchor === true on the plaintext path", async () => {
+    installFakeClients({
+      intelligentDatas: [
+        {
+          // The plugin's session_end orphan-recovery branch mints
+          // tokens with the `exec-log-orphan:` prefix.
+          dataDescription: `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+          dataHash: VALID_ROOT_HASH,
+        },
+      ],
+      storageBlob: makeSessionLogBlob(),
+    });
+
+    const request = new Request("http://localhost:3000/api/verify/99");
+    const response = await GET(request, {
+      params: Promise.resolve({ tokenId: "99" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // sessionId still parses out correctly from the orphan prefix.
+    expect(body.sessionId).toBe(SESSION_ID);
+    // The dataDescription round-trips with the orphan prefix.
+    expect(body.meta?.dataDescription).toBe(
+      `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+    );
+    // The recoveryAnchor flag MUST be true so the dashboard renders
+    // the "Orphan recovery anchor" badge.
+    expect(body.meta?.recoveryAnchor).toBe(true);
   });
 });
 

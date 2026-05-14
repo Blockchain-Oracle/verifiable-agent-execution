@@ -149,6 +149,62 @@ describe("GET /api/verify/[tokenId] — encrypted receipt", () => {
     // Client needs these to do client-side ethers verification.
     expect((body.meta as Record<string, unknown>).rpcUrl).toMatch(/^https?:\/\//);
     expect((body.meta as Record<string, unknown>).verifierAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    // v0.3.4-15: normal exec-log: anchor → recoveryAnchor === false on
+    // the encrypted return path. (Plaintext path is asserted in
+    // verifier-route.test.ts.)
+    expect((body.meta as Record<string, unknown>).recoveryAnchor).toBe(false);
+  });
+
+  // Codex round-3 v0.3.4-15: assert recoveryAnchor surfaces ON THE
+  // ENCRYPTED RETURN PATH too (verify-proof.ts has two `meta:`
+  // construction sites — the encrypted-locked at line ~416 and the
+  // plaintext at line ~474; both must propagate the flag).
+  it("v0.3.4-15: orphan-recovery anchor surfaces meta.recoveryAnchor === true on the encrypted path", async () => {
+    const { arrayBuffer } = makeEncryptedBlob('{"sessionId":"x","entries":[]}');
+    // Inline the fake clients with the orphan prefix (the default
+    // installFakeClients hardcodes `exec-log:`).
+    __setCachedClientsForTests({
+      provider: {} as never,
+      agenticIdClient: {
+        contractAddress: process.env.AGENTICID_ADDRESS!,
+        getIntelligentDatas: async () => [
+          {
+            dataDescription: `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+            dataHash: VALID_ROOT_HASH,
+          },
+        ],
+      } as never,
+      indexer: {
+        downloadToBlob: async () => [{ arrayBuffer }, null],
+      } as never,
+      verifier: {} as never,
+      env: {
+        ZG_RPC: process.env.ZG_TESTNET_RPC!,
+        ZG_INDEXER_RPC: process.env.ZG_INDEXER_RPC!,
+        AGENTICID_ADDRESS: process.env.AGENTICID_ADDRESS!,
+        CHAIN_ID: 16602,
+        TEE_VERIFIER_ADDRESS: `0x${"a".repeat(40)}`,
+      },
+    });
+
+    const response = await getProof(
+      new Request("http://localhost:3000/api/verify/99"),
+      { params: Promise.resolve({ tokenId: "99" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.verified).toBe("encrypted");
+    // The dataDescription round-trips with the orphan prefix...
+    expect((body.meta as Record<string, unknown>).dataDescription).toBe(
+      `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+    );
+    // ...and the boolean drives the dashboard's "Orphan recovery
+    // anchor" badge in SessionView (badge render itself is verified
+    // by Epic-5 Playwright visual baselines, not unit tests — keeps
+    // dashboard test infra free of jsdom + RTL just for one
+    // conditional badge).
+    expect((body.meta as Record<string, unknown>).recoveryAnchor).toBe(true);
   });
 
   // Defense-in-depth: even if a buggy caller appends ?k=... to the

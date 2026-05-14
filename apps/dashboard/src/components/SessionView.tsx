@@ -245,6 +245,25 @@ function NumericHero({
           label="Description"
           value={<span className="text-text-primary">{proof.meta.dataDescription}</span>}
         />
+        {proof.meta.recoveryAnchor && (
+          // v0.3.4 — this token was minted by the plugin's session_end
+          // recovery branch because agent_end never fired. The bytes are
+          // anchored and the proof chain is real, but the run terminated
+          // abnormally. Render a row-level badge in the metadata column
+          // so auditors see the unusual provenance even before scanning
+          // the entries below.
+          <FieldRow
+            label="Provenance"
+            value={
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-accent-mock/40 bg-accent-mock/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-mock"
+                title="agent_end never fired for this session; the plugin's session_end recovery branch anchored the entries that were collected before the harness terminated."
+              >
+                Orphan recovery anchor
+              </span>
+            }
+          />
+        )}
         <FieldRow
           label="Anchor"
           value={
