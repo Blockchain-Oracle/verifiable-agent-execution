@@ -67,25 +67,36 @@ export interface TranscriptToolCall {
 
 /**
  * Encode a workspace cwd into the directory-name shape Claude Code
- * uses under `~/.claude/projects/`. The encoding is: replace every
- * `/` with `-`, prepend a leading `-`. So `/root/.openclaw/workspace/
- * research-agent` becomes `-root--openclaw-workspace-research-agent`.
+ * uses under `~/.claude/projects/`. The encoding is: replace EVERY
+ * `/` AND every `.` with `-`. So:
  *
- * Claude Code does the same encoding internally; we replicate it here
- * to find the project directory without depending on Claude Code's
- * resolver. This is the FALLBACK path for when
- * `before_agent_finalize` didn't provide an explicit transcriptPath
- * (Claude Code's native hooks aren't wired in `.claude/settings.json`).
+ *   /root/.openclaw/workspace/research-agent
+ *     → -root--openclaw-workspace-research-agent
+ *
+ * The double-dash after `-root` comes from `.openclaw` collapsing
+ * its leading `.` to `-` adjacent to the `/` → `-` from `root/`.
+ *
+ * I confirmed this by enumerating the project dir on the VPS
+ * (2026-05-14T12:18 UTC):
+ *
+ *   /root/.openclaw/workspace/main  ↔ -root--openclaw-workspace-main
+ *   /root/worktrees/story-…         ↔ -root-worktrees-story-…
+ *
+ * v0.3.5 ALPHA bug: my first cut only replaced `/`, which made the
+ * fallback resolver miss the directory for any path containing a
+ * `.` (which is every Claude Code workspace under `~/.openclaw/`).
+ * That's why token 109's tool entries didn't get injected.
  *
  * Exported for testability.
  */
 export function encodeWorkspaceForClaudeProjects(workspaceDir: string): string {
-  // Claude Code's encoding replaces every `/` with `-`. Absolute
-  // paths starting with `/` get a leading `-`. Trailing `/` would
-  // produce a trailing `-`; we strip it so the prefix is stable
-  // whether the caller passes `/root/x` or `/root/x/`.
+  // Trim trailing slash so re-encoding is stable whether the caller
+  // passes `/root/x` or `/root/x/`.
   const trimmed = workspaceDir.replace(/\/+$/, "");
-  return trimmed.replace(/\//g, "-");
+  // BOTH `/` and `.` get replaced with `-`. Matches Claude Code's
+  // own encoding verbatim — see /root/.claude/projects/ for live
+  // examples of the encoding output on the OpenClaw VPS.
+  return trimmed.replace(/[/.]/g, "-");
 }
 
 /**

@@ -1148,9 +1148,10 @@ function injectTranscriptToolEntries(opts: {
   }
   if (transcriptPath === undefined) {
     // No path resolved — common for non-claude-cli providers (anthropic
-    // direct, codex, etc.). Their tool calls flow through
-    // OpenClaw's tool dispatcher → after_tool_call already captured
-    // them. Silent no-op.
+    // direct, codex, etc.). Their tool calls flow through OpenClaw's
+    // tool dispatcher → after_tool_call already captured them. Silent
+    // no-op (verbose diagnostic was useful during v0.3.5 development
+    // but is noise at steady state).
     return;
   }
 

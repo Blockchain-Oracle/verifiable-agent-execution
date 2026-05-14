@@ -50,15 +50,30 @@ function userEvent(ts: string, content: unknown[]): string {
 }
 
 describe("encodeWorkspaceForClaudeProjects", () => {
-  it("encodes an absolute path the way Claude Code does", () => {
+  it("encodes an absolute path the way Claude Code does (v0.3.5 fix: `.` also → `-`)", () => {
     // The VPS produced `-root--openclaw-workspace-research-agent` for
-    // cwd `/root/.openclaw/workspace/research-agent`. The encoding is
-    // a 1:1 replacement of `/` with `-`. The double-dash after `-root`
-    // comes from the leading `/` plus the next `/`. Just verifying
-    // the encoding matches verbatim.
+    // cwd `/root/.openclaw/workspace/research-agent`. v0.3.5 alpha
+    // (committed but never published as such) had a bug here: it
+    // replaced `/` only and produced `-root-.openclaw-...` — Claude
+    // Code's actual encoding also replaces `.` so we get
+    // `-root--openclaw-workspace-research-agent` (the double-dash is
+    // `/` followed by `.` collapsing to `--`).
+    //
+    // Verified against live VPS data:
+    //   /root/.openclaw/workspace/main       ↔ -root--openclaw-workspace-main
+    //   /root/worktrees/story-…              ↔ -root-worktrees-story-…
+    //   /root/.openclaw/workspace/coding     ↔ -root--openclaw-workspace-coding
     expect(
       encodeWorkspaceForClaudeProjects("/root/.openclaw/workspace/research-agent"),
-    ).toBe("-root-.openclaw-workspace-research-agent");
+    ).toBe("-root--openclaw-workspace-research-agent");
+  });
+
+  it("encodes a path with no `.` segments (only `/` → `-`)", () => {
+    // No `.` in the path, so output has only single dashes between
+    // segments. Pins the algorithm doesn't introduce spurious dashes.
+    expect(encodeWorkspaceForClaudeProjects("/root/worktrees/story-x")).toBe(
+      "-root-worktrees-story-x",
+    );
   });
 
   it("strips trailing slashes so re-running the encode is stable", () => {
