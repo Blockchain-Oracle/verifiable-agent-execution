@@ -5,7 +5,11 @@
 //      the cross-link to mainnet from every testnet page.
 //   2. Does NOT render on the MAINNET deploy (no "view mainnet" on
 //      mainnet itself).
-//   3. Carries the marquee animation class so the strip scrolls.
+//   3. Renders as a static centered strip — NOT a scrolling marquee
+//      (Abu 2026-05-15: "why did you do it as a life ticker? It
+//      should be in one place"). Earlier impl used the `ticker 24s
+//      linear infinite` keyframe; we now assert the LIVE-pulse dot
+//      class is present and the marquee class is NOT.
 //   4. Open-link points to mainnetHref.
 //   5. Has a dismiss button.
 //
@@ -45,15 +49,19 @@ describe("MainnetAnnouncementTicker — Tier 1.6", () => {
     expect(html).toBe("");
   });
 
-  it("carries the marquee animation class (ticker keyframe in globals.css)", () => {
+  it("renders as a static centered strip — no scrolling marquee keyframe", () => {
     const html = renderToStaticMarkup(
       createElement(MainnetAnnouncementTicker, {
         isMainnet: false,
         mainnetHref: "https://mainnet.agentscan.online",
       }),
     );
-    // The Tailwind arbitrary value class for the existing keyframe.
-    expect(html).toMatch(/animate-\[ticker_24s_linear_infinite\]/);
+    // Live-pulse dot uses Tailwind's `animate-ping` — that's the ONLY
+    // animation; no full-strip translate keyframe.
+    expect(html).toMatch(/animate-ping/);
+    expect(html).not.toMatch(/animate-\[ticker/);
+    // Centered layout class present.
+    expect(html).toMatch(/justify-center/);
   });
 
   it("includes a dismiss button (× pinned right) for judge ergonomics", () => {
