@@ -78,3 +78,55 @@
   background-repeat: repeat-x;
   background-position: bottom;
 }
+
+/* Markdown prose inside decrypted tool_result entries — v0.3.7 Tier 1.5.
+   Tool results from WebSearch/WebFetch are markdown. Rendered via
+   react-markdown + remark-gfm; this layer paints the prose styles
+   without pulling in a full Tailwind Typography plugin. Scope: only
+   `.markdown-body` wrapper so it never leaks to the rest of the UI.
+
+   Palette = UX-spec tokens (no shadcn prose defaults — those would
+   override our text-primary / border / link colors). Long URLs +
+   tables wrap inside the card via the `break-words` utility at the
+   wrapper level (set in EntryCard.tsx) — these rules just style the
+   content. */
+.markdown-body :where(h1, h2, h3, h4, h5, h6) {
+  @apply font-semibold text-text-primary;
+}
+.markdown-body h1 { @apply text-lg mt-3 mb-2; }
+.markdown-body h2 { @apply text-base mt-3 mb-2; }
+.markdown-body h3 { @apply text-sm mt-2 mb-1 uppercase tracking-wider text-text-secondary; }
+.markdown-body p { @apply text-sm leading-relaxed text-text-primary my-2; }
+.markdown-body strong { @apply font-semibold text-text-primary; }
+.markdown-body em { @apply italic; }
+.markdown-body a {
+  @apply text-link underline decoration-link/40 underline-offset-2;
+}
+.markdown-body a:hover { @apply decoration-link; }
+.markdown-body ul { @apply list-disc pl-5 my-2 space-y-1 text-sm; }
+.markdown-body ol { @apply list-decimal pl-5 my-2 space-y-1 text-sm; }
+.markdown-body li { @apply text-text-primary; }
+.markdown-body :where(code):not(pre code) {
+  @apply rounded bg-surface-elev px-1 py-0.5 font-mono text-[0.85em] text-text-primary border border-border/40;
+}
+.markdown-body pre {
+  @apply mt-2 mb-2 overflow-x-auto rounded border border-border/40 bg-bg px-3 py-2 font-mono text-xs leading-relaxed text-text-primary;
+}
+.markdown-body pre code {
+  @apply bg-transparent border-0 p-0 text-inherit;
+}
+.markdown-body blockquote {
+  @apply border-l-2 border-border pl-3 my-2 italic text-text-secondary;
+}
+.markdown-body table {
+  @apply my-2 w-full border-collapse text-sm;
+}
+.markdown-body th, .markdown-body td {
+  @apply border border-border px-2 py-1 text-left;
+}
+.markdown-body th {
+  @apply bg-surface-elev font-semibold text-text-primary;
+}
+.markdown-body hr {
+  @apply my-3 border-border/60;
+}

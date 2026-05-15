@@ -26,6 +26,8 @@
  */
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Mono } from "./Mono";
 
@@ -194,6 +196,39 @@ export function EntryCard(props: EntryProps) {
   );
 }
 
+/**
+ * Detect whether a string value SHOULD be rendered as markdown.
+ *
+ * Tool results from WebSearch/WebFetch/Read often come back as
+ * markdown (Claude Code's tool-result encoding). Rendering them in a
+ * plain `<pre>` produces an unreadable wall of `*` and `#` characters,
+ * AND triggers a horizontal scrollbar when URLs / long paths wrap
+ * past the viewport — the exact issue Abu called out 2026-05-15
+ * ("i had to scroll horizonally to the left which dosent make sense").
+ *
+ * We keep this conservative: only opt into markdown rendering if the
+ * string actually has a structural markdown signal (header line,
+ * fenced code block, link/image syntax, list bullets). Plain prose
+ * still renders as plain text. JSON-like content (starts with `{` or
+ * `[`) stays in the monospace `<pre>` because JSON looks weird under
+ * a markdown renderer.
+ */
+function looksLikeMarkdown(s: string): boolean {
+  // Reject things that obviously aren't markdown documents.
+  const trimmed = s.trimStart();
+  if (trimmed.length === 0) return false;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return false;
+  // Strong signals: ATX headers, fenced code, links/images, bulleted
+  // list items, markdown tables. Any one is sufficient.
+  return (
+    /^#{1,6}\s/m.test(s) ||
+    /```/.test(s) ||
+    /\[[^\]]+\]\([^)]+\)/.test(s) ||
+    /^\s{0,3}[-*+]\s/m.test(s) ||
+    /^\|.+\|.+\|/m.test(s)
+  );
+}
+
 function ContentBlock({
   label,
   value,
@@ -208,11 +243,17 @@ function ContentBlock({
   onToggle: () => void;
 }) {
   const isPresent = value !== undefined && value !== null;
-  const display = isPresent
+  const stringValue = isPresent
     ? typeof value === "string"
       ? value
       : safeStringify(value)
     : null;
+  // Markdown-render only when the value is a STRING (not stringified
+  // JSON) AND has structural markdown signals. Otherwise fall back to
+  // the existing monospace presentation. The conservative gate keeps
+  // hash strings / JSON / plain prose rendering correctly.
+  const renderAsMarkdown =
+    typeof value === "string" && looksLikeMarkdown(value);
 
   return (
     <div>
@@ -231,9 +272,24 @@ function ContentBlock({
           )}
         </span>
       </button>
-      {open && (
-        <pre className="mt-2 overflow-x-auto rounded border border-border/40 bg-bg px-4 py-3 font-mono text-xs leading-relaxed text-text-primary">
-          {display ?? `sha256: ${fallbackHash}`}
+      {open && renderAsMarkdown && stringValue !== null && (
+        // Markdown path. `markdown-body` is the wrapper for our
+        // prose styles (defined in globals.css). `break-words` +
+        // `whitespace-pre-wrap` on the wrapper ensures long URLs in
+        // search results wrap instead of triggering horizontal scroll.
+        <div className="markdown-body mt-2 break-words rounded border border-border/40 bg-bg px-4 py-3 text-sm leading-relaxed text-text-primary">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {stringValue}
+          </ReactMarkdown>
+        </div>
+      )}
+      {open && !renderAsMarkdown && (
+        // Plain/JSON path. Switched from `overflow-x-auto` to
+        // `whitespace-pre-wrap break-words` so long lines (URLs,
+        // sessionKeys, paths) wrap inside the card. The card grows
+        // vertically instead of forcing a horizontal scrollbar.
+        <pre className="mt-2 whitespace-pre-wrap break-words rounded border border-border/40 bg-bg px-4 py-3 font-mono text-xs leading-relaxed text-text-primary">
+          {stringValue ?? `sha256: ${fallbackHash}`}
         </pre>
       )}
     </div>
