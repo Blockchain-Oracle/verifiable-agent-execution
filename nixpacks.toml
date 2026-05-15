@@ -30,11 +30,10 @@
 # resolves the symlinked workspace deps. APP_NAME (passed via env)
 # picks which workspace builds.
 #
-# Reference patterns audited 2026-05-10..15:
-#   /Users/abu/dev/hackathon/kiteai/kite-agent-firewall/nixpacks.toml
-#     (single deployable + workspace deps)
-#   /Users/abu/dev/hackathon/kwala/nixpacks.toml
-#     (multi-target via APP_NAME — the pattern we adopt here)
+# Audited 2026-05-10..15 against two production nixpacks patterns:
+# a single-deployable + workspace-deps shape (kite-agent-firewall)
+# and the APP_NAME multi-target dispatch (kwala). This file uses
+# the multi-target pattern so all three services share one config.
 
 # ── Install phase ────────────────────────────────────────────────
 # `onlyIncludeFiles` keeps the install layer cached: nixpacks rebuilds

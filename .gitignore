@@ -17,9 +17,8 @@ typechain-types/
 **/deployments/*/
 !**/deployments/.gitkeep
 
-# Coverage outputs — generated per-machine, contain absolute paths.
-# (Closes Codex P3 on epic/02 — coverage-summary.json was accidentally
-# committed with /Users/abu/... paths and would create noisy diffs.)
+# Coverage outputs — generated per-machine, contain absolute paths
+# that would create noisy per-checkout diffs.
 coverage/
 
 # Env / secrets — NEVER commit
