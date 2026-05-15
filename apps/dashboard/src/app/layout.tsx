@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 
+import { MainnetAnnouncementTicker } from "@/components/MainnetAnnouncementTicker";
+import { loadEnv, networkBadge } from "@/lib/env";
+
 import "./globals.css";
 
 // `geist` npm package (Vercel-published) ships the same Geist Sans /
@@ -10,9 +13,9 @@ import "./globals.css";
 // directly is a one-line change when we upgrade.
 
 export const metadata: Metadata = {
-  title: "Verifiable Agent Execution",
+  title: "AGENTSCAN — Etherscan for AI agents",
   description:
-    "Etherscan for AI agents — share a URL, verify any agent run cold. Anchored on 0G AgenticID.",
+    "AGENTSCAN: cryptographically signed, on-chain-anchored receipts for every AI agent run. Share a URL, verify any session cold. Anchored on 0G AgenticID.",
 };
 
 export default function RootLayout({
@@ -24,9 +27,28 @@ export default function RootLayout({
   // we don't need a theme provider. The CSS variables for Geist Sans /
   // Mono are bound on <html> so Tailwind's `font-sans` / `font-mono`
   // resolve to them.
+  //
+  // The MainnetAnnouncementTicker mounts here (above any per-page
+  // <TopBar />) so judges and first-time visitors see the
+  // mainnet cross-link from EVERY page. It self-suppresses on the
+  // mainnet deploy (we don't tell users to "view mainnet" on
+  // mainnet.agentscan.online itself) and on dismiss.
+  const env = loadEnv();
+  const badge = networkBadge(env);
+  const isMainnet = badge.label === "MAINNET";
+  // `oppositeUrl` is the sibling deploy URL — for testnet, that's
+  // mainnet. Fall back to the canonical mainnet domain if env didn't
+  // configure one (e.g. local dev with no env overrides).
+  const mainnetHref =
+    !isMainnet && typeof badge.oppositeUrl === "string" && badge.oppositeUrl.length > 0
+      ? badge.oppositeUrl
+      : "https://mainnet.agentscan.online";
   return (
     <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <MainnetAnnouncementTicker isMainnet={isMainnet} mainnetHref={mainnetHref} />
+        {children}
+      </body>
     </html>
   );
 }

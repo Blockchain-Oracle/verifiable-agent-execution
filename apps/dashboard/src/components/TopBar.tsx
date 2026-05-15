@@ -32,7 +32,7 @@ export function TopBar() {
           className="group flex flex-col leading-none transition-opacity hover:opacity-80"
         >
           <span className="font-sans text-lg font-bold tracking-tight text-text-primary">
-            VERIFIABLE EXECUTION
+            AGENTSCAN
           </span>
           <span className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
             Etherscan for AI agents · {badge.network}
