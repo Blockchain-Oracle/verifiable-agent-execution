@@ -56,7 +56,7 @@ onlyIncludeFiles = [
   "packages/logger/package.json",
   "packages/tee-adapter/package.json",
   "contracts/package.json",
-  "openclaw-skills/verifiable-execution/package.json"
+  "plugin/package.json"
 ]
 
 # ── Build phase ──────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 /**
- * Tests for openclaw-skills/verifiable-execution/src/index.ts (story-skill-init).
+ * Tests for plugin/src/index.ts (story-skill-init).
  *
  * BDD acceptance from context/docs/stories/story-skill-init.md (post-spec-evolution):
  *   - Default export is an OBJECT with {id, name, description, register}

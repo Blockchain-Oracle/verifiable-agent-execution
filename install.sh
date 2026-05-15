@@ -27,7 +27,7 @@ set -euo pipefail
 # Override any of these via env BEFORE running ./install.sh, e.g.:
 #   CHAIN_ID=16661 RPC_URL=https://evmrpc.0g.ai ./install.sh   # mainnet
 #
-# Required-config keys come from openclaw-skills/verifiable-execution/openclaw.plugin.json
+# Required-config keys come from plugin/openclaw.plugin.json
 DEFAULT_RPC_URL="${RPC_URL:-https://evmrpc-testnet.0g.ai}"
 DEFAULT_INDEXER_URL="${INDEXER_URL:-https://indexer-storage-testnet-turbo.0g.ai}"
 DEFAULT_AGENTICID="${AGENTICID_ADDRESS:-0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38}"
@@ -38,13 +38,18 @@ DEFAULT_MODEL_ID="${MODEL_ID:-claude-sonnet-4-6}"
 
 PLUGIN_ID="verifiable-execution"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Source (workspace) location — what we type-check + test against:
-PLUGIN_SRC_DIR="$SCRIPT_DIR/openclaw-skills/$PLUGIN_ID"
+# Source (workspace) location — what we type-check + test against.
+# Renamed 2026-05-15 from openclaw-skills/verifiable-execution/ →
+# plugin/ since there's only one plugin in this repo and OpenClaw
+# itself renamed "skills" → "plugins" in the 2026.4 release.
+PLUGIN_SRC_DIR="$SCRIPT_DIR/plugin"
 # Bundled location — what we actually --link into OpenClaw. The bundle
 # is self-contained (esbuild inlines ethers + the 0G SDK + workspace
 # packages) so the install dir has no node_modules at all, which is
 # what OpenClaw's safety scan expects from a `--link` target.
-PLUGIN_DIR="$SCRIPT_DIR/dist-plugin/$PLUGIN_ID"
+# Lives next to the source (plugin/dist/) rather than at a separate
+# repo-root dist-plugin/ — same cleanup pass.
+PLUGIN_DIR="$SCRIPT_DIR/plugin/dist"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 
 # ── Pretty output helpers ────────────────────────────────────────────────────
@@ -100,7 +105,7 @@ ok "deps installed"
 
 # ── Step 0b: bundle the plugin into a self-contained dist
 # esbuild inlines ethers, the 0G storage SDK, and the workspace packages
-# into one ESM file at `dist-plugin/verifiable-execution/index.js`. The
+# into one ESM file at `plugin/dist/index.js`. The
 # dist dir has no `node_modules/` at all, which sidesteps OpenClaw's
 # symlink-outside-install-root safety scan that blocked our first `--link`
 # attempt on the VPS (the workspace dir's node_modules has pnpm-store
@@ -130,7 +135,7 @@ WALLET_FILE="$WALLET_DIR/wallet.json"
 if [ ! -f "$WALLET_FILE" ]; then
   # Use ethers via the installed workspace deps. Stay in $SCRIPT_DIR so
   # Node resolves `ethers` from the repo's node_modules. The file
-  # layout matches what openclaw-skills/verifiable-execution/src/wallet.ts
+  # layout matches what plugin/src/wallet.ts
   # writes itself — same keys, same mode 0600.
   ( cd "$SCRIPT_DIR" && node --input-type=module -e "
     import { Wallet } from 'ethers';
@@ -247,7 +252,7 @@ mv "$TMP" "$OPENCLAW_CONFIG"
 ok "patched $OPENCLAW_CONFIG (backup: $BACKUP)"
 
 # ── Step 2: link the bundled plugin into OpenClaw ────────────────────────────
-# The dist-plugin/ output is self-contained (esbuild inlined every npm
+# The plugin/dist/ output is self-contained (esbuild inlined every npm
 # dep) so OpenClaw's symlink-outside-install-root safety scan passes.
 echo
 info "Step 2/3 — linking plugin into OpenClaw"

@@ -1,7 +1,7 @@
 /**
  * crypto.ts — dashboard-side decryption helpers for v0.3.0 private receipts.
  *
- * Why duplicated from the plugin's `openclaw-skills/.../src/crypto.ts`:
+ * Why duplicated from the plugin's `plugin/src/src/crypto.ts`:
  *   The plugin is an npm-published package that runs in OpenClaw's gateway
  *   process. The dashboard is a Next.js app. Cross-importing the plugin
  *   here would force the dashboard to depend on the plugin (wrong dep

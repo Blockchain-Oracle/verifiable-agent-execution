@@ -1,5 +1,5 @@
 /**
- * Tests for openclaw-skills/verifiable-execution/src/wallet.ts.
+ * Tests for plugin/src/wallet.ts.
  *
  * Validates the xlmtools-style auto-wallet pattern:
  *   - PRIVATE_KEY env override → highest priority (source: "env")

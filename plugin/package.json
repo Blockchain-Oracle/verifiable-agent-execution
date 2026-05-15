@@ -1,5 +1,5 @@
 {
-  "name": "@verifiable-agent-execution/openclaw-skill",
+  "name": "@verifiable-agent-execution/plugin",
   "version": "0.3.6",
   "private": true,
   "packageManager": "pnpm@9.15.4",

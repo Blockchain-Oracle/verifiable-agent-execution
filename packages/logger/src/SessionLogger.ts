@@ -43,7 +43,7 @@ export interface SessionMetadata {
  * Return contract: must be a Uint8Array (or Buffer) ready to upload.
  * The bytes' format is the caller's responsibility; recommended is
  * `TextEncoder.encode(JSON.stringify(envelope))` where envelope is an
- * `EncryptedSessionLogEnvelope` from `openclaw-skills/.../crypto.ts`.
+ * `EncryptedSessionLogEnvelope` from `plugin/src/crypto.ts`.
  * The dashboard's `isEncryptedEnvelope` type guard distinguishes
  * encrypted-envelope bytes from legacy plaintext SessionLog bytes.
  */

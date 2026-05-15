@@ -104,15 +104,26 @@ Want to just *see* a proof? No setup required:
 apps/
   dashboard/                Next.js 14 verifier UI (agentscan.online)
   docs/                     Nextra docs site (docs.agentscan.online)
-openclaw-skills/
-  verifiable-execution/     The OpenClaw plugin (published to npm)
-packages/
-  logger/                   SessionLogger + 0G Storage client
+plugin/                     THE OpenClaw plugin source (published to npm as
+                            @blockchainoracle/openclaw-verifiable-execution)
+  src/                      TypeScript source
+  tests/                    vitest suites
+  dist/                     esbuild bundle output (gitignored, npm-publish target)
+  openclaw.plugin.json      OpenClaw manifest (config schema)
+  build.mjs                 Bundler — src → dist
+packages/                   Shared workspace libraries (used by apps/ + plugin/)
+  logger/                   SessionLogger + 0G Storage upload
   tee-adapter/              Signing-message helpers + MockTEEVerifier ABI
   chain-client/             AgenticIDClient + SessionAnchor
 contracts/                  AgenticID.sol + MockTEEVerifier.sol (Hardhat)
-scripts/smoke/              Live testnet smoke tests
+scripts/                    Top-level utility scripts
+  smoke/                    Live testnet smoke tests (re-runnable)
+tests/visual/               Playwright visual regression for the dashboard
+nixpacks.toml               Multi-target Coolify deploy config (dashboard + docs)
 ```
+
+See [`STRUCTURE.md`](./STRUCTURE.md) for what each folder is for and why
+it lives there.
 
 To build from source:
 

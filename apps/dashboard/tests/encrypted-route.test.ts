@@ -38,7 +38,7 @@ const MODEL_ID = "claude-sonnet-4-6";
 /**
  * Build a v1 AES-256-GCM envelope JSON suitable for use as a 0G Storage
  * blob payload. Mirrors the on-wire shape produced by
- * `openclaw-skills/.../src/crypto.ts` so the dashboard parser sees a
+ * `plugin/src/src/crypto.ts` so the dashboard parser sees a
  * realistic encrypted-receipt blob.
  */
 function makeEncryptedBlob(plaintext: string): {
@@ -50,7 +50,7 @@ function makeEncryptedBlob(plaintext: string): {
   const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: 16 });
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  // Wire format mirrors openclaw-skills/.../src/crypto.ts exactly:
+  // Wire format mirrors plugin/src/src/crypto.ts exactly:
   // lowercase alg, hex-encoded iv/ciphertext/tag (no 0x prefix).
   const envelope = {
     v: 1 as const,

@@ -14,14 +14,14 @@
  *   and OpenClaw extracts a tarball that contains exactly this dist.
  *
  * What it does:
- *   1. esbuild src/index.ts → dist-plugin/verifiable-execution/index.js
+ *   1. esbuild src/index.ts → plugin/dist/index.js
  *      (esm, node20, single file, all deps inlined except node:* and
  *      `openclaw/*` which OpenClaw provides at runtime).
  *   2. Copies openclaw.plugin.json into the dist dir.
  *   3. Writes a minimal, publishable package.json next to it.
  *
- * Run: pnpm --filter @verifiable-agent-execution/openclaw-skill build
- *      (or: node openclaw-skills/verifiable-execution/build.mjs)
+ * Run: pnpm --filter @verifiable-agent-execution/plugin build
+ *      (or: node plugin/build.mjs)
  */
 
 import { build } from "esbuild";
@@ -30,10 +30,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(SCRIPT_DIR, "..", "..");
+const REPO_ROOT = resolve(SCRIPT_DIR, "..");
 const SRC_MANIFEST = resolve(SCRIPT_DIR, "openclaw.plugin.json");
 const SRC_PKG_JSON = resolve(SCRIPT_DIR, "package.json");
-const OUT_DIR = resolve(REPO_ROOT, "dist-plugin", "verifiable-execution");
+// Build output lives next to the source (plugin/dist/) instead of at
+// the repo root in a separate dist-plugin/ folder. Per Abu's
+// 2026-05-15 structural cleanup: keep all of one thing's artifacts
+// in one place.
+const OUT_DIR = resolve(SCRIPT_DIR, "dist");
 
 await rm(OUT_DIR, { recursive: true, force: true });
 await mkdir(OUT_DIR, { recursive: true });
@@ -58,7 +62,7 @@ const NODE_BUILTINS = [
   "node:events",
 ];
 
-console.log("[build] bundling src/index.ts → dist-plugin/verifiable-execution/index.js");
+console.log("[build] bundling src/index.ts → plugin/dist/index.js");
 const result = await build({
   entryPoints: [resolve(SCRIPT_DIR, "src", "index.ts")],
   outfile: resolve(OUT_DIR, "index.js"),
@@ -153,7 +157,7 @@ const distPkg = {
   repository: {
     type: "git",
     url: "git+https://github.com/Blockchain-Oracle/verifiable-agent-execution.git",
-    directory: "openclaw-skills/verifiable-execution",
+    directory: "plugin",
   },
   homepage:
     "https://github.com/Blockchain-Oracle/verifiable-agent-execution#readme",

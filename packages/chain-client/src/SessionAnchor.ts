@@ -86,7 +86,7 @@ export interface AnchorInput {
    * stay key-agnostic. Plugins set up the keystore.setPending →
    * encrypt → keystore.commitPending ordering AROUND this call to
    * survive crashes between flush and mint (see
-   * openclaw-skills/verifiable-execution/src/keystore.ts).
+   * plugin/src/keystore.ts).
    *
    * Return contract: must be a Uint8Array (or Buffer) of upload-ready
    * bytes. Recommended: serialize an `EncryptedSessionLogEnvelope`
