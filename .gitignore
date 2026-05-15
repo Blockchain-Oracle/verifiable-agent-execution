@@ -63,6 +63,11 @@ context/
 # claude-mem auto-injected memory context). Not user-facing.
 AGENTS.md
 
+# Internal demo-day script — reverse demo arc with judge timing,
+# fallback paths, etc. Useful for me when prepping the video but
+# not part of the public repo surface.
+DEMO.md
+
 # Anchor + visual-baseline screenshots — used by the local visual-check
 # loop only. screenshots/current/ already ignored above.
 screenshots/anchor/
