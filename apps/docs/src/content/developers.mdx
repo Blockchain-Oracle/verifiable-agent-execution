@@ -47,7 +47,7 @@ The plugin is an OpenClaw extension with three event hooks:
 |---|---|
 | `after_tool_call` | Captures every tool call: hashes params + result, signs with the session's TEE key, buffers in memory under the session ID |
 | `agent_end` / `before_agent_finalize` | Flushes the buffer to 0G Storage as an encrypted blob, mints an iNFT receipt on AgenticID |
-| `inbound_claim` | Intercepts `/share` and `/tokens` slash commands before they reach the agent |
+| `inbound_claim` | Intercepts `/agentscan_share` and `/agentscan_tokens` slash commands before they reach the agent |
 
 The buffer is keyed by OpenClaw's `sessionId`, so each conversation
 produces its own receipt. Sessions are independent; cross-session
@@ -67,7 +67,7 @@ data never mixes.
   computed as a Merkle root over the encrypted blob's chunks via
   the 0G Storage SDK) hits the chain. Plaintext never touches the
   chain.
-- **Key sharing model**: keys are surfaced only by the `/share`
+- **Key sharing model**: keys are surfaced only by the `/agentscan_share`
   slash command via the URL fragment (`#k=`). They are never
   written to logs, never sent on HTTP requests, and never
   accepted by the verifier server even if a recipient tries to

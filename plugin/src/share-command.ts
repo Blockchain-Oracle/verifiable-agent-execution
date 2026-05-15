@@ -81,13 +81,17 @@ export function handleShareCommand(
   }
   if (
     typeof event.content !== "string" ||
-    !/^\s*\/share(\s|$)/i.test(event.content)
+    // v0.3.9: accept `/share` (legacy) OR `/agentscan_share` (new
+    // namespaced form per Abu 2026-05-15 directive). The
+    // registerCommand path always synthesizes `/agentscan_share`;
+    // the inbound_claim fallback path passes whichever the user typed.
+    !/^\s*\/(?:agentscan_)?share(\s|$)/i.test(event.content)
   ) {
     return { handled: false };
   }
   // Parse the optional tokenId arg. Three sources, in priority:
   //   1. event.args[0] if the channel pre-split arguments
-  //   2. event.content text after the `/share` prefix
+  //   2. event.content text after the `/share` or `/agentscan_share` prefix
   //   3. fall back to the most-recent receipt in the keystore
   const requestedTokenId = parseTokenIdArg(event);
 
@@ -180,11 +184,12 @@ function parseTokenIdArg(event: ShareCommandEvent): string | null {
       }
     }
   }
-  // 2. parse content text — strip "/share" prefix, take the next token.
+  // 2. parse content text — strip the `/share` or `/agentscan_share`
+  // prefix, take the next token. v0.3.9 accepts both forms.
   if (typeof event.content === "string") {
-    // Match `/share <arg>` with optional whitespace; case-insensitive
-    // on the command itself.
-    const match = event.content.match(/^\s*\/share\s+(\S+)/i);
+    const match = event.content.match(
+      /^\s*\/(?:agentscan_)?share\s+(\S+)/i,
+    );
     if (match !== null) {
       const arg = match[1]!.trim();
       if (arg.length > 0 && arg.toLowerCase() !== "last") {

@@ -48,7 +48,7 @@ testnet faucet (free):
 4. Wait ~10 seconds for the transfer to land
 
 > **Don't remember your address?** From inside any chat the bot
-> is in, type `/wallet`. It prints the address + the faucet link.
+> is in, type `/agentscan_wallet`. It prints the address + the faucet link.
 > No terminal, no `jq`, no JSON-file hunting.
 
 ## Run any agent command
@@ -74,7 +74,7 @@ While the agent runs, the plugin silently:
 From the same chat the bot is in, type:
 
 ```
-/share
+/agentscan_share
 ```
 
 You'll get back a URL with a `#k=<key>` fragment. **The fragment
@@ -83,14 +83,14 @@ HTTP requests. Send the URL to anyone via DM, email, anywhere.
 They click it, the decryption happens in their browser, the proof
 chain verifies live against 0G Chain + 0G Storage.
 
-Want all your receipts at once? Type `/tokens`.
+Want all your receipts at once? Type `/agentscan_tokens`.
 
 ## Done
 
 You're shipping verifiable agent runs. From here:
 
 - **[Concepts](/concepts)** — what's actually on-chain vs what's encrypted
-- **[Commands](/commands)** — the full `/wallet`, `/share`, `/tokens` reference
+- **[Commands](/commands)** — the full `/agentscan_wallet`, `/agentscan_share`, `/agentscan_tokens` reference
 - **[Architecture](/architecture)** — how the plugin, 0G Storage, and the iNFT fit together
 - **[Mainnet vs Testnet](/networks)** — when to switch
 

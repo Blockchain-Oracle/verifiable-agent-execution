@@ -53,7 +53,7 @@ chain:
    ┌────────────────┐               ┌─────────────────────────┐
    │  Operator      │               │  0G Storage             │
    │  reveals via   │               │  encrypted blob upload  │
-   │  /share        │               │  returns rootHash       │
+   │  /agentscan_share        │               │  returns rootHash       │
    └────────────────┘               └─────────────┬───────────┘
                                                   │ rootHash
                                                   ▼
@@ -87,7 +87,7 @@ event hooks — that's the entire integration surface:
 |---|---|---|
 | `after_tool_call` | Every time the agent invokes a tool (search, file read, MCP call, anything) | Hash params + result. Sign the entry inside the TEE container. Buffer in memory keyed by `sessionId`. |
 | `before_agent_finalize` / `agent_end` | Conversation turn is wrapping up | Parse the Claude Code transcript (Tier 1.5 feature — catches tools the runtime didn't report). Flush the buffer to 0G Storage as an encrypted blob. Mint the iNFT. |
-| `inbound_claim` | User typed a slash command | Intercept `/wallet`, `/share`, `/tokens` before the agent sees them. Reply with the proof URL. |
+| `inbound_claim` | User typed a slash command | Intercept `/agentscan_wallet`, `/agentscan_share`, `/agentscan_tokens` before the agent sees them. Reply with the proof URL. |
 
 ## What's on-chain vs what's encrypted
 
@@ -102,7 +102,7 @@ the architecture view:
 | `dataDescription` (e.g. `"defi-swap"`) | 0G Chain | Yes | Category label — helps a cold visitor sanity-check what kind of session this is. |
 | Encrypted session log | 0G Storage | Yes (encrypted) | Public so anyone can confirm the blob exists at `rootHash`. |
 | Plaintext tool calls + params + results | Nowhere by default | No | The operator's data. Lives only on their machine. |
-| Decryption key | `~/.openclaw/verifiable-execution/keystore/<tokenId>.key` | Local only | Sealed with mode 0600. Shared per-receipt via `/share` URL fragment. |
+| Decryption key | `~/.openclaw/verifiable-execution/keystore/<tokenId>.key` | Local only | Sealed with mode 0600. Shared per-receipt via `/agentscan_share` URL fragment. |
 
 Cryptography spec is in [Concepts → Cryptography](/concepts).
 
@@ -151,7 +151,7 @@ runs three independent reads against the chain and storage:
 3. **`MockTEEVerifier.verifyTEESignature(entryHash, signature)`** for each entry → returns `true` if the signature came from the expected TEE oracle.
 
 All three pass → four green badges, one per row. If a recipient has
-the key (you shared it via `/share`), the browser additionally
+the key (you shared it via `/agentscan_share`), the browser additionally
 decrypts the blob with WebCrypto and renders each entry's plaintext.
 
 The dashboard's verify route at

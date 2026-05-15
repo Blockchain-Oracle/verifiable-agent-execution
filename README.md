@@ -11,7 +11,7 @@ Live at **[agentscan.online](https://agentscan.online)**. Docs at **[docs.agents
 Install the AGENTSCAN plugin once in your OpenClaw config. From that moment forward, every agent reply produces a receipt:
 
 - 📝 **Full audit trail** — every tool call (web search, file read, MCP call, anything Claude Code or your agent invokes) is hashed, signed, and recorded
-- 🔒 **Encrypted by default** — the receipt is stored encrypted on 0G Storage. The key stays on your machine. You decide who sees the content with a `/share` command in the chat
+- 🔒 **Encrypted by default** — the receipt is stored encrypted on 0G Storage. The key stays on your machine. You decide who sees the content with a `/agentscan_share` command in the chat
 - ⛓ **On-chain anchor** — the receipt's root hash is minted as an ERC-7857 iNFT on 0G Chain. Tamper-proof, wallet-free verification for anyone
 - 🌐 **Cold-verifiable** — paste the URL into any browser. No login, no wallet, no setup. Five live reads flip green checkmarks per row
 
@@ -69,7 +69,7 @@ Send a message to your bot, run a Claude Code session, anything that triggers `a
 
 ### 6. Share the receipt
 
-Type `/share` in the chat. The bot replies with a URL containing your reveal key in the URL fragment (`#k=...`). Send that URL to anyone — they decrypt and verify in their browser, your server never sees the key.
+Type `/agentscan_share` in the chat. The bot replies with a URL containing your reveal key in the URL fragment (`#k=...`). Send that URL to anyone — they decrypt and verify in their browser, your server never sees the key.
 
 > **See all your tokens:** open `https://agentscan.online/agent/<your-wallet-address>` for a feed of every receipt you've ever minted.
 

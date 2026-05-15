@@ -14,7 +14,7 @@
 // from /root/.claude/projects/-root--openclaw-workspace-research-agent/
 //   77a24b87-b296-4780-9a0a-288c855b28e1.jsonl.
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -350,10 +350,17 @@ describe("resolveClaudeCliTranscriptPath", () => {
     const older = join(projDir, "abc.jsonl");
     const newer = join(projDir, "xyz.jsonl");
     writeFileSync(older, "{}\n");
-    // Bump mtime forward by a millisecond by writing the newer file
-    // second. utimes would be more deterministic but writing-order is
-    // sufficient on the OSes vitest runs on.
     writeFileSync(newer, "{}\n");
+    // Force mtimes 10 seconds apart. Writing-order alone is NOT
+    // deterministic across OSes: macOS APFS has sub-millisecond mtime
+    // resolution, but Linux ext4 (Ubuntu CI) historically has 1-second
+    // resolution — back-to-back writes can land in the same mtime
+    // bucket and `readdir` order then decides which "wins," which
+    // sometimes returned abc.jsonl on CI. Setting mtimes explicitly
+    // makes the assertion deterministic.
+    const now = Math.floor(Date.now() / 1000);
+    utimesSync(older, now - 10, now - 10);
+    utimesSync(newer, now, now);
     expect(
       resolveClaudeCliTranscriptPath("/tmp/bot", {
         homeDirOverride: fakeHome,

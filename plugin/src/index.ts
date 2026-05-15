@@ -1940,12 +1940,17 @@ export default {
           `${state.config.verifyUrlBase.replace(/\/$/, "")}/agent/${state.config.agentId}`;
 
         reg.call(api, {
-          name: "share",
-          // nativeNames pin: same on every native command surface.
-          nativeNames: { default: "share" },
+          // v0.3.9 (Abu 2026-05-15 directive): namespaced under
+          // `agentscan_` so /share/tokens/wallet don't collide with
+          // generic words another plugin might register (Telegram's
+          // forward, Discord's slash-built-ins, etc.). The
+          // inbound_claim text-match regex below ALSO accepts bare
+          // `/share` for one release of muscle-memory backward compat.
+          name: "agentscan_share",
+          nativeNames: { default: "agentscan_share" },
           description:
-            "Get a verifiable receipt URL for your last agent action (or `/share <tokenId>`).",
-          // /share takes an optional tokenId argument.
+            "Get a verifiable AGENTSCAN receipt URL for your last agent action (or `/agentscan_share <tokenId>`).",
+          // /agentscan_share takes an optional tokenId argument.
           acceptsArgs: true,
           handler: (ctx) => {
             // Synthesize a ShareCommandEvent for handleShareCommand.
@@ -1961,13 +1966,17 @@ export default {
                 verifyUrlBase: state.config.verifyUrlBase,
               },
               {
-                content: ctx.commandBody ?? "/share",
+                // Synthesize a `/share`-prefixed inbound content so
+                // handleShareCommand's regex (which accepts both
+                // /share and /agentscan_share, see share-command.ts)
+                // matches regardless of which native name fired.
+                content: ctx.commandBody ?? "/agentscan_share",
                 commandAuthorized: true,
                 args: argsArr,
               },
             );
             const shareText =
-              result.reply?.text ?? "/share: no reply produced";
+              result.reply?.text ?? "/agentscan_share: no reply produced";
             // v0.3.7: append a footer linking to ALL the operator's
             // receipts. Abu's 2026-05-15 directive ("how can they tell
             // all thier token id and im thinking that a ui thing we
@@ -1989,17 +1998,17 @@ export default {
         // (nativeNames + acceptsArgs:false since the command takes no
         // args — it's always "all your tokens").
         reg.call(api, {
-          name: "tokens",
-          nativeNames: { default: "tokens" },
+          name: "agentscan_tokens",
+          nativeNames: { default: "agentscan_tokens" },
           description:
-            "Get the URL to ALL your verifiable receipts (every tokenId minted by this agent wallet).",
+            "Get the URL to ALL your verifiable AGENTSCAN receipts (every tokenId minted by this agent wallet).",
           acceptsArgs: false,
           handler: () => {
             return {
               text:
-                `📜 Your receipts feed:\n${allReceiptsUrl()}\n\n` +
+                `📜 Your AGENTSCAN receipts feed:\n${allReceiptsUrl()}\n\n` +
                 `Every session this agent has anchored on-chain, newest first. ` +
-                `For a single receipt, type \`/share\` (last one) or \`/share <tokenId>\`.`,
+                `For a single receipt, type \`/agentscan_share\` (last one) or \`/agentscan_share <tokenId>\`.`,
             };
           },
         });
@@ -2018,10 +2027,10 @@ export default {
         // is already on state.config.agentId — set by the install flow
         // and bound to the wallet — so no FS read needed at command time.
         reg.call(api, {
-          name: "wallet",
-          nativeNames: { default: "wallet" },
+          name: "agentscan_wallet",
+          nativeNames: { default: "agentscan_wallet" },
           description:
-            "Show this agent's signing-wallet address (the one you fund from the faucet so receipts can mint).",
+            "Show this agent's AGENTSCAN signing-wallet address (the one you fund from the faucet so receipts can mint).",
           acceptsArgs: false,
           handler: () => {
             const addr = state.config.agentId;
@@ -2031,7 +2040,7 @@ export default {
                 : ``;
             return {
               text:
-                `🔑 Signing wallet:\n\`${addr}\`` +
+                `🔑 AGENTSCAN signing wallet:\n\`${addr}\`` +
                 faucetLine +
                 `\n\nThis is the address that signs every receipt and pays gas for each mint. ` +
                 `Browse this agent's full receipt feed:\n${allReceiptsUrl()}`,
@@ -2082,9 +2091,14 @@ export default {
       // `event.args[0]` parser still runs once routed here, so an
       // event with `content: "/share"` AND `args: ["42"]` works.
       if (event.commandAuthorized !== true) return { handled: false };
+      // v0.3.9: accept BOTH the new namespaced `/agentscan_share` AND
+      // the legacy `/share` for one release. The native registerCommand
+      // path uses the namespaced name; this inbound_claim fallback is
+      // for runtimes that didn't register the native command (older
+      // OpenClaw) — those channels still let users type the bare word.
       const isShareCommand =
         typeof event.content === "string" &&
-        /^\s*\/share(\s|$)/i.test(event.content);
+        /^\s*\/(?:agentscan_)?share(\s|$)/i.test(event.content);
       if (!isShareCommand) return { handled: false };
       return handleShareCommand(
         {

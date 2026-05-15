@@ -1,6 +1,6 @@
 ---
 title: Commands
-description: The /wallet, /share and /tokens slash commands you use from inside your agent's chat.
+description: The /agentscan_wallet, /agentscan_share and /agentscan_tokens slash commands you use from inside your agent's chat.
 ---
 
 # Commands
@@ -12,11 +12,11 @@ reach your agent, so the agent itself never sees them.
 
 | Command | What you get | Safe to share publicly? |
 |---|---|---|
-| [`/wallet`](#wallet) | Your agent's signing-wallet address | ✅ Yes (it's a public chain address) |
-| [`/share`](#share) | A receipt URL with the decryption key in the fragment | ⚠️ Recipient-only |
-| [`/tokens`](#tokens) | A feed URL of every receipt this agent has minted | ✅ Yes (locked view, no key) |
+| [`/agentscan_wallet`](#agentscan_wallet) | Your agent's signing-wallet address | ✅ Yes (it's a public chain address) |
+| [`/agentscan_share`](#agentscan_share) | A receipt URL with the decryption key in the fragment | ⚠️ Recipient-only |
+| [`/agentscan_tokens`](#agentscan_tokens) | A feed URL of every receipt this agent has minted | ✅ Yes (locked view, no key) |
 
-## /wallet
+## /agentscan_wallet
 
 Show this agent's signing-wallet address. Same address you fund
 from the faucet, same address that appears in `/agent/<address>`
@@ -25,7 +25,7 @@ feed URLs.
 ### Usage
 
 ```
-/wallet
+/agentscan_wallet
 ```
 
 ### What you get back
@@ -44,7 +44,7 @@ https://agentscan.online/agent/0xC156E52882b4AF03f2FFe96374ccB46bbc639103
 (The faucet line shows only on testnet. On mainnet you fund via a CEX
 withdrawal or bridge — see [Mainnet vs Testnet](/networks).)
 
-## /share
+## /agentscan_share
 
 Get the shareable URL for one of your receipts, with the decryption
 key embedded.
@@ -52,8 +52,8 @@ key embedded.
 ### Usage
 
 ```
-/share              -- URL for the most recent receipt
-/share 42           -- URL for a specific tokenId
+/agentscan_share              -- URL for the most recent receipt
+/agentscan_share 42           -- URL for a specific tokenId
 ```
 
 ### What you get back
@@ -84,14 +84,14 @@ sees a `k` query parameter. This is documented and tested.
 
 [See the verify route source on GitHub](https://github.com/Blockchain-Oracle/agentscan/blob/main/apps/dashboard/src/app/api/verify/%5BtokenId%5D/route.ts).
 
-## /tokens
+## /agentscan_tokens
 
 Get the URL to all your receipts at once.
 
 ### Usage
 
 ```
-/tokens
+/agentscan_tokens
 ```
 
 ### What you get back
@@ -101,7 +101,7 @@ Your receipts feed:
 https://agentscan.online/agent/0xC156E52882b4AF03f2FFe96374ccB46bbc639103
 
 Every session this agent has anchored on-chain, newest first.
-For a single receipt, type /share or /share TOKEN_ID.
+For a single receipt, type /agentscan_share or /agentscan_share TOKEN_ID.
 ```
 
 The per-agent feed page lists every iNFT receipt owned by the
@@ -113,14 +113,14 @@ agent over time — not just one session.
 
 ## Privacy model
 
-- `/share` reveals the decryption key via a URL fragment that only
+- `/agentscan_share` reveals the decryption key via a URL fragment that only
   the recipient sees. The page then reveals the encrypted content
   after the recipient opens it.
-- `/tokens` reveals neither the key nor any encrypted content — it
+- `/agentscan_tokens` reveals neither the key nor any encrypted content — it
   links to the locked, metadata-only view of each receipt. Safe to
   paste publicly.
 
-`/share` includes a decryption key. Treat the URL it returns the
+`/agentscan_share` includes a decryption key. Treat the URL it returns the
 way you'd treat any sensitive link — send it to one recipient, not
 to a public channel.
 

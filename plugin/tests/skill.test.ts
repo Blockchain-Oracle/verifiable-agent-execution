@@ -161,7 +161,7 @@ describe("register() — happy path with full config", () => {
   // sense we begin to have mutiple users and more how can they tell
   // all thier token id". /tokens replies with the per-agent feed URL
   // so operators can discover every receipt their wallet has minted.
-  it("registers /share, /tokens AND /wallet slash commands (v0.3.8)", () => {
+  it("registers /agentscan_share, /agentscan_tokens AND /agentscan_wallet slash commands (v0.3.9)", () => {
     const registerCommandSpy = vi.fn();
     const onSpy = vi.fn();
     const api = {
@@ -183,7 +183,11 @@ describe("register() — happy path with full config", () => {
       (call) => (call[0] as { name: string }).name,
     );
     expect(names).toEqual(
-      expect.arrayContaining(["share", "tokens", "wallet"]),
+      expect.arrayContaining([
+        "agentscan_share",
+        "agentscan_tokens",
+        "agentscan_wallet",
+      ]),
     );
 
     // The /tokens handler returns a URL containing the agent's address
@@ -191,19 +195,21 @@ describe("register() — happy path with full config", () => {
     // from the test, but we can assert the handler returns SOMETHING
     // with the agentscan domain and /agent/ path shape.
     const tokensCmd = registerCommandSpy.mock.calls.find(
-      (call) => (call[0] as { name: string }).name === "tokens",
+      (call) => (call[0] as { name: string }).name === "agentscan_tokens",
     )?.[0] as { handler: () => { text: string } } | undefined;
     expect(tokensCmd).toBeDefined();
     const tokensReply = tokensCmd!.handler();
     expect(tokensReply.text).toMatch(/https?:\/\/[^/]+\/agent\/0x[0-9a-fA-F]{40}/);
-    expect(tokensReply.text).toContain("/share");
+    // v0.3.9: reply now says `/agentscan_share` instead of `/share`
+    // (namespaced commands per Abu 2026-05-15 directive).
+    expect(tokensReply.text).toContain("/agentscan_share");
 
     // The /wallet handler returns the agent's signing-wallet address
     // (state.config.agentId) AND a discovery link to the /agent feed.
     // Reply shape is config-agnostic; just checks the address pattern
     // is present and the same feed URL is included.
     const walletCmd = registerCommandSpy.mock.calls.find(
-      (call) => (call[0] as { name: string }).name === "wallet",
+      (call) => (call[0] as { name: string }).name === "agentscan_wallet",
     )?.[0] as { handler: () => { text: string } } | undefined;
     expect(walletCmd).toBeDefined();
     const walletReply = walletCmd!.handler();
@@ -228,7 +234,7 @@ describe("register() — happy path with full config", () => {
     plugin.register(api);
 
     const shareCmd = registerCommandSpy.mock.calls.find(
-      (call) => (call[0] as { name: string }).name === "share",
+      (call) => (call[0] as { name: string }).name === "agentscan_share",
     )?.[0] as
       | {
           handler: (ctx: {
