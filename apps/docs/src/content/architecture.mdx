@@ -1,0 +1,179 @@
+---
+title: Architecture
+description: How AGENTSCAN works end-to-end — the components, the 0G primitives we use, and the data flow from "agent ran a tool" to "stranger verifies cold from a URL."
+---
+
+# Architecture
+
+This page is for judges, integrators, and anyone who wants to know
+**exactly what AGENTSCAN does to your data** before they install
+the plugin.
+
+## The purpose
+
+A user gets a URL. They click it. They see what an AI agent did,
+verified cryptographically. That's it. Everything in this repo
+exists to make that one moment trustworthy.
+
+## The 0G stack we use
+
+AGENTSCAN sits on top of four 0G primitives. Each one is doing a
+specific job — none of them is decorative.
+
+| 0G primitive | What we use it for | Our integration |
+|---|---|---|
+| **0G Chain** (Galileo testnet `16602` + Aristotle mainnet `16661`) | Anchor receipts as ERC-7857 iNFTs. Public, permanent, globally readable. | [`packages/chain-client`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/chain-client) — ethers v6 client |
+| **AgenticID** (ERC-7857 iNFT contract) | Receipt tokens. `rootHash` of every session log lives here. We deployed OUR OWN instance on both chains so the contract is auditable + ownership is ours. | [`contracts/contracts/AgenticID.sol`](https://github.com/Blockchain-Oracle/agentscan/tree/main/contracts/contracts) (1:1 from `agenticID-examples/01-mint-and-manage`) |
+| **0G Storage** (`indexer-storage-turbo.0g.ai`) | Encrypted session logs. The plain receipt content lives here, never on-chain. | [`packages/logger`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/logger) wrapping [`@0gfoundation/0g-storage-ts-sdk`](https://www.npmjs.com/package/@0gfoundation/0g-storage-ts-sdk) |
+| **0G Compute** (TeeML inference) | Optional — the mainnet demo session calls a TeeML model for a swap quote, demonstrating that inference outputs can also be receipt entries. | [`scripts/smoke/defi-swap-demo-with-compute.ts`](https://github.com/Blockchain-Oracle/agentscan/tree/main/scripts/smoke) using `@0gfoundation/0g-compute-ts-sdk` |
+
+Plus one piece that's NOT a 0G primitive but is part of the trust
+chain:
+
+| | What we use it for | Our integration |
+|---|---|---|
+| **MockTEEVerifier** (our deploy) | Verifies that every receipt entry was signed by a TEE-issued key. Honest naming — it's an `ECDSA.recover` against a known TEE oracle pubkey, not yet a real attestation quote. Upgrading to real attestation is a contract swap behind the same interface. | [`contracts/contracts/MockTEEVerifier.sol`](https://github.com/Blockchain-Oracle/agentscan/blob/main/contracts/contracts/MockTEEVerifier.sol) |
+
+## How the components fit together
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│              YOUR MACHINE (OpenClaw runtime)                  │
+│                                                               │
+│  ┌─────────┐    after_tool_call   ┌─────────────────────────┐│
+│  │  Your   │ ─────────────────────│ AGENTSCAN plugin        ││
+│  │  agent  │                       │  • SessionLogger        ││
+│  └─────────┘                       │  • per-entry signing    ││
+│       │                            │  • AES-256-GCM encrypt  ││
+│       │                            └─────┬───────────────────┘│
+│       │ session_end                      │                    │
+└───────┼──────────────────────────────────┼────────────────────┘
+        │                                  │
+        ▼                                  ▼
+   ┌────────────────┐               ┌─────────────────────────┐
+   │  Operator      │               │  0G Storage             │
+   │  reveals via   │               │  encrypted blob upload  │
+   │  /share        │               │  returns rootHash       │
+   └────────────────┘               └─────────────┬───────────┘
+                                                  │ rootHash
+                                                  ▼
+                                    ┌─────────────────────────┐
+                                    │  0G Chain               │
+                                    │  AgenticID.iMint(...)   │
+                                    │  ERC-7857 iNFT minted   │
+                                    └─────────────┬───────────┘
+                                                  │ tokenId
+                                                  ▼
+                                  https://agentscan.online/verify/<tokenId>
+                                                  │
+                                                  │ shared URL (cold)
+                                                  ▼
+                                    ┌─────────────────────────┐
+                                    │  Recipient's browser    │
+                                    │  • 3 live reads vs 0G   │
+                                    │  • client-side AES      │
+                                    │    decrypt              │
+                                    │  • MockTEEVerifier      │
+                                    │    signature check      │
+                                    └─────────────────────────┘
+```
+
+## The plugin's three hooks
+
+The plugin is an OpenClaw extension. It registers exactly three
+event hooks — that's the entire integration surface:
+
+| Hook | When it fires | What we do |
+|---|---|---|
+| `after_tool_call` | Every time the agent invokes a tool (search, file read, MCP call, anything) | Hash params + result. Sign the entry inside the TEE container. Buffer in memory keyed by `sessionId`. |
+| `before_agent_finalize` / `agent_end` | Conversation turn is wrapping up | Parse the Claude Code transcript (Tier 1.5 feature — catches tools the runtime didn't report). Flush the buffer to 0G Storage as an encrypted blob. Mint the iNFT. |
+| `inbound_claim` | User typed a slash command | Intercept `/wallet`, `/share`, `/tokens` before the agent sees them. Reply with the proof URL. |
+
+## What's on-chain vs what's encrypted
+
+The same table that's in [Concepts](/concepts), restated here for
+the architecture view:
+
+| Data | Where it lives | Public? | Why this split |
+|---|---|---|---|
+| `tokenId` | 0G Chain | Yes | Anchor — the URL handle. |
+| Agent wallet (iNFT owner) | 0G Chain | Yes | Identity. Lets `/agent/<address>` resolve a feed. |
+| `rootHash` (content hash) | 0G Chain | Yes | Tamper-evidence. Changing the log changes the hash, breaks the anchor badge. |
+| `dataDescription` (e.g. `"defi-swap"`) | 0G Chain | Yes | Category label — helps a cold visitor sanity-check what kind of session this is. |
+| Encrypted session log | 0G Storage | Yes (encrypted) | Public so anyone can confirm the blob exists at `rootHash`. |
+| Plaintext tool calls + params + results | Nowhere by default | No | The operator's data. Lives only on their machine. |
+| Decryption key | `~/.openclaw/verifiable-execution/keystore/<tokenId>.key` | Local only | Sealed with mode 0600. Shared per-receipt via `/share` URL fragment. |
+
+Cryptography spec is in [Concepts → Cryptography](/concepts).
+
+## What an iNFT actually stores
+
+When the plugin mints, it calls `AgenticID.iMint(...)` with a single
+`IntelligentData` struct. Two fields matter:
+
+```solidity
+struct IntelligentData {
+    string  dataDescription;  // e.g. "defi-swap" / "openclaw-session"
+    bytes32 rootHash;          // sha256-derived root of the encrypted blob
+}
+```
+
+The chain knows what KIND of session this is and the cryptographic
+commitment to its content. It does NOT know what the agent actually
+did — the content lives on 0G Storage, encrypted with your key.
+
+## Verifier model — "TEE-rooted, not trustless"
+
+We are deliberate about this framing. AGENTSCAN is NOT trustless.
+It's TEE-rooted: the signing key that produces every entry signature
+is generated inside the agent's TEE container (Intel TDX or SGX).
+The agent process itself cannot extract or tamper with the key.
+
+The chain check verifies "this entry was signed by a key that
+belongs to this TEE." It does NOT verify "the operator of the TEE
+was honest about which agent code was running inside it."
+
+This is the same trust model as Apple's Private Cloud Compute and
+similar TEE-rooted attestation systems. We chose it over ZK
+attestation because:
+
+1. Real ZK attestation circuits are 100× too slow for per-tool-call verification (today)
+2. The interesting primitive is "the agent couldn't tamper with its own log" — and TEE-signing alone proves that
+3. Upgrading `MockTEEVerifier` → real-attestation verifier is a contract swap behind the same `verifyTEESignature(bytes32, bytes)` interface; the off-chain plugin code already produces real TEE-signed payloads
+
+## The verify path — three live reads
+
+When a cold recipient opens a `/verify/<tokenId>` URL, AGENTSCAN
+runs three independent reads against the chain and storage:
+
+1. **`AgenticID.getIntelligentDatas(tokenId)`** → returns the on-chain `IntelligentData` (description + rootHash + owner).
+2. **0G Storage download** → fetches the encrypted blob by rootHash. Key-blind passthrough — the dashboard server never decrypts.
+3. **`MockTEEVerifier.verifyTEESignature(entryHash, signature)`** for each entry → returns `true` if the signature came from the expected TEE oracle.
+
+All three pass → four green badges, one per row. If a recipient has
+the key (you shared it via `/share`), the browser additionally
+decrypts the blob with WebCrypto and renders each entry's plaintext.
+
+The dashboard's verify route at
+[`apps/dashboard/src/app/api/verify/[tokenId]`](https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/dashboard/src/app/api/verify)
+is intentionally **key-blind** — it returns HTTP 400 if it sees a
+`?k=` query parameter. Decryption is client-only.
+
+## Repo map
+
+| Folder | What's inside |
+|---|---|
+| [`plugin/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/plugin) | The OpenClaw plugin source (published to npm) |
+| [`apps/dashboard/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/dashboard) | Next.js verifier UI at agentscan.online |
+| [`apps/docs/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/docs) | This site |
+| [`contracts/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/contracts) | AgenticID.sol + MockTEEVerifier.sol (Hardhat) |
+| [`packages/chain-client/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/chain-client) | ethers v6 wrappers for AgenticID + mint flow |
+| [`packages/logger/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/logger) | SessionLogger + 0G Storage upload |
+| [`packages/tee-adapter/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/tee-adapter) | Signing-message helpers |
+| [`scripts/smoke/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/scripts/smoke) | Live-testnet smoke tests + the canonical DeFi-swap demo |
+
+## Next
+
+- [Commands](/commands) — daily-use slash commands
+- [Verify cold](/verify) — what your recipient sees
+- [For developers](/developers) — deploy your own, full contract addresses, source code map

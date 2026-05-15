@@ -1,14 +1,48 @@
 ---
 title: Commands
-description: The /share and /tokens slash commands you use from inside your agent's chat.
+description: The /wallet, /share and /tokens slash commands you use from inside your agent's chat.
 ---
 
 # Commands
 
-The plugin adds two slash commands to your agent. They work
+The plugin adds **three slash commands** to your agent. They work
 identically across every OpenClaw channel — Telegram, Discord,
 Slack, CLI, the web embed. The plugin intercepts them before they
 reach your agent, so the agent itself never sees them.
+
+| Command | What you get | Safe to share publicly? |
+|---|---|---|
+| [`/wallet`](#wallet) | Your agent's signing-wallet address | ✅ Yes (it's a public chain address) |
+| [`/share`](#share) | A receipt URL with the decryption key in the fragment | ⚠️ Recipient-only |
+| [`/tokens`](#tokens) | A feed URL of every receipt this agent has minted | ✅ Yes (locked view, no key) |
+
+## /wallet
+
+Show this agent's signing-wallet address. Same address you fund
+from the faucet, same address that appears in `/agent/<address>`
+feed URLs.
+
+### Usage
+
+```
+/wallet
+```
+
+### What you get back
+
+```
+🔑 Signing wallet:
+`0xC156E52882b4AF03f2FFe96374ccB46bbc639103`
+
+💧 Fund it from https://faucet.0g.ai (free, 0.1 0G/day)
+
+This is the address that signs every receipt and pays gas for
+each mint. Browse this agent's full receipt feed:
+https://agentscan.online/agent/0xC156E52882b4AF03f2FFe96374ccB46bbc639103
+```
+
+(The faucet line shows only on testnet. On mainnet you fund via a CEX
+withdrawal or bridge — see [Mainnet vs Testnet](/networks).)
 
 ## /share
 

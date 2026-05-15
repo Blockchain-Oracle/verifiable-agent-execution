@@ -2003,9 +2003,44 @@ export default {
             };
           },
         });
+
+        // v0.3.8: /wallet slash command. Returns the plugin's signing
+        // wallet address — the same address judges/auditors fund on
+        // the faucet, AND the address used in /agent/<address> feed
+        // URLs. Before this command existed, the docs told users to
+        // run `jq -r .address ~/.openclaw/verifiable-execution/wallet.json`
+        // in a terminal to find their address (Abu's 2026-05-15
+        // feedback: "telling them to run this on a terminal. I'll be
+        // afraid to myself, what the hell is this?"). Now they just
+        // type /wallet in chat.
+        //
+        // Same registerCommand shape as /tokens (no args). The address
+        // is already on state.config.agentId — set by the install flow
+        // and bound to the wallet — so no FS read needed at command time.
+        reg.call(api, {
+          name: "wallet",
+          nativeNames: { default: "wallet" },
+          description:
+            "Show this agent's signing-wallet address (the one you fund from the faucet so receipts can mint).",
+          acceptsArgs: false,
+          handler: () => {
+            const addr = state.config.agentId;
+            const faucetLine =
+              state.config.chainId === 16602
+                ? `\n💧 Fund it from https://faucet.0g.ai (free, 0.1 0G/day)`
+                : ``;
+            return {
+              text:
+                `🔑 Signing wallet:\n\`${addr}\`` +
+                faucetLine +
+                `\n\nThis is the address that signs every receipt and pays gas for each mint. ` +
+                `Browse this agent's full receipt feed:\n${allReceiptsUrl()}`,
+            };
+          },
+        });
       }
     } catch (cause) {
-      structuredLog("WARN", "register", "registerCommand(share/tokens) failed; falling back to inbound_claim text-match only", {
+      structuredLog("WARN", "register", "registerCommand(share/tokens/wallet) failed; falling back to inbound_claim text-match only", {
         cause: cause instanceof Error ? cause.message : String(cause),
       });
     }

@@ -5,7 +5,7 @@
   "description": "AGENTSCAN end-user documentation site (docs.agentscan.online). Nextra v4 docs theme, MDX content. Separate workspace package so it deploys independently of the dashboard.",
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "next build",
+    "build": "next build && pagefind --site .next/server/app --output-path public/_pagefind",
     "start": "next start -p 3001",
     "lint": "next lint",
     "test": "echo 'no tests for docs site (content-only)' && exit 0"
@@ -22,6 +22,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
+    "pagefind": "^1.5.2",
     "typescript": "^5.8.3"
   }
 }

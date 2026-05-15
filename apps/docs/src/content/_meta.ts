@@ -6,6 +6,7 @@ const meta = {
   quickstart: 'Quickstart',
   install: 'Install',
   concepts: 'Concepts',
+  architecture: 'Architecture',
   commands: 'Commands',
   dashboard: 'Dashboard',
   networks: 'Mainnet vs Testnet',

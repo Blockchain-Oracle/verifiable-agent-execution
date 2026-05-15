@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- AGENTSCAN mark: a verify checkmark inside a hex chain anchor.
+       Color matches the dashboard's accent-verify (#10B981). -->
+  <polygon points="16,2 28,9 28,23 16,30 4,23 4,9" stroke="#10B981" stroke-width="2" fill="none"/>
+  <path d="M10 16 L14 20 L22 12" stroke="#10B981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

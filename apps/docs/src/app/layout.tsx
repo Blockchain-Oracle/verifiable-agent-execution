@@ -1,5 +1,5 @@
+import { Banner, Head } from 'nextra/components'
 import { Footer, Layout, Navbar } from 'nextra-theme-docs'
-import { Head } from 'nextra/components'
 import { getPageMap } from 'nextra/page-map'
 import 'nextra-theme-docs/style.css'
 import './globals.css'
@@ -14,7 +14,60 @@ export const metadata = {
   applicationName: 'AGENTSCAN',
 }
 
-const logo = <b>AGENTSCAN</b>
+const logo = <b style={{ letterSpacing: '0.04em' }}>AGENTSCAN</b>
+
+// Banner at the very top — dismissible, links to the live dashboard.
+// Useful for judges/devs who hit docs first and need to jump to the
+// actual product. Storage key is bumped per release so we can announce
+// new features without leaving the old strip dismissed forever.
+const banner = (
+  <Banner storageKey="agentscan-docs-banner-v1">
+    🟢 LIVE on 0G — testnet <a href="https://agentscan.online" style={{ textDecoration: 'underline' }}>agentscan.online</a> · mainnet <a href="https://mainnet.agentscan.online" style={{ textDecoration: 'underline' }}>mainnet.agentscan.online</a>
+  </Banner>
+)
+
+// Footer: thin three-column with the actual useful destinations.
+// Replaces the prior one-line "© AGENTSCAN" boilerplate (Abu's
+// 2026-05-15 critique: "the footer isn't very well done").
+const footer = (
+  <Footer>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: '1.5rem',
+        width: '100%',
+        fontSize: '0.875rem',
+      }}
+    >
+      <div>
+        <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Product</div>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: '1.8' }}>
+          <li><a href="https://agentscan.online">Live dashboard (testnet)</a></li>
+          <li><a href="https://mainnet.agentscan.online">Live dashboard (mainnet)</a></li>
+          <li><a href="https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution">npm package</a></li>
+        </ul>
+      </div>
+      <div>
+        <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Docs</div>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: '1.8' }}>
+          <li><a href="/quickstart">Quickstart</a></li>
+          <li><a href="/architecture">Architecture</a></li>
+          <li><a href="/commands">Commands</a></li>
+          <li><a href="/developers">For developers</a></li>
+        </ul>
+      </div>
+      <div>
+        <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Open source</div>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: '1.8' }}>
+          <li><a href="https://github.com/Blockchain-Oracle/agentscan">GitHub</a></li>
+          <li><a href="https://github.com/Blockchain-Oracle/agentscan/blob/main/LICENSE">Apache-2.0</a></li>
+          <li><a href="https://0g.ai">Anchored on 0G</a></li>
+        </ul>
+      </div>
+    </div>
+  </Footer>
+)
 
 export default async function RootLayout({
   children,
@@ -30,6 +83,7 @@ export default async function RootLayout({
       </Head>
       <body>
         <Layout
+          banner={banner}
           navbar={
             <Navbar
               logo={logo}
@@ -40,11 +94,7 @@ export default async function RootLayout({
           docsRepositoryBase="https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/docs"
           editLink="Edit this page on GitHub"
           sidebar={{ defaultMenuCollapseLevel: 1 }}
-          footer={
-            <Footer>
-              {`© ${new Date().getFullYear()} AGENTSCAN — Etherscan for AI agents. Anchored on 0G.`}
-            </Footer>
-          }
+          footer={footer}
         >
           {children}
         </Layout>

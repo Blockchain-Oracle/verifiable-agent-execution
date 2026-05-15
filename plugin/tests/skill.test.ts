@@ -161,7 +161,7 @@ describe("register() — happy path with full config", () => {
   // sense we begin to have mutiple users and more how can they tell
   // all thier token id". /tokens replies with the per-agent feed URL
   // so operators can discover every receipt their wallet has minted.
-  it("registers BOTH /share AND /tokens slash commands (v0.3.7)", () => {
+  it("registers /share, /tokens AND /wallet slash commands (v0.3.8)", () => {
     const registerCommandSpy = vi.fn();
     const onSpy = vi.fn();
     const api = {
@@ -174,12 +174,17 @@ describe("register() — happy path with full config", () => {
 
     plugin.register(api);
 
-    // Both commands registered:
-    expect(registerCommandSpy).toHaveBeenCalledTimes(2);
+    // All three commands registered (was 2 in v0.3.7; /wallet added
+    // v0.3.8 per Abu's 2026-05-15 docs-feedback: "telling them to
+    // run [jq .address] on a terminal" was bad UX. Now they type
+    // /wallet in chat).
+    expect(registerCommandSpy).toHaveBeenCalledTimes(3);
     const names = registerCommandSpy.mock.calls.map(
       (call) => (call[0] as { name: string }).name,
     );
-    expect(names).toEqual(expect.arrayContaining(["share", "tokens"]));
+    expect(names).toEqual(
+      expect.arrayContaining(["share", "tokens", "wallet"]),
+    );
 
     // The /tokens handler returns a URL containing the agent's address
     // and the configured verifyUrlBase. We can't easily read state.config
@@ -189,14 +194,21 @@ describe("register() — happy path with full config", () => {
       (call) => (call[0] as { name: string }).name === "tokens",
     )?.[0] as { handler: () => { text: string } } | undefined;
     expect(tokensCmd).toBeDefined();
-    const reply = tokensCmd!.handler();
-    // URL shape: <verifyUrlBase>/agent/<addr> — verifyUrlBase comes
-    // from the test fixture's FULL_CONFIG (verify.example.com), not
-    // the production default. The pattern check is config-agnostic.
-    expect(reply.text).toMatch(/https?:\/\/[^/]+\/agent\/0x[0-9a-fA-F]{40}/);
-    // Reply must mention how to share a single receipt (the
-    // discoverability cross-link from /tokens → /share).
-    expect(reply.text).toContain("/share");
+    const tokensReply = tokensCmd!.handler();
+    expect(tokensReply.text).toMatch(/https?:\/\/[^/]+\/agent\/0x[0-9a-fA-F]{40}/);
+    expect(tokensReply.text).toContain("/share");
+
+    // The /wallet handler returns the agent's signing-wallet address
+    // (state.config.agentId) AND a discovery link to the /agent feed.
+    // Reply shape is config-agnostic; just checks the address pattern
+    // is present and the same feed URL is included.
+    const walletCmd = registerCommandSpy.mock.calls.find(
+      (call) => (call[0] as { name: string }).name === "wallet",
+    )?.[0] as { handler: () => { text: string } } | undefined;
+    expect(walletCmd).toBeDefined();
+    const walletReply = walletCmd!.handler();
+    expect(walletReply.text).toMatch(/0x[0-9a-fA-F]{40}/);
+    expect(walletReply.text).toMatch(/https?:\/\/[^/]+\/agent\/0x[0-9a-fA-F]{40}/);
   });
 
   // The /share reply now appends a "See all your receipts →" footer
