@@ -14,6 +14,7 @@
  *   - Sharp 1px divider beneath
  */
 
+import Image from "next/image";
 import Link from "next/link";
 
 import { loadEnv, networkBadge } from "@/lib/env";
@@ -29,12 +30,21 @@ export function TopBar() {
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-8 sm:px-6 sm:py-4">
         <Link
           href="/"
-          className="group flex flex-col leading-none transition-opacity hover:opacity-80"
+          className="group flex flex-col gap-1 leading-none transition-opacity hover:opacity-80"
         >
-          <span className="font-sans text-lg font-bold tracking-tight text-text-primary">
-            AGENTSCAN
-          </span>
-          <span className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
+          {/* AGENTSCAN brand lockup — mark + wordmark from
+              /logo.svg. Using next/image keeps the SVG optimized +
+              properly sized; the SVG inherits currentColor for the
+              wordmark so it adapts to text-primary. */}
+          <Image
+            src="/logo.svg"
+            alt="AGENTSCAN"
+            width={156}
+            height={28}
+            priority
+            className="h-7 w-auto text-text-primary"
+          />
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
             Etherscan for AI agents · {badge.network}
           </span>
         </Link>

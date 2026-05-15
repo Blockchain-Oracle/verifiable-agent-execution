@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 48" fill="none">
+  <!--
+    AGENTSCAN full lockup — mark + wordmark.
+    Use for: docs navbar, README banner, dashboard TopBar, social cards.
+    Background-agnostic (mark + text both inherit currentColor for fills
+    via the gradient stops below — works on dark AND light surfaces).
+  -->
+  <defs>
+    <linearGradient id="agentscan-logo-grad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FCD34D"/>
+      <stop offset="1" stop-color="#B45309"/>
+    </linearGradient>
+  </defs>
+  <!-- Mark — same hex+check as icon.svg, 48x48 box -->
+  <g>
+    <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
+             stroke="url(#agentscan-logo-grad)" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+    <polygon points="24,10 35,16 35,32 24,38 13,32 13,16"
+             stroke="url(#agentscan-logo-grad)" stroke-width="1.2" fill="none" stroke-linejoin="round" opacity="0.55"/>
+    <path d="M13 24 L21 32 L37 14"
+          stroke="url(#agentscan-logo-grad)" stroke-width="3.5"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <!-- Wordmark: AGENTSCAN — Geist-Sans-style geometric uppercase, tracked
+       wide for the broadsheet feel. fontFamily falls back to ui-sans-serif
+       so the SVG renders cleanly even on systems without Geist. -->
+  <text x="60" y="32"
+        font-family="Geist, 'Geist Sans', ui-sans-serif, system-ui, sans-serif"
+        font-weight="700"
+        font-size="22"
+        letter-spacing="2.4"
+        fill="currentColor">AGENTSCAN</text>
+</svg>

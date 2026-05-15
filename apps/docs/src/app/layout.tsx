@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import { Banner, Head } from 'nextra/components'
 import { Footer, Layout, Navbar } from 'nextra-theme-docs'
 import { getPageMap } from 'nextra/page-map'
@@ -14,7 +15,21 @@ export const metadata = {
   applicationName: 'AGENTSCAN',
 }
 
-const logo = <b style={{ letterSpacing: '0.04em' }}>AGENTSCAN</b>
+// Logo: the brand mark from /public/logo.svg. SVG inherits
+// currentColor for the wordmark, so it adapts to nav text color in
+// both light + dark modes. Using next/image for optimization
+// (Abu's 2026-05-15 nudge — same primitive as the dashboard's
+// TopBar uses).
+const logo = (
+  <Image
+    src="/logo.svg"
+    alt="AGENTSCAN"
+    width={156}
+    height={28}
+    priority
+    style={{ height: 28, width: 'auto' }}
+  />
+)
 
 // Banner at the very top — dismissible, links to the live dashboard.
 // Useful for judges/devs who hit docs first and need to jump to the
@@ -87,7 +102,11 @@ export default async function RootLayout({
           navbar={
             <Navbar
               logo={logo}
-              projectLink="https://github.com/Blockchain-Oracle/agentscan"
+              // Per Abu 2026-05-15: header's "project link" should go
+              // to the LIVE PRODUCT, not GitHub. From the docs site,
+              // the natural next click is "go see the dashboard."
+              // GitHub still links from the footer's Open source column.
+              projectLink="https://agentscan.online"
             />
           }
           pageMap={pageMap}
