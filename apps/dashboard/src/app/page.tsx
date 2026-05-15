@@ -60,12 +60,39 @@ function Hero({
   agenticIdAddress: string;
   chainId: number;
 }) {
-  const heroNetworkLabel = `Live on ${networkLongLabel(chainId)}`;
+  // SCAMPER pass on the hero, 2026-05-15 (Tier 1.7).
+  //
+  // Eliminate — the "0G APAC Hackathon · Track 1 · Live on Galileo
+  //   testnet" eyebrow was hackathon-internal. Judges already know
+  //   they're on a hackathon submission, and the MainnetAnnouncement-
+  //   Ticker above (Tier 1.6) carries the live-network signal.
+  //
+  // Substitute — the old subtitle stacked four jargon phrases
+  //   ("TEE-signed log", "ERC-7857 iNFT", "AgenticID", "0G Storage")
+  //   in 24 words; a judge from outside the crypto/0G ecosystem
+  //   couldn't parse it. New copy leads with the user's experience
+  //   ("every tool your agent runs becomes a signed receipt") and
+  //   defers the architecture to the proof-chain aside.
+  //
+  // Substitute — the secondary "sample agent" link pointed at the
+  //   deploy wallet, not at an actual mint-producing agent.
+  //   Repointed at the bot wallet (the address that mints every
+  //   receipt in the live feed).
+  //
+  // Substitute — the 4-step proof aside listed mechanism instead
+  //   of value. Rewritten in plain language; each step now answers
+  //   "what happens" from the user's vantage, not "how it's
+  //   implemented" from ours.
+  //
+  // Magnify — added an "Encrypted by default" callout. The
+  //   encrypted-by-default model (v0.3.0) is the wedge that
+  //   distinguishes AGENTSCAN from any "agent observability" tool;
+  //   omitting it from the hero buries the lede.
   return (
     <section className="grid gap-12 border-b border-border pb-12 lg:grid-cols-[1.15fr_0.85fr]">
       <div>
         <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent-verify">
-          0G APAC Hackathon · Track 1 · {heroNetworkLabel}
+          AGENTSCAN · BETA
         </p>
         <h1 className="mt-4 font-sans text-5xl font-bold leading-[1.05] tracking-tight text-text-primary md:text-6xl">
           Etherscan
@@ -73,9 +100,13 @@ function Hero({
           for AI agents.
         </h1>
         <p className="mt-6 max-w-xl font-sans text-base leading-relaxed text-text-secondary">
-          Every OpenClaw agent session produces a TEE-signed log on 0G Storage,
-          anchored as an ERC-7857 iNFT on AgenticID. Share one URL — anyone
-          verifies the agent ran exactly what it claimed, no wallet, no login.
+          Every tool your agent runs — every search, file read, MCP call —
+          becomes a signed, on-chain-anchored receipt. Share one URL.
+          Anyone verifies the agent did exactly what it claimed.
+          No wallet, no login, no setup.
+        </p>
+        <p className="mt-3 max-w-xl font-mono text-[11px] uppercase tracking-[0.14em] text-accent-verify">
+          🔒 Encrypted by default · you control who sees the content
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-4">
           <Link
@@ -100,40 +131,42 @@ function Hero({
             </svg>
           </Link>
           <Link
-            href="/agent/0x3b566583b51DA4da8d95565212C96836f66433A3"
+            href="/agent/0x8f173a582dde8CA95742c38852B202936126b1EB"
             className="font-mono text-xs uppercase tracking-[0.14em] text-text-secondary transition-colors hover:text-text-primary"
           >
-            Inspect a sample agent →
+            Browse the live demo bot →
           </Link>
         </div>
       </div>
       <aside className="rounded-md border border-border bg-surface p-6">
         <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-text-secondary">
-          The proof chain
+          How it works
         </h2>
         <ol className="mt-5 space-y-4 font-sans text-sm leading-relaxed text-text-primary">
           {[
             {
               step: "01",
-              title: "Tool call captured",
+              title: "Your agent runs as usual",
               detail:
-                "OpenClaw plugin observes every after_tool_call. No agent cooperation needed.",
+                "Install our plugin in your OpenClaw config. From that moment, every tool call your agent makes is captured automatically — no code changes, no SDK to wire.",
             },
             {
               step: "02",
-              title: "TEE-signed entry",
+              title: "Every tool gets hashed + signed",
               detail:
-                "agent-wrapper signs each step with its sealed key. Recovers to the deployed verifier.",
+                "Each search, file read, or MCP call becomes a signed entry. The agent itself can't tamper with it — signing happens outside its loop.",
             },
             {
               step: "03",
-              title: "0G Storage flush",
-              detail: "Session log uploaded; rootHash computed via Merkle proof.",
+              title: "Anchored on 0G Chain",
+              detail:
+                "The full session log goes to 0G Storage encrypted. Its content hash gets minted as an iNFT receipt token you own.",
             },
             {
               step: "04",
-              title: "ERC-7857 mint",
-              detail: `iNFT anchors {dataDescription, rootHash} on AgenticID at ${shortAddress(agenticIdAddress)}`,
+              title: "Share a URL. Anyone verifies cold",
+              detail:
+                "Paste the link in any browser. The dashboard runs three live reads against the chain and storage. Five rows flip green.",
             },
           ].map((item) => (
             <li key={item.step} className="flex gap-4">
@@ -147,6 +180,9 @@ function Hero({
             </li>
           ))}
         </ol>
+        <p className="mt-5 border-t border-border/60 pt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-text-secondary">
+          Anchor contract: {shortAddress(agenticIdAddress)} · chainId {chainId}
+        </p>
       </aside>
     </section>
   );
