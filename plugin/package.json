@@ -1,6 +1,6 @@
 {
   "name": "@verifiable-agent-execution/plugin",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "description": "OpenClaw plugin that captures every tool call inside an agent session, flushes the log to 0G Storage at session end, and mints an AgenticID iNFT anchoring the rootHash on-chain. Produces a /verify/<tokenId> URL the dashboard can verify cold (network is implicit from the verifyUrlBase domain — Epic-7 subdomain split).",
