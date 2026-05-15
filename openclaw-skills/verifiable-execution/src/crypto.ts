@@ -164,7 +164,7 @@ export function decryptSessionLog(
 
 /**
  * Encode a raw key to base64url (URL-safe, no padding) for embedding
- * in a share-link fragment: `https://verifiable.0g.ai/verify/N#k=...`
+ * in a share-link fragment: `https://agentscan.online/verify/N#k=...`
  *
  * The `url` flavor avoids `+` `/` `=` which break URL parsing in
  * some contexts (Telegram link previews truncate at `=`, etc.).

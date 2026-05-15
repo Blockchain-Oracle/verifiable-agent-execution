@@ -41,3 +41,40 @@ cache/
 typechain-types/
 **/deployments/*/
 !**/deployments/.gitkeep
+
+# ── Internal dev / AI-tooling artifacts — NOT for the public repo ────────────
+# These exist to help me + subagents build the project. They are NOT
+# end-user documentation. End-user docs live at docs.agentscan.online
+# (apps/docs/ package, served separately). Untracked here so the public
+# repo surface is the code + user-facing README + dashboard, nothing else.
+#
+# Per Abu's 2026-05-15 cleanup directive: "context folder or any
+# documentation whose sole purpose is to assit you or anyone you created
+# your self to aid developemnt or auditing".
+
+# Internal product/architecture/audit notes (PRD, ADRs, story BDDs,
+# competitor scan, reference-repo audit, source-of-truth verdict).
+context/
+
+# Per-version implementation plans (v0.3.0 / v0.3.4 / v0.3.5 design docs
+# written for me during multi-round Codex review).
+.claude/plans/
+
+# AI agent tooling — scripts, hooks, custom agents/skills/commands the
+# CLAUDE.md harness invokes. None of this is for the public repo.
+.claude/scripts/
+.claude/hooks/
+.claude/agents/
+.claude/commands/
+.claude/skills/
+.claude/settings.json
+.claude/settings.local.json
+
+# Top-level AI-agent instruction file (mirror of CLAUDE.md but for the
+# claude-mem auto-injected memory context). Not user-facing.
+AGENTS.md
+
+# Anchor + visual-baseline screenshots — used by the local visual-check
+# loop only. screenshots/current/ already ignored above.
+screenshots/anchor/
+screenshots/baseline/

@@ -22,7 +22,7 @@
       },
       "verifyUrlBase": {
         "type": "string",
-        "description": "Base URL of the verifier dashboard. The DOMAIN carries the network signal (Epic-7 subdomain split: 'https://verifiable.0g.ai' = testnet root, 'https://mainnet.verifiable.0g.ai' = mainnet subdomain). Appended to the relative /verify/<tokenId> path returned by SessionAnchor.anchor()."
+        "description": "Base URL of the verifier dashboard. The DOMAIN carries the network signal (Epic-7 subdomain split: 'https://agentscan.online' = testnet root, 'https://mainnet.agentscan.online' = mainnet subdomain). Appended to the relative /verify/<tokenId> path returned by SessionAnchor.anchor()."
       },
       "chainId": {
         "type": "number",

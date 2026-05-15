@@ -115,15 +115,15 @@ export const DEMO_TOKEN_ID = 0;
  * advertise its sibling.
  *
  * Defaults assume the Coolify subdomain split:
- *   testnet → https://verifiable.0g.ai             (default origin)
- *   mainnet → https://mainnet.verifiable.0g.ai     (subdomain)
+ *   testnet → https://agentscan.online             (default origin)
+ *   mainnet → https://mainnet.agentscan.online     (subdomain)
  *
  * On localhost both default to "" → chip omits the cross-link href so
  * dev mode doesn't render a broken link.
  */
 const CROSS_LINK_DEFAULTS = {
-  TESTNET_SITE_URL: "https://verifiable.0g.ai",
-  MAINNET_SITE_URL: "https://mainnet.verifiable.0g.ai",
+  TESTNET_SITE_URL: "https://agentscan.online",
+  MAINNET_SITE_URL: "https://mainnet.agentscan.online",
 } as const;
 
 // ---------------------------------------------------------------------------

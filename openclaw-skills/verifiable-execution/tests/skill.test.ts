@@ -363,7 +363,7 @@ describe("resolveConfig — config validation", () => {
       expect(result.config.verifierAddress).toBe(
         "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
       );
-      expect(result.config.verifyUrlBase).toBe("https://verifiable.0g.ai");
+      expect(result.config.verifyUrlBase).toBe("https://agentscan.online");
       expect(result.config.chainId).toBe(16602);
       expect(result.config.modelId).toBe("claude-sonnet-4-6");
       expect(result.config.agentId).toBe(""); // filled from wallet downstream

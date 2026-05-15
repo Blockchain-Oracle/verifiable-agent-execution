@@ -186,7 +186,7 @@ encrypted envelope to **0G Storage**, and mints an **AgenticID iNFT**
 anchoring the rootHash on-chain.
 
 **Encrypted by default.** The plugin outputs a key-free
-\`https://verifiable.0g.ai/verify/<tokenId>\` URL. Cold visitors see
+\`https://agentscan.online/verify/<tokenId>\` URL. Cold visitors see
 a 🔒 Encrypted locked-state page (proof chain verifiable cold, content
 hidden). When the operator chooses to share, they type \`/share\` in
 the bot chat — the bot replies with the full URL including a

@@ -7,8 +7,8 @@
  * rootHash on-chain. Produces a `<verifyUrlBase>/verify/<tokenId>` URL
  * the verifier dashboard can resolve cold. The network (testnet vs
  * mainnet) is disambiguated by the configured verifyUrlBase domain
- * (Epic-7 subdomain split: `verifiable.0g.ai` = testnet root,
- * `mainnet.verifiable.0g.ai` = mainnet subdomain) — NOT by a chainId
+ * (Epic-7 subdomain split: `agentscan.online` = testnet root,
+ * `mainnet.agentscan.online` = mainnet subdomain) — NOT by a chainId
  * segment in the path. Same model Etherscan uses vs Sepolia.Etherscan.
  *
  * Hooks fire AUTOMATICALLY — every tool call across every channel

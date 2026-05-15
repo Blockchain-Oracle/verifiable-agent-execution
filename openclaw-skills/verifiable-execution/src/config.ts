@@ -36,7 +36,7 @@ export const GALILEO_TESTNET_DEFAULTS = Object.freeze({
   indexerUrl: "https://indexer-storage-testnet-turbo.0g.ai",
   agenticIdAddress: "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38",
   verifierAddress: "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
-  verifyUrlBase: "https://verifiable.0g.ai",
+  verifyUrlBase: "https://agentscan.online",
   chainId: 16602,
   modelId: "claude-sonnet-4-6",
 } as const);

@@ -124,8 +124,8 @@ export interface AnchorResult {
   /**
    * Verifier URL pattern `/verify/<tokenId>` — relative path. The chain
    * (testnet vs mainnet) is disambiguated by the DOMAIN the verifyUrl
-   * gets prepended to (e.g., `verifiable.0g.ai` = testnet,
-   * `mainnet.verifiable.0g.ai` = mainnet), matching the Etherscan vs
+   * gets prepended to (e.g., `agentscan.online` = testnet,
+   * `mainnet.agentscan.online` = mainnet), matching the Etherscan vs
    * Sepolia.Etherscan model. Do NOT bake chainId into the URL path —
    * the deploy topology already carries it and a path-prefixed chainId
    * forces ugly URLs + dead routes.

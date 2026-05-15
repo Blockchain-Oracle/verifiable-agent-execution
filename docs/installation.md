@@ -2,7 +2,7 @@
 
 > Install the **verifiable-execution** OpenClaw plugin so every agent
 > session you run gets captured, flushed to 0G Storage, and anchored
-> on-chain as an iNFT — shareable as `https://verifiable.0g.ai/verify/<tokenId>`.
+> on-chain as an iNFT — shareable as `https://agentscan.online/verify/<tokenId>`.
 
 The plugin runs entirely inside OpenClaw — no separate service, no
 Docker, no Python. One install command, fund a wallet, one gateway
@@ -132,7 +132,7 @@ While the agent runs, the plugin silently:
   the local keystore — no auto-leak to log streams):
 
 ```
-[verifiable-execution] session anchored: tokenId=42 verifyUrl=https://verifiable.0g.ai/verify/42
+[verifiable-execution] session anchored: tokenId=42 verifyUrl=https://agentscan.online/verify/42
 ```
 
 The session's AES-256-GCM key is written to
@@ -350,7 +350,7 @@ Run any OpenClaw session that calls at least one tool. On
 should see a stderr line like:
 
 ```
-[verifiable-execution] session anchored: tokenId=42 verifyUrl=https://verifiable.0g.ai/verify/42
+[verifiable-execution] session anchored: tokenId=42 verifyUrl=https://agentscan.online/verify/42
 ```
 
 Open that **key-free** URL in a browser. v0.3.0 encrypts receipts
@@ -387,13 +387,13 @@ RPC_URL=https://evmrpc.0g.ai \
 INDEXER_URL=https://indexer-storage-turbo.0g.ai \
 AGENTICID_ADDRESS=0xC6f7fB1511a7483C6e14258c70529e37ec698937 \
 TEE_VERIFIER_ADDRESS=0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2 \
-VERIFY_URL_BASE=https://mainnet.verifiable.0g.ai \
+VERIFY_URL_BASE=https://mainnet.agentscan.online \
 CHAIN_ID=16661 \
 ./install.sh
 ```
 
-Note the **subdomain split**: testnet at `verifiable.0g.ai`, mainnet at
-`mainnet.verifiable.0g.ai`. The URL path is identical
+Note the **subdomain split**: testnet at `agentscan.online`, mainnet at
+`mainnet.agentscan.online`. The URL path is identical
 (`/verify/<tokenId>`) — only the host carries the network signal.
 This is the Etherscan model (see ADR-12).
 

@@ -25,7 +25,7 @@
 
 > "Here's a URL. No setup, no context. Just open it."
 
-**Action:** hand the link `https://verifiable.0g.ai/verify/0` to the judge (or click on a fresh device).
+**Action:** hand the link `https://agentscan.online/verify/0` to the judge (or click on a fresh device).
 
 **Why this matters:** the entire pitch is "Etherscan for AI agents — open a URL, verify cold." Setup at this step would kill the wedge.
 
@@ -140,7 +140,7 @@ All four badges are GREY at this point — "not yet verified."
 - Mobile responsiveness
 - Hero landing page redesign
 - Sequential badge-flip animation in the UI (data is wired; UI orchestration is yours)
-- Public deployment URL (`verifiable.0g.ai` or similar)
+- Public deployment URL (`agentscan.online` or similar)
 
 ---
 

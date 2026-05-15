@@ -14,7 +14,7 @@ import { handleShareCommand } from "../src/share-command.js";
 
 let root: string;
 let keystore: Keystore;
-const VERIFY_URL_BASE = "https://verifiable.0g.ai";
+const VERIFY_URL_BASE = "https://agentscan.online";
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "ve-share-cmd-"));
@@ -199,11 +199,11 @@ describe("handleShareCommand — edge cases", () => {
   it("strips trailing slashes from verifyUrlBase before building URL", () => {
     keystore.put("7", generateKey());
     const result = handleShareCommand(
-      { keystore, verifyUrlBase: "https://verifiable.0g.ai/" },
+      { keystore, verifyUrlBase: "https://agentscan.online/" },
       { content: "/share 7", commandAuthorized: true },
     );
     // Should NOT contain a double-slash before /verify.
     expect(result.reply?.text).not.toMatch(/\.0g\.ai\/\/verify/);
-    expect(result.reply?.text).toContain("https://verifiable.0g.ai/verify/7");
+    expect(result.reply?.text).toContain("https://agentscan.online/verify/7");
   });
 });

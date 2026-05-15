@@ -28,11 +28,11 @@ AES-256-GCM encrypt → v1 envelope {v, alg, iv, ciphertext, tag}
    ↓
 ERC-7857 iNFT mint on AgenticID (Galileo)
    ↓
-KEY-FREE verifier URL  https://verifiable.0g.ai/verify/<tokenId>
+KEY-FREE verifier URL  https://agentscan.online/verify/<tokenId>
    ↓
    ├─ Cold visitor (no key):       sees 🔒 Encrypted — metadata + chain anchor only
    └─ Operator types `/share` in chat → bot replies with FULL URL
-                                       https://verifiable.0g.ai/verify/<id>#k=<base64url>
+                                       https://agentscan.online/verify/<id>#k=<base64url>
                                        ↓
                                        Recipient opens URL → WebCrypto decrypts in
                                        BROWSER (key never leaves the device) → 4 row
@@ -61,7 +61,7 @@ The product is an **OpenClaw plugin**, not a script. Install it once in your Ope
         "agenticIdAddress": "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38",
         "verifierAddress": "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
         "chainId": 16602,
-        "verifyUrlBase": "https://verifiable.0g.ai",
+        "verifyUrlBase": "https://agentscan.online",
         "agentId": "<your-0x-address>",
         "modelId": "claude-sonnet-4-6"
       }
@@ -91,7 +91,7 @@ The product is an **OpenClaw plugin**, not a script. Install it once in your Ope
 4. **Run OpenClaw normally.** Every session you complete auto-anchors at session-end and the plugin emits a structured log line with the verify URL:
    ```json
    {"level":"INFO","component":"session_end","msg":"Session anchored on-chain",
-    "data":{"tokenId":"123","verifyUrl":"https://verifiable.0g.ai/verify/123"}}
+    "data":{"tokenId":"123","verifyUrl":"https://agentscan.online/verify/123"}}
    ```
 
 ### Switching to mainnet
