@@ -102,28 +102,37 @@ Want to just *see* a proof? No setup required:
 
 ```
 apps/
-  dashboard/                Next.js 14 verifier UI (agentscan.online)
-  docs/                     Nextra docs site (docs.agentscan.online)
-plugin/                     THE OpenClaw plugin source (published to npm as
-                            @blockchainoracle/openclaw-verifiable-execution)
-  src/                      TypeScript source
-  tests/                    vitest suites
-  dist/                     esbuild bundle output (gitignored, npm-publish target)
-  openclaw.plugin.json      OpenClaw manifest (config schema)
-  build.mjs                 Bundler — src → dist
-packages/                   Shared workspace libraries (used by apps/ + plugin/)
-  logger/                   SessionLogger + 0G Storage upload
-  tee-adapter/              Signing-message helpers + MockTEEVerifier ABI
-  chain-client/             AgenticIDClient + SessionAnchor
-contracts/                  AgenticID.sol + MockTEEVerifier.sol (Hardhat)
-scripts/                    Top-level utility scripts
-  smoke/                    Live testnet smoke tests (re-runnable)
-tests/visual/               Playwright visual regression for the dashboard
-nixpacks.toml               Multi-target Coolify deploy config (dashboard + docs)
+  dashboard/    Next.js 14 verifier UI            → agentscan.online
+  docs/         Nextra docs site                  → docs.agentscan.online
+plugin/         The OpenClaw plugin source        → @blockchainoracle/openclaw-verifiable-execution on npm
+packages/       Shared workspace libraries (imported by apps/ + plugin/)
+  chain-client/   AgenticIDClient + SessionAnchor (on-chain reads + mints)
+  logger/         SessionLogger + 0G Storage upload
+  tee-adapter/    TEE signing-message helpers + MockTEEVerifier ABI
+contracts/      AgenticID.sol + MockTEEVerifier.sol (Hardhat, Solidity 0.8.24)
+scripts/        Utility scripts — install.sh, smoke tests, init-wallet
+tests/visual/   Playwright visual regression for the dashboard
+nixpacks.toml   Multi-target Coolify deploy (APP_NAME picks dashboard or docs)
 ```
 
-See [`STRUCTURE.md`](./STRUCTURE.md) for what each folder is for and why
-it lives there.
+Each subfolder has its own `README.md` with what's inside and how to
+work on it: [plugin/](./plugin/README.md), [packages/chain-client/](./packages/chain-client/README.md),
+[packages/logger/](./packages/logger/README.md),
+[packages/tee-adapter/](./packages/tee-adapter/README.md),
+[contracts/](./contracts/README.md), [scripts/](./scripts/README.md).
+
+### Naming notes
+
+- **`plugin/`** is singular because this repo ships exactly one OpenClaw
+  plugin. OpenClaw renamed "skills" → "plugins" in 2026.4 — the folder
+  matches the current terminology.
+- **`plugin/dist/`** is the npm-publish artifact (gitignored). Build with
+  `pnpm --filter @verifiable-agent-execution/plugin build`.
+- **`packages/`** vs **`apps/`** is standard pnpm-workspace convention —
+  apps are deployables, packages are libraries imported by apps and the plugin.
+- **The npm-publish name** (`@blockchainoracle/openclaw-verifiable-execution`)
+  is different from the workspace name (`@verifiable-agent-execution/plugin`)
+  and intentionally so — the npm name is user-facing and frozen.
 
 To build from source:
 
