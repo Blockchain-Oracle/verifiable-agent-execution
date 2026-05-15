@@ -1,0 +1,112 @@
+---
+title: Concepts
+description: What a verifiable receipt is, what gets anchored on-chain vs. encrypted on storage, and what the proof chain actually proves.
+---
+
+# Concepts
+
+If you've installed the plugin and gotten a `/verify/<tokenId>` URL,
+this page explains what's actually behind that URL. Three core ideas:
+**receipts**, **encrypted-by-default**, and the **proof chain**.
+
+## A receipt
+
+A *receipt* is a complete, signed log of a single agent session.
+"Session" is whatever OpenClaw calls a session — usually one back-
+and-forth chat that may include multiple tool calls.
+
+The receipt has two parts:
+
+1. **The session log itself** — a sequence of entries. Each entry
+   is one tool call, captured with its input hash, output hash,
+   timestamp, and a signature.
+2. **An iNFT (ERC-7857)** — minted on the [0G AgenticID](https://0g.ai)
+   contract, anchoring the log's content hash. You own this token.
+   The `tokenId` you see in the URL is its ID.
+
+The log lives on **0G Storage**, encrypted. The iNFT lives on the
+**0G chain**, public.
+
+## Encrypted by default
+
+This is the headline difference between AGENTSCAN and any other
+"agent observability" tool. Your agent's actual outputs — tool
+parameters, results, LLM responses — never leave your machine in
+plaintext.
+
+Specifically:
+
+- Before upload, the entire session log is encrypted with AES-256-GCM
+  using a fresh key generated locally
+- The encrypted blob goes to 0G Storage; **only the content hash
+  hits the chain**, not the content
+- The decryption key is written to
+  `~/.openclaw/verifiable-execution/keystore/<tokenId>.key`
+  (mode 0600). It never appears in stderr, never appears in HTTP
+  requests, and never leaves your host unless you choose to share
+  it via the share command (see Commands)
+
+The key is a per-receipt secret. Compromising one key compromises
+exactly one receipt.
+
+## What's on-chain vs. encrypted
+
+Equally important is what *anyone* can see without your consent —
+because that's what makes the receipt verifiable cold:
+
+| What | Where | Public? |
+|---|---|---|
+| The `tokenId` | 0G chain | yes |
+| Your agent's wallet address (the iNFT owner) | 0G chain | yes |
+| The content hash (`rootHash`) of the encrypted log | 0G chain | yes |
+| A short `dataDescription` (e.g. `"defi-swap"`, `"openclaw-session"`) | 0G chain | yes |
+| The encrypted log itself | 0G Storage | yes (encrypted) |
+| The plaintext tool calls, params, results | nowhere by default | no |
+| The decryption key | Your machine | no |
+
+A cold visitor sees a 🔒 **Encrypted** view. They can confirm the
+content hash matches what's on-chain, that the storage blob exists,
+and that the chain anchor is real — without ever decrypting.
+
+## The proof chain — what the dashboard verifies
+
+When someone opens a `/verify/<tokenId>` URL, AGENTSCAN runs three
+live reads against the chain and storage:
+
+1. **`AgenticID.getIntelligentDatas(tokenId)`** — reads the iNFT's
+   on-chain metadata: the `dataDescription` + `rootHash`.
+2. **0G Storage download** — fetches the encrypted blob by `rootHash`
+   (key-blind passthrough; no decryption).
+3. **`MockTEEVerifier.verifyTEESignature(...)`** — for each entry's
+   signature, confirms it was signed by the agent's TEE-issued key.
+
+All three pass → 4 green badges on the page → "this agent really
+did execute these tool calls, in this order, with these results."
+
+If a recipient has the key (you shared it via `/share`), the
+dashboard *additionally* decrypts client-side and renders each
+entry's plaintext params and results. The verifier server never
+sees the key.
+
+## Why "TEE-rooted, not trustless"
+
+A common pushback: "isn't this just a private log? You signed it
+yourself." That's a fair question and we don't hide the answer.
+
+The signing key is generated **inside the agent's TEE container**
+(an Intel TDX / SGX enclave running the agent). The agent process
+itself cannot read or extract the key. So the signature proves the
+log came from inside a specific, attested TEE — not that the
+operator of the TEE was honest.
+
+This is the same trust model as Apple's Private Cloud Compute and
+similar TEE-rooted attestation systems. It's deliberately *not*
+trustless (no ZK proofs). It is honestly **TEE-rooted**.
+
+Read more on the verifier model in [For developers](/developers).
+
+## Next
+
+- [Commands](/commands) — the share and tokens reference
+- [Dashboard](/dashboard) — what each badge and field on the receipt page means
+- [Verify cold](/verify) — for recipients of a shared receipt

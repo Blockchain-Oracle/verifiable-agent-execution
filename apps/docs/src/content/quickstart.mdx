@@ -1,0 +1,109 @@
+---
+title: Quickstart
+description: Install the AGENTSCAN plugin, fund the wallet, and share your first verifiable agent receipt in under a minute.
+---
+
+# Quickstart — 60 seconds to first receipt
+
+You'll install the plugin, fund a wallet with free testnet 0G,
+restart the OpenClaw gateway, and run any agent command. By the end
+you'll have a `/verify/<tokenId>` URL you can share.
+
+## Prerequisites
+
+- [OpenClaw CLI](https://openclaw.ai) ≥ 2026.4.25
+- Node.js 20 or later
+- A few minutes
+
+## 1. Install the plugin
+
+```bash
+openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
+```
+
+## 2. Enable the two permission gates
+
+OpenClaw has two independent permission gates that block non-bundled
+plugins until you opt in. Skipping either leaves the plugin loaded
+but silently inert. This single command flips both:
+
+```bash
+jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)
+    | .plugins.entries."verifiable-execution".hooks //= {}
+    | .plugins.entries."verifiable-execution".hooks.allowConversationAccess = true' \
+  ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
+```
+
+## 3. Restart the gateway
+
+```bash
+openclaw gateway restart
+```
+
+## 4. Find your signing-wallet address
+
+The plugin auto-generated one on first load. Read it out of the
+keystore directly:
+
+```bash
+jq -r .address ~/.openclaw/verifiable-execution/wallet.json
+```
+
+You'll get something like `0xC156E52882b4AF03f2FFe96374ccB46bbc639103`.
+
+## 5. Fund the wallet from the faucet
+
+The wallet needs a tiny amount of 0G to pay for the iNFT mint. On
+testnet, the faucet is free.
+
+1. Open [faucet.0g.ai](https://faucet.0g.ai)
+2. Paste the address from step 4
+3. Claim 0.1 0G (the daily limit — plenty for hundreds of mints)
+4. Wait ~10 seconds for the transfer to land
+
+> **No mainnet faucet exists.** If you want to anchor on mainnet
+> instead, you'll need real 0G tokens. See [Mainnet vs Testnet](/networks).
+
+## 6. Run any agent command
+
+```bash
+openclaw query "What's the current ETH price on Coinbase?"
+```
+
+While the agent runs, the plugin silently:
+
+1. Hashes every tool call (sha256, no plaintext leaves your machine)
+2. On `session_end`, encrypts and uploads the session log to 0G Storage
+3. Mints an iNFT receipt anchoring the content hash
+4. Prints a `/verify/<tokenId>` URL to stderr
+
+You'll see something like:
+
+```
+[verifiable-execution] session anchored:
+  tokenId=42 verifyUrl=https://agentscan.online/verify/42
+```
+
+## 7. Share the receipt
+
+From inside your agent's chat (Telegram, Discord, CLI, anywhere
+OpenClaw runs), type:
+
+```
+/share
+```
+
+The bot replies with a URL that includes a `#k=<key>` fragment.
+Send it via DM, email, anywhere. The recipient clicks it and
+decrypts in their browser. **The decryption key never touches our
+server** — URL fragments aren't sent in HTTP requests.
+
+Want all your receipts at once? Type `/tokens`.
+
+## Done
+
+You're shipping verifiable agent runs. Read [Concepts](/concepts) next
+to understand what's actually on-chain vs. what's encrypted, or jump
+to [Commands](/commands) for the full `/share` and `/tokens` reference.
+
+Hit a snag? See [Install](/install) for the full troubleshooting walkthrough.

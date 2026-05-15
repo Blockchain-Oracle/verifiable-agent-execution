@@ -1,0 +1,142 @@
+---
+title: For developers
+description: Plugin internals, deployed contract addresses, source code pointers, and a primer on how to audit AGENTSCAN end-to-end.
+---
+
+# For developers
+
+If you want to read the source, audit the contracts, or build on top
+of AGENTSCAN, this is the index.
+
+## Repos and packages
+
+| | Where |
+|---|---|
+| Plugin source | [`openclaw-skills/verifiable-execution/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/openclaw-skills/verifiable-execution) |
+| npm package | [`@blockchainoracle/openclaw-verifiable-execution`](https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution) |
+| Dashboard source | [`apps/dashboard/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/apps/dashboard) |
+| Docs source (this site) | [`apps/docs/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/apps/docs) |
+| Solidity contracts | [`contracts/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/contracts) |
+| Workspace libraries | [`packages/chain-client`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/packages/chain-client), [`packages/logger`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/packages/logger), [`packages/tee-adapter`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/packages/tee-adapter) |
+
+## Deployed contracts
+
+All addresses are publicly readable on the 0G block explorers.
+
+### Galileo testnet (chainId 16602)
+
+- **AgenticID**: [`0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38`](https://chainscan-galileo.0g.ai/address/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38)
+  — deployed block 32602466, tx `0x5780291…1be5071bd`
+- **MockTEEVerifier**: [`0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad`](https://chainscan-galileo.0g.ai/address/0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad)
+  — deployed block 32610650
+
+### Aristotle mainnet (chainId 16661)
+
+- **AgenticID**: [`0xC6f7fB1511a7483C6e14258c70529e37ec698937`](https://chainscan.0g.ai/address/0xC6f7fB1511a7483C6e14258c70529e37ec698937)
+  — deployed 2026-05-11, block 32907005, tx `0x2f12587…e16c5e636`
+- **MockTEEVerifier**: [`0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2`](https://chainscan.0g.ai/address/0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2)
+  — deployed 2026-05-11, block 32907019
+- **Mainnet demo session**: `tokenId 0`, 5 entries
+  ([open on mainnet.agentscan.online](https://mainnet.agentscan.online/verify/0))
+
+## Plugin architecture
+
+The plugin is an OpenClaw extension with three event hooks:
+
+| Hook | What it does |
+|---|---|
+| `after_tool_call` | Captures every tool call: hashes params + result, signs with the session's TEE key, buffers in memory under the session ID |
+| `agent_end` / `before_agent_finalize` | Flushes the buffer to 0G Storage as an encrypted blob, mints an iNFT receipt on AgenticID |
+| `inbound_claim` | Intercepts `/share` and `/tokens` slash commands before they reach the agent |
+
+The buffer is keyed by OpenClaw's `sessionId`, so each conversation
+produces its own receipt. Sessions are independent; cross-session
+data never mixes.
+
+## Cryptography
+
+- **Per-entry signing**: each tool call entry is signed inside the
+  TEE using an ephemeral session key. The key never leaves the
+  enclave.
+- **Per-session encryption**: the entire session log is encrypted
+  with AES-256-GCM using a fresh symmetric key generated locally.
+  The key is written to
+  `~/.openclaw/verifiable-execution/keystore/<tokenId>.key`
+  (mode 0600).
+- **On-chain anchor**: only the content hash (`rootHash`,
+  computed as a Merkle root over the encrypted blob's chunks via
+  the 0G Storage SDK) hits the chain. Plaintext never touches the
+  chain.
+- **Key sharing model**: keys are surfaced only by the `/share`
+  slash command via the URL fragment (`#k=`). They are never
+  written to logs, never sent on HTTP requests, and never
+  accepted by the verifier server even if a recipient tries to
+  pass one as a query parameter — the route returns 400.
+
+## Verifier model
+
+The `MockTEEVerifier` contract is named "Mock" because it doesn't
+yet verify a real Intel TDX / SGX attestation quote — it's an
+[`ECDSA.recover`](https://docs.openzeppelin.com/contracts/5.x/api/utils#ECDSA-recover-bytes32-bytes-)
+against a known TEE oracle public key, deployed at
+`0x04581d192d22510ced643eaced12ef169644811a`.
+
+We do not hide this. The verifier source is at
+[`contracts/contracts/MockTEEVerifier.sol`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/blob/main/contracts/contracts/MockTEEVerifier.sol).
+Upgrading it to a real-attestation verifier is a contract upgrade
+behind the same interface; the off-chain plugin code already
+produces real TEE-signed payloads.
+
+This is the explicit "**TEE-rooted, not trustless**" position. We
+chose it because:
+
+1. Real ZK attestation circuits are 100× too slow for per-tool-call
+   verification today
+2. The signing-inside-TEE primitive is the *interesting* thing —
+   the on-chain check verifies a signature, but the *value* is the
+   guarantee that the agent couldn't tamper with its own log
+3. The verifier contract can be swapped without changing any
+   off-chain code
+
+## Server-side data flow
+
+The dashboard is a Next.js app with three relevant API surfaces:
+
+- **`GET /api/verify/[tokenId]`** — public, key-blind metadata + chain reads
+- **`GET /api/verify/[tokenId]/blob`** — public, key-blind passthrough of the encrypted blob
+- **`GET /api/verify/[tokenId]/entry/[seq]`** — server-side signature verification (for the locked view's per-entry badges)
+- **`GET /api/feed`** — recent mints across the chain
+- **`GET /api/agent/[address]`** — per-agent reverse-chronological feed
+
+None of these endpoints accept a decryption key. Decryption is
+client-side only.
+
+## Deploying your own
+
+The contracts are not behind a paywall or whitelist — anyone can
+deploy their own AgenticID + MockTEEVerifier on either 0G chain:
+
+```bash
+git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
+cd verifiable-agent-execution
+pnpm install --frozen-lockfile
+
+# Set deployer key in .env
+cp .env.example .env
+# Edit PRIVATE_KEY=...
+
+# Testnet
+pnpm --filter @verifiable-agent-execution/contracts deploy:all:testnet
+
+# Mainnet (real OG required, no faucet)
+pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet
+```
+
+Then point the plugin config at your addresses (see
+[Mainnet vs Testnet](/networks#switching-the-plugin-to-mainnet) for
+the JSON shape).
+
+## License
+
+The plugin, contracts, dashboard, and docs are all open source
+under Apache-2.0. Use them, fork them, build on them.

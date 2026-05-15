@@ -1,45 +1,48 @@
-# verifiable-agent-execution — Nixpacks build for Coolify two-service deploy.
+# verifiable-agent-execution — Nixpacks build for Coolify multi-service deploy.
 #
-# Both services build the same dashboard from this repo; runtime env vars
-# per-service decide which 0G chain (Galileo testnet vs Aristotle mainnet)
-# is rendered. The dashboard's apps/dashboard/src/lib/env.ts reads
-# CHAIN_ID + addresses from process.env at request time (Next 14 dynamic
-# rendering), so a single build artifact serves either chain depending
-# on which Coolify service runs it.
+# THREE deployable services share this one config. APP_NAME picks which
+# workspace builds and runs per Coolify service:
 #
-# Coolify per-service setup:
-#   testnet  →  Domain = verifiable.0g.ai  (or your testnet domain)
-#               Env: NONE — env.ts defaults render Galileo
-#               Optional: TESTNET_SITE_URL=<self> + MAINNET_SITE_URL=<sibling>
+#   dashboard testnet → APP_NAME unset (defaults to dashboard)
+#                       Domain = agentscan.online
+#                       Env: NONE — env.ts defaults render Galileo
+#                       Optional: TESTNET_SITE_URL=<self> + MAINNET_SITE_URL=<sibling>
 #
-#   mainnet  →  Domain = mainnet.verifiable.0g.ai  (subdomain of above)
-#               Mainnet contracts are LIVE (deployed 2026-05-11). Env block:
-#                 ZG_RPC=https://evmrpc.0g.ai
-#                 ZG_INDEXER_RPC=https://indexer-storage-turbo.0g.ai
-#                 AGENTICID_ADDRESS=0xC6f7fB1511a7483C6e14258c70529e37ec698937
-#                 TEE_VERIFIER_ADDRESS=0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2
-#                 CHAIN_ID=16661
-#               Optional: MAINNET_SITE_URL=<self> + TESTNET_SITE_URL=<sibling>
-#               Note: ZG_TESTNET_RPC is accepted as a back-compat alias
-#               for ZG_RPC; new setups should use ZG_RPC.
+#   dashboard mainnet → APP_NAME=@verifiable-agent-execution/dashboard (or unset)
+#                       Domain = mainnet.agentscan.online
+#                       Mainnet contracts are LIVE (deployed 2026-05-11). Env block:
+#                         ZG_RPC=https://evmrpc.0g.ai
+#                         ZG_INDEXER_RPC=https://indexer-storage-turbo.0g.ai
+#                         AGENTICID_ADDRESS=0xC6f7fB1511a7483C6e14258c70529e37ec698937
+#                         TEE_VERIFIER_ADDRESS=0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2
+#                         CHAIN_ID=16661
+#                       Optional: MAINNET_SITE_URL=<self> + TESTNET_SITE_URL=<sibling>
+#                       Note: ZG_TESTNET_RPC is accepted as a back-compat alias
+#                       for ZG_RPC; new setups should use ZG_RPC.
 #
-# IMPORTANT: in Coolify set "Base Directory" to / (repo root), NOT
-# apps/dashboard.  Nixpacks needs to see the workspace root so pnpm
-# resolves the symlinked workspace deps (chain-client, logger,
-# tee-adapter) that the dashboard imports.
+#   docs              → APP_NAME=@verifiable-agent-execution/docs
+#                       Domain = docs.agentscan.online
+#                       Nextra v4 site, content-only — no env vars needed.
+#                       Listens on $PORT.
 #
-# Reference patterns audited 2026-05-10:
+# IMPORTANT: in Coolify set "Base Directory" to / (repo root) for ALL
+# THREE services. Nixpacks needs to see the workspace root so pnpm
+# resolves the symlinked workspace deps. APP_NAME (passed via env)
+# picks which workspace builds.
+#
+# Reference patterns audited 2026-05-10..15:
 #   /Users/abu/dev/hackathon/kiteai/kite-agent-firewall/nixpacks.toml
-#     (single deployable + workspace deps — same shape we use here)
+#     (single deployable + workspace deps)
 #   /Users/abu/dev/hackathon/kwala/nixpacks.toml
-#     (multi-target via APP_NAME — useful when adding @verifiable-agent-
-#      execution/docs as a second deployable later)
+#     (multi-target via APP_NAME — the pattern we adopt here)
 
 # ── Install phase ────────────────────────────────────────────────
 # `onlyIncludeFiles` keeps the install layer cached: nixpacks rebuilds
 # this layer only when a manifest or lockfile changes — not on every
 # source edit. List every workspace member's `package.json` so pnpm's
-# workspace resolution sees them.
+# workspace resolution sees them. (apps/docs is the Nextra v4 docs
+# site at docs.agentscan.online; it ships its own Next 15 + React 19
+# dep tree, hoisted independently by pnpm.)
 [phases.install]
 cmds = ["NODE_ENV=development pnpm install --frozen-lockfile"]
 cacheDirectories = [".pnpm-store"]
@@ -48,6 +51,7 @@ onlyIncludeFiles = [
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
   "apps/dashboard/package.json",
+  "apps/docs/package.json",
   "packages/chain-client/package.json",
   "packages/logger/package.json",
   "packages/tee-adapter/package.json",
@@ -56,17 +60,22 @@ onlyIncludeFiles = [
 ]
 
 # ── Build phase ──────────────────────────────────────────────────
-# Workspace deps (chain-client, logger, tee-adapter) ship raw TypeScript
-# and are transpiled by Next.js at build time via
+# `${APP_NAME:-@verifiable-agent-execution/dashboard}` picks the
+# workspace to build. Default = dashboard (so existing Coolify
+# services that don't set APP_NAME keep working unchanged). Set
+# APP_NAME=@verifiable-agent-execution/docs on the docs service to
+# build the Nextra site instead.
+#
+# Dashboard workspace deps (chain-client, logger, tee-adapter) ship
+# raw TypeScript and are transpiled by Next.js at build time via
 # apps/dashboard/next.config.mjs `transpilePackages` — no separate
-# pre-build step needed (unlike kite-firewall where firewall-sdk has
-# its own dist build).
+# pre-build step needed. Docs has no workspace deps.
 [phases.build]
 dependsOn = ["install"]
-cmds = ["pnpm --filter @verifiable-agent-execution/dashboard build"]
+cmds = ["pnpm --filter ${APP_NAME:-@verifiable-agent-execution/dashboard} build"]
 
 # ── Start ────────────────────────────────────────────────────────
 # `next start` respects $PORT. Coolify injects it; Next falls back to
-# 3000 locally.
+# 3000 locally. Same APP_NAME-driven dispatch as the build phase.
 [start]
-cmd = "pnpm --filter @verifiable-agent-execution/dashboard start"
+cmd = "pnpm --filter ${APP_NAME:-@verifiable-agent-execution/dashboard} start"

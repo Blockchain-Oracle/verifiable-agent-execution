@@ -1,0 +1,199 @@
+---
+title: Install
+description: The complete install walkthrough for the AGENTSCAN plugin, with troubleshooting and an "install from source" path for contributors.
+---
+
+# Install
+
+The plugin runs entirely inside OpenClaw — no separate service, no
+Docker, no Python. One install command, fund a wallet, one gateway
+restart. Done.
+
+For the short version, see [Quickstart](/quickstart). This page
+covers the full path with troubleshooting.
+
+## Prerequisites
+
+| Requirement | macOS | Ubuntu / Debian |
+|---|---|---|
+| [OpenClaw CLI](https://openclaw.ai) ≥ 2026.4.25 | required | required |
+| Node.js 20+ | `brew install node@20` | use [`nvm`](https://github.com/nvm-sh/nvm) or `apt-get install nodejs` |
+| Funded 0G testnet wallet | claim 0.1 0G/day at [faucet.0g.ai](https://faucet.0g.ai) | same |
+
+If you want to anchor to **mainnet** (Aristotle, chainId 16661)
+you'll need real 0G tokens — there is no mainnet faucet. See the
+[Mainnet vs Testnet](/networks) page.
+
+## One-command install (testnet default)
+
+```bash
+openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
+```
+
+> Don't prefix with `npm:`. OpenClaw 2026.4.25 rejects
+> `npm:@blockchainoracle/...` with `"protocol specs are not allowed"`.
+> The bare spec resolves through ClawHub which proxies the same npm
+> registry.
+
+After install, you **must** also (a) allowlist the plugin id AND
+(b) grant conversation access. OpenClaw has two permission gates
+for non-bundled plugins, and skipping either leaves the plugin in
+a silent no-op state. One combined command flips both:
+
+```bash
+jq '.plugins.allow = ((.plugins.allow // []) + ["verifiable-execution"] | unique)
+    | .plugins.entries."verifiable-execution".hooks //= {}
+    | .plugins.entries."verifiable-execution".hooks.allowConversationAccess = true' \
+  ~/.openclaw/openclaw.json > /tmp/cfg.json && mv /tmp/cfg.json ~/.openclaw/openclaw.json
+openclaw gateway restart
+```
+
+That's it. The plugin is wired into every OpenClaw session — every
+tool call gets captured, every session-end is flushed to 0G Storage
+and anchored as an iNFT on AgenticID.
+
+## What just happened
+
+OpenClaw pulled the tarball from npm
+([`@blockchainoracle/openclaw-verifiable-execution`](https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution)),
+extracted it to `~/.openclaw/extensions/verifiable-execution/`, and
+added a config block to `~/.openclaw/openclaw.json` with Galileo
+testnet defaults baked into the plugin code (RPC, indexer, contract
+addresses, chainId, modelId).
+
+When you run your first OpenClaw session, the plugin:
+
+1. **Auto-generates a signing wallet** at
+   `~/.openclaw/verifiable-execution/wallet.json` (mode 0600)
+2. **Auto-binds `agentId` to that wallet's address** — the wallet IS
+   the agent identity by default
+3. **Prints a one-time first-run banner** with the wallet address +
+   faucet URL
+
+## Fund the wallet
+
+Look for a banner in your OpenClaw stderr:
+
+```
+═══════════════════════════════════════════════════════════════
+  Verifiable Execution — First Run Setup
+═══════════════════════════════════════════════════════════════
+
+  Wallet:    0xC156E52882b4AF03f2FFe96374ccB46bbc639103
+  Network:   0G Galileo testnet (chainId 16602)
+
+  Fund this wallet ONCE so the plugin can mint proofs:
+    1. Visit https://faucet.0g.ai
+    2. Paste your address
+    3. Claim 0.1 0G (free, daily limit)
+```
+
+Send 0.1 0G to that address. After it lands (~10 seconds on Galileo),
+every subsequent session anchors automatically and prints a
+`/verify/<tokenId>` URL you can share.
+
+If you'd rather find the address without running a session first:
+
+```bash
+# Address is printed by openclaw itself if you `plugins enable` again:
+openclaw plugins enable verifiable-execution
+
+# Or just read it directly:
+jq -r .address ~/.openclaw/verifiable-execution/wallet.json
+```
+
+## Verifying the install
+
+```bash
+openclaw plugins list
+# Should show: verifiable-execution | enabled | 0.3.7
+```
+
+Double-check both permission gates flipped:
+
+```bash
+jq '.plugins.allow, .plugins.entries."verifiable-execution".hooks' \
+  ~/.openclaw/openclaw.json
+# Must output: ["verifiable-execution", ...] and {"allowConversationAccess": true}
+```
+
+## Restarting the gateway
+
+OpenClaw loads installed plugins at gateway-start time. After
+`openclaw plugins install <...>` you have to restart for the change
+to take effect:
+
+```bash
+openclaw gateway restart
+```
+
+If the gateway wasn't running, start it instead:
+
+```bash
+openclaw gateway start
+```
+
+> **Restart timing note.** `gateway restart` defers if there's an
+> active task run (you'll see "restart still deferred after Xms with
+> N task run(s) active" in the log). It can take 30 seconds to
+> several minutes for the actual SIGTERM to fire. To force-restart
+> immediately, kill the gateway process: `pkill -TERM -f 'openclaw'`
+> — supervisor will restart it.
+
+## Two permission gates — both required
+
+OpenClaw 2026.4.25 has two independent gates that block non-bundled
+plugins from working until the operator explicitly opts in. Each
+gate fails silently — the plugin loads, registers, appears in
+`plugins list` as enabled, but its hooks never receive events.
+
+| Gate | What it blocks | Where to set |
+|---|---|---|
+| `plugins.allow` | Plugin loading + ANY event dispatch | top-level `plugins.allow: ["verifiable-execution"]` |
+| `hooks.allowConversationAccess` | Hooks that read message content (`llm_output`, `agent_end`, `after_tool_call`) | `plugins.entries.verifiable-execution.hooks.allowConversationAccess: true` |
+
+The `jq` snippet under "One-command install" above sets both. If
+you skipped it, run that block now.
+
+## Install from source (for plugin contributors)
+
+If you're hacking on the plugin code itself, clone + `./install.sh`
+links the local workspace build:
+
+```bash
+git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
+cd verifiable-agent-execution
+./install.sh
+openclaw gateway restart
+```
+
+`./install.sh` runs `pnpm install` (falls back to `npx pnpm@9.15.4`
+if pnpm isn't on PATH), builds a self-contained ESM bundle via
+esbuild into `dist-plugin/`, copies it into
+`~/.openclaw/extensions/verifiable-execution/`, and flips both
+permission gates the same way the `jq` snippet above does.
+
+## Troubleshooting
+
+**The plugin appears in `plugins list` as enabled, but no tokenId
+prints after a session.** One of the two permission gates isn't
+set. Re-run the `jq` command from "One-command install" and
+restart the gateway.
+
+**`gateway restart` says "deferred" forever.** There's an active
+task run. Either let it finish, or force-kill:
+`pkill -TERM -f 'openclaw'`.
+
+**Stderr shows "insufficient funds for gas".** The signing wallet
+isn't funded. Read its address with
+`jq -r .address ~/.openclaw/verifiable-execution/wallet.json` and
+send 0.1 0G from the [faucet](https://faucet.0g.ai).
+
+**Stderr shows "protocol specs are not allowed".** You used the
+`npm:` prefix. Drop it — the bare spec
+`@blockchainoracle/openclaw-verifiable-execution` works.
+
+**I want to verify the mint actually landed.** Open
+[chainscan-galileo.0g.ai](https://chainscan-galileo.0g.ai) and search
+for your signing-wallet address. You'll see the AgenticID iNFT
+mint transactions in the "Token Txns" tab.

@@ -1,0 +1,54 @@
+---
+title: Introduction
+description: AGENTSCAN — Etherscan for AI agents. Verify any agent run cold from a shared URL, on the 0G chain.
+---
+
+# AGENTSCAN — Etherscan for AI agents
+
+**AGENTSCAN** turns every action your AI agent takes into a
+cryptographically signed, on-chain-anchored receipt. Share one URL.
+Anyone — no wallet, no login, no setup — can verify the agent did
+exactly what it claimed.
+
+It's an [OpenClaw](https://openclaw.ai) plugin that installs in one
+command and anchors every session to the [0G](https://0g.ai) chain.
+
+## Why?
+
+Today, "did the agent really do that?" has no good answer. Logs can
+be edited. Screenshots can be faked. A trace from the agent
+operator's own server is a "trust me, bro."
+
+AGENTSCAN gives you a public, tamper-proof primitive instead:
+
+- **Cryptographically signed** — each tool call is signed inside the
+  agent's TEE container before it ever leaves the box. The agent
+  can't tamper with its own log.
+- **On-chain anchored** — the session's content hash is minted as
+  an ERC-7857 iNFT on 0G AgenticID. The hash is permanent and
+  globally readable.
+- **Encrypted by default** — the content lives on 0G Storage,
+  encrypted with a key only you control. You choose who decrypts.
+- **Verifiable cold** — anyone with the URL can confirm the chain
+  anchor and storage existence even without the decryption key.
+  When you share the key (via /share), they decrypt locally.
+
+## What you'll find here
+
+- [Quickstart](/quickstart) — get a session anchored in under a minute
+- [Install](/install) — the complete install walkthrough with troubleshooting
+- [Concepts](/concepts) — what a receipt is, what's encrypted vs anchored
+- [Commands](/commands) — /share and /tokens for daily use
+- [Dashboard](/dashboard) — reading the receipt page on agentscan.online
+- [Mainnet vs Testnet](/networks) — which chain to use
+- [Verify cold](/verify) — for recipients of a shared receipt
+- [For developers](/developers) — plugin internals, contract addresses, source
+
+## Live now
+
+- **Testnet (Galileo, chainId 16602):** [agentscan.online](https://agentscan.online)
+- **Mainnet (Aristotle, chainId 16661):** [mainnet.agentscan.online](https://mainnet.agentscan.online)
+- **Plugin:** [@blockchainoracle/openclaw-verifiable-execution](https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution)
+- **Source:** [github.com/Blockchain-Oracle/verifiable-agent-execution](https://github.com/Blockchain-Oracle/verifiable-agent-execution)
+
+Ready? Head to [Quickstart](/quickstart).

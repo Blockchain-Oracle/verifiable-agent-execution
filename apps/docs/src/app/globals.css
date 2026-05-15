@@ -1,0 +1,15 @@
+@import 'nextra-theme-docs/style.css';
+
+/* Tune Nextra theme primary hue to the AGENTSCAN verify green
+ * (#10B981 from the dashboard UX spec). HSL equivalent: 158/84/39
+ * (lighter in dark mode for legibility).
+ */
+:root {
+  --nextra-primary-hue: 158deg;
+  --nextra-primary-saturation: 84%;
+  --nextra-primary-lightness: 39%;
+}
+
+.dark {
+  --nextra-primary-lightness: 52%;
+}

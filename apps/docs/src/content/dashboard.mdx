@@ -1,0 +1,115 @@
+---
+title: Dashboard
+description: A field-by-field tour of the AGENTSCAN dashboard — what each badge, hash, and entry on a verify page means.
+---
+
+# Reading a receipt on agentscan.online
+
+When you (or someone you shared a URL with) opens a receipt page,
+you're looking at the result of three live reads against the chain
+and 0G Storage. This page walks through what every element means.
+
+## The four badges at the top
+
+Below the page header you'll see four badges that flip green as the
+proof chain verifies. Each represents one cryptographic check.
+
+| Badge | What it verifies |
+|---|---|
+| 🟢 **Anchor** | `AgenticID.getIntelligentDatas(tokenId)` returned the expected `rootHash` |
+| 🟢 **Storage** | The encrypted blob at `rootHash` is downloadable from 0G Storage |
+| 🟢 **Signature** | `MockTEEVerifier.verifyTEESignature(...)` returned `true` for each entry |
+| 🟢 **Identity** | The iNFT is owned by the agent's signing wallet (the `agentId`) |
+
+All four green = the receipt is genuine. If any one fails (e.g. the
+storage indexer is down), that badge turns 🔴 with the specific
+error.
+
+## Locked view vs. decrypted view
+
+A receipt has two states depending on whether the page has the
+decryption key in its URL fragment.
+
+### 🔒 Locked (no key in URL)
+
+What every cold visitor sees first. Shows:
+
+- The `tokenId`, agent wallet, chain ID, block number
+- The `rootHash` and a link to the 0G Storage page
+- A link to the iNFT on [chainscan.0g.ai](https://chainscan.0g.ai)
+- All four badges, flipping green as the proof chain verifies
+- A count of entries (e.g. "4 entries") with each entry's input
+  and output **hashes** visible but plaintext hidden
+
+The four badges all turn green in the locked view. **Cryptographic
+verification doesn't need the decryption key.**
+
+### 🔓 Decrypted (key in URL fragment)
+
+When the URL ends with `#k=<base64url-key>`, the browser:
+
+1. Reads the fragment locally (it's never sent to our server)
+2. Fetches the encrypted blob via the key-blind
+   `/api/verify/[tokenId]/blob` endpoint
+3. Decrypts with WebCrypto AES-256-GCM client-side
+4. Renders each entry's plaintext params + result
+
+The decrypted view shows tool names, input parameters, output text
+(markdown-rendered for things like web-search results), and
+recovery badges per-entry confirming each signature.
+
+The server never sees the key. Even our own logs don't have it.
+
+## The entries list
+
+Each entry is one tool call your agent made during the session.
+The cards are ordered chronologically (oldest first). Each shows:
+
+- **Sequence number + timestamp** — when the call happened
+- **Tool name** — e.g. `WebSearch`, `Read`, `Bash`, `0G Compute`
+- **Input hash + output hash** — sha256, always visible
+- **TEE signature badge** — green if the entry signature verifies
+- **Params** — the tool's input arguments (decrypted view only)
+- **Result** — the tool's output (decrypted view only)
+
+The result is rendered as markdown if it has structural signals
+(headers, lists, links, fenced code) — useful for web-search
+output. Otherwise it falls through to a monospace block.
+
+Long URLs and hashes wrap inside the card instead of triggering
+horizontal scroll. You shouldn't ever need to scroll sideways to
+read a receipt.
+
+## The mainnet ticker
+
+Above every page on the testnet site you'll see a thin green
+scrolling strip that reads `🟢 LIVE ON MAINNET · Anchor & verify on
+0G Aristotle · mainnet.agentscan.online · Open →`. Click "Open" to
+jump to the mainnet deployment. Click the × on the right to
+dismiss it for the rest of your session.
+
+The strip is suppressed on the mainnet site itself.
+
+## The live feed
+
+The landing page shows a reverse-chronological list of recent mints
+across the chain. Each row links to the matching `/verify/<tokenId>`
+page. You don't need any URL shared with you to browse this —
+recent receipts are public by default (their locked state is, the
+plaintext isn't).
+
+## Searching
+
+The search bar in the top right accepts:
+
+- A `tokenId` (e.g. `42`) → jumps to `/verify/42`
+- An EVM address → jumps to `/agent/<address>` (the per-agent feed)
+
+The same `/agent/<address>` URL is what the [`/tokens` command](/commands#tokens)
+returns from your chat.
+
+## Next
+
+- [Mainnet vs Testnet](/networks) — when to use which
+- [Verify cold](/verify) — for someone who received a URL from you
+- [For developers](/developers) — what's actually deployed, plus source links

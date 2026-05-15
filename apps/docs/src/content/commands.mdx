@@ -1,0 +1,96 @@
+---
+title: Commands
+description: The /share and /tokens slash commands you use from inside your agent's chat.
+---
+
+# Commands
+
+The plugin adds two slash commands to your agent. They work
+identically across every OpenClaw channel — Telegram, Discord,
+Slack, CLI, the web embed. The plugin intercepts them before they
+reach your agent, so the agent itself never sees them.
+
+## /share
+
+Get the shareable URL for one of your receipts, with the decryption
+key embedded.
+
+### Usage
+
+```
+/share              -- URL for the most recent receipt
+/share 42           -- URL for a specific tokenId
+```
+
+### What you get back
+
+```
+Share this receipt:
+https://agentscan.online/verify/42#k=jWk_ZvF...K8Q
+
+The recipient can decrypt this in any browser.
+No wallet or login needed.
+
+See all your receipts -> https://agentscan.online/agent/0xC156...9103
+```
+
+The `#k=...` fragment carries the AES-256-GCM key that decrypts the
+receipt. **URL fragments are never sent in HTTP requests** — only the
+part before the `#` reaches our server. The recipient's browser
+reads the fragment locally and uses it to decrypt the encrypted
+blob client-side.
+
+### Why a fragment, not a query parameter
+
+A query parameter `?k=...` would be sent to our server on every
+request and end up in our access logs. The fragment never leaves
+the recipient's browser. We deliberately don't accept the key on
+the server side at all — the verify route returns HTTP 400 if it
+sees a `k` query parameter. This is documented and tested.
+
+[See the verify route source on GitHub](https://github.com/Blockchain-Oracle/verifiable-agent-execution/blob/main/apps/dashboard/src/app/api/verify/%5BtokenId%5D/route.ts).
+
+## /tokens
+
+Get the URL to all your receipts at once.
+
+### Usage
+
+```
+/tokens
+```
+
+### What you get back
+
+```
+Your receipts feed:
+https://agentscan.online/agent/0xC156E52882b4AF03f2FFe96374ccB46bbc639103
+
+Every session this agent has anchored on-chain, newest first.
+For a single receipt, type /share or /share TOKEN_ID.
+```
+
+The per-agent feed page lists every iNFT receipt owned by the
+agent's signing wallet, in reverse-chronological order. Each entry
+links to its receipt page.
+
+This is the URL you'd share with someone who wants to audit your
+agent over time — not just one session.
+
+## Privacy model
+
+- `/share` reveals the decryption key via a URL fragment that only
+  the recipient sees. The page then reveals the encrypted content
+  after the recipient opens it.
+- `/tokens` reveals neither the key nor any encrypted content — it
+  links to the locked, metadata-only view of each receipt. Safe to
+  paste publicly.
+
+`/share` includes a decryption key. Treat the URL it returns the
+way you'd treat any sensitive link — send it to one recipient, not
+to a public channel.
+
+## Next
+
+- [Dashboard](/dashboard) — what your recipient sees when they click the URL
+- [Verify cold](/verify) — for the recipient

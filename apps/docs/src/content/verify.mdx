@@ -1,0 +1,120 @@
+---
+title: Verify cold
+description: For recipients — how to open a receipt URL someone shared with you and verify the agent really did what it claimed. No wallet, no login.
+---
+
+# Verifying a receipt cold
+
+You got a URL like `https://agentscan.online/verify/42#k=jWk_ZvF...K8Q`
+from someone claiming an AI agent did something on their behalf.
+This page explains what to do with it, and what you're actually
+seeing when you click.
+
+You don't need a wallet, an account, or anything installed. Just a
+browser.
+
+## Click the URL
+
+That's it. Step 1 is the only step. The dashboard does the rest in
+your browser:
+
+1. Reads the `tokenId` from the URL path (`/verify/42`)
+2. Reads the decryption key from the URL fragment (`#k=...`)
+3. Runs three live reads against the 0G chain and storage
+4. Decrypts the encrypted blob with the key — entirely
+   client-side
+5. Renders each tool call the agent made
+
+The decryption key in the fragment **never reaches the AGENTSCAN
+server**. Browsers don't include URL fragments in HTTP requests, by
+spec. You can confirm this in your browser's DevTools network tab —
+the request to `/api/verify/42/blob` goes out without the `#k=...`
+portion attached.
+
+## What turns green when
+
+Four badges flip green at the top of the page as the proof chain
+verifies:
+
+1. **Anchor** — confirms the chain has an iNFT at `tokenId=42`
+   owned by the agent, with a `rootHash` field
+2. **Storage** — confirms 0G Storage actually has the encrypted
+   blob at that `rootHash`
+3. **Signature** — confirms each entry's signature was produced by
+   the agent's TEE-issued key
+4. **Identity** — confirms the iNFT owner matches the agent
+   identity declared in the receipt
+
+All four green: the receipt is genuine.
+
+## What you're seeing in each entry card
+
+For each tool call the agent made, you'll see:
+
+- The tool name (`WebSearch`, `Read`, `Bash`, `0G Compute`, etc.)
+- The exact input parameters the agent passed
+- The exact output the tool returned to the agent
+- A per-entry signature badge confirming this entry was signed
+  inside the TEE
+
+This is the agent's full action trail for the session. Nothing
+edited, nothing hidden, nothing reordered — the on-chain `rootHash`
+binds the entries together as a Merkle root, and any tampering
+would change the hash and break the anchor badge.
+
+## What you should still be skeptical about
+
+The receipt proves the agent **ran** these tool calls inside its
+TEE container. It does **not** prove:
+
+- That the *operator* of the TEE was honest about which agent code
+  was loaded inside it
+- That the agent's reasoning was correct
+- That the tools themselves returned truthful data
+
+This is the same trust model as Apple's Private Cloud Compute and
+other TEE-rooted systems — "TEE-rooted, not trustless." Read more
+in [Concepts](/concepts).
+
+In practice, this means: **trust the receipt as far as you trust
+the agent operator's setup of the TEE**. The cryptographic chain is
+real; the question of whether the TEE was honest at setup is a
+separate one.
+
+## If a badge is red
+
+The receipt failed verification. Possible causes:
+
+- **Anchor red** — the `tokenId` doesn't exist or the iNFT data
+  doesn't include a `rootHash`. The receipt was probably
+  fabricated or refers to a different chain.
+- **Storage red** — the storage blob was deleted or the indexer
+  is down. Try again in a few minutes; if it persists, the data
+  was likely garbage-collected.
+- **Signature red** — one or more entries weren't actually signed
+  by the agent's TEE key. The log was tampered with after signing.
+- **Identity red** — the iNFT owner doesn't match the agent
+  identity. Someone is impersonating the agent.
+
+Don't trust the receipt's contents if any of these are red.
+
+## If the page is in the 🔒 Locked state
+
+You got a URL without the `#k=...` fragment. That means the sender
+shared the **proof of execution** (the chain anchor) but not the
+**content** (the tool calls). You can still see:
+
+- The four green badges (the proof chain verified)
+- The number of entries the session had
+- The input + output **hashes** of each entry
+- The block number, the agent wallet, the storage rootHash
+
+Just not the plaintext of what each tool call did. Ask the sender
+to re-share the URL with the `#k=...` part attached if you need
+the content.
+
+## Next
+
+- [Concepts](/concepts) — the cryptographic model behind what you just saw
+- [For developers](/developers) — contracts, source code, deploy info
+- [Introduction](/) — back to the top
