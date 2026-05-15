@@ -1,4 +1,7 @@
-export default {
+// Sidebar order + labels for the Nextra docs theme. Assigned to a
+// named variable so eslint `import/no-anonymous-default-export`
+// doesn't flag the default export (CI lint rule).
+const meta = {
   index: 'Introduction',
   quickstart: 'Quickstart',
   install: 'Install',
@@ -9,3 +12,5 @@ export default {
   verify: 'Verify cold',
   developers: 'For developers',
 }
+
+export default meta

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install.sh — verifiable-agent-execution OpenClaw plugin installer.
+# install.sh — AGENTSCAN OpenClaw plugin installer.
 #
 # Mirrors the 0g-memory pattern: link the plugin into the OpenClaw CLI
 # via `openclaw plugins install --link`, enable it, and seed
@@ -16,8 +16,8 @@
 #   - jq (used to patch ~/.openclaw/openclaw.json safely)
 #
 # Usage:
-#   git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
-#   cd verifiable-agent-execution
+#   git clone https://github.com/Blockchain-Oracle/agentscan
+#   cd agentscan
 #   ./install.sh
 #   openclaw gateway restart
 
@@ -61,7 +61,7 @@ fail() { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 # ── Sanity checks ────────────────────────────────────────────────────────────
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo " verifiable-agent-execution — OpenClaw plugin installer"
+echo " AGENTSCAN — OpenClaw plugin installer"
 echo "════════════════════════════════════════════════════════════════"
 echo
 

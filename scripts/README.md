@@ -54,8 +54,8 @@ self-contained bundle and `openclaw plugins install --link`s it
 into your local OpenClaw.
 
 ```bash
-git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
-cd verifiable-agent-execution
+git clone https://github.com/Blockchain-Oracle/agentscan
+cd agentscan
 ./install.sh
 openclaw gateway restart
 ```

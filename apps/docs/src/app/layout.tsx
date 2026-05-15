@@ -33,11 +33,11 @@ export default async function RootLayout({
           navbar={
             <Navbar
               logo={logo}
-              projectLink="https://github.com/Blockchain-Oracle/verifiable-agent-execution"
+              projectLink="https://github.com/Blockchain-Oracle/agentscan"
             />
           }
           pageMap={pageMap}
-          docsRepositoryBase="https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/apps/docs"
+          docsRepositoryBase="https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/docs"
           editLink="Edit this page on GitHub"
           sidebar={{ defaultMenuCollapseLevel: 1 }}
           footer={

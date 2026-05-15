@@ -12,12 +12,12 @@ of AGENTSCAN, this is the index.
 
 | | Where |
 |---|---|
-| Plugin source | [`plugin/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/plugin) |
+| Plugin source | [`plugin/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/plugin) |
 | npm package | [`@blockchainoracle/openclaw-verifiable-execution`](https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution) |
-| Dashboard source | [`apps/dashboard/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/apps/dashboard) |
-| Docs source (this site) | [`apps/docs/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/apps/docs) |
-| Solidity contracts | [`contracts/`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/contracts) |
-| Workspace libraries | [`packages/chain-client`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/packages/chain-client), [`packages/logger`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/packages/logger), [`packages/tee-adapter`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/tree/main/packages/tee-adapter) |
+| Dashboard source | [`apps/dashboard/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/dashboard) |
+| Docs source (this site) | [`apps/docs/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/apps/docs) |
+| Solidity contracts | [`contracts/`](https://github.com/Blockchain-Oracle/agentscan/tree/main/contracts) |
+| Workspace libraries | [`packages/chain-client`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/chain-client), [`packages/logger`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/logger), [`packages/tee-adapter`](https://github.com/Blockchain-Oracle/agentscan/tree/main/packages/tee-adapter) |
 
 ## Deployed contracts
 
@@ -82,7 +82,7 @@ against a known TEE oracle public key, deployed at
 `0x04581d192d22510ced643eaced12ef169644811a`.
 
 We do not hide this. The verifier source is at
-[`contracts/contracts/MockTEEVerifier.sol`](https://github.com/Blockchain-Oracle/verifiable-agent-execution/blob/main/contracts/contracts/MockTEEVerifier.sol).
+[`contracts/contracts/MockTEEVerifier.sol`](https://github.com/Blockchain-Oracle/agentscan/blob/main/contracts/contracts/MockTEEVerifier.sol).
 Upgrading it to a real-attestation verifier is a contract upgrade
 behind the same interface; the off-chain plugin code already
 produces real TEE-signed payloads.
@@ -117,8 +117,8 @@ The contracts are not behind a paywall or whitelist — anyone can
 deploy their own AgenticID + MockTEEVerifier on either 0G chain:
 
 ```bash
-git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
-cd verifiable-agent-execution
+git clone https://github.com/Blockchain-Oracle/agentscan
+cd agentscan
 pnpm install --frozen-lockfile
 
 # Set deployer key in .env

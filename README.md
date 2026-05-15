@@ -137,8 +137,8 @@ work on it: [plugin/](./plugin/README.md), [packages/chain-client/](./packages/c
 To build from source:
 
 ```bash
-git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
-cd verifiable-agent-execution
+git clone https://github.com/Blockchain-Oracle/agentscan
+cd agentscan
 pnpm install
 pnpm exec tsc --noEmit && pnpm run lint && pnpm test && pnpm run build
 ```

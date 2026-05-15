@@ -156,13 +156,13 @@ const distPkg = {
   // browsing for a verifiable-execution plugin.
   repository: {
     type: "git",
-    url: "git+https://github.com/Blockchain-Oracle/verifiable-agent-execution.git",
+    url: "git+https://github.com/Blockchain-Oracle/agentscan.git",
     directory: "plugin",
   },
   homepage:
-    "https://github.com/Blockchain-Oracle/verifiable-agent-execution#readme",
+    "https://github.com/Blockchain-Oracle/agentscan#readme",
   bugs: {
-    url: "https://github.com/Blockchain-Oracle/verifiable-agent-execution/issues",
+    url: "https://github.com/Blockchain-Oracle/agentscan/issues",
   },
   license: "Apache-2.0",
   publishConfig: {
@@ -275,7 +275,7 @@ Full guide at **[docs.agentscan.online](https://docs.agentscan.online)**:
 
 ## License
 
-Apache-2.0. See \`LICENSE\` and the [source repo](https://github.com/Blockchain-Oracle/verifiable-agent-execution).
+Apache-2.0. See \`LICENSE\` and the [source repo](https://github.com/Blockchain-Oracle/agentscan).
 `;
 await writeFile(resolve(OUT_DIR, "README.md"), distReadme);
 console.log("[build] wrote dist README.md");

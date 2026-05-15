@@ -43,7 +43,7 @@ export function TopBar() {
         </div>
         <NetworkChip badge={badge} isMainnet={isMainnet} />
         <a
-          href="https://github.com/Blockchain-Oracle/verifiable-agent-execution"
+          href="https://github.com/Blockchain-Oracle/agentscan"
           target="_blank"
           rel="noreferrer"
           className="hidden font-mono text-xs uppercase tracking-[0.12em] text-text-secondary transition-colors hover:text-text-primary md:block"
