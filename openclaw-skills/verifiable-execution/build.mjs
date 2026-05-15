@@ -180,42 +180,94 @@ console.log("[build] wrote dist package.json");
 
 const distReadme = `# @blockchainoracle/openclaw-verifiable-execution
 
-OpenClaw plugin that captures every tool call inside an agent session,
-**encrypts the log with a per-session AES-256-GCM key**, flushes the
-encrypted envelope to **0G Storage**, and mints an **AgenticID iNFT**
-anchoring the rootHash on-chain.
+> **Etherscan for AI agents.** Every agent run becomes a cryptographically signed, on-chain-anchored receipt. Share a URL, verify any run cold.
 
-**Encrypted by default.** The plugin outputs a key-free
-\`https://agentscan.online/verify/<tokenId>\` URL. Cold visitors see
-a 🔒 Encrypted locked-state page (proof chain verifiable cold, content
-hidden). When the operator chooses to share, they type \`/share\` in
-the bot chat — the bot replies with the full URL including a
-\`#k=<base64url-key>\` fragment. Recipients who open that URL decrypt
-client-side in their browser via WebCrypto; the key NEVER reaches the
-verifier server.
+The AGENTSCAN OpenClaw plugin. Captures every tool call inside an
+agent session (Claude Code's WebSearch/Read/Bash, MCP tools, OpenClaw
+gateway tools — all of them), encrypts the log with a per-session
+AES-256-GCM key, flushes it to **0G Storage**, and mints an
+**AgenticID iNFT (ERC-7857)** anchoring the root hash on-chain.
 
-## Install
+The verifier dashboard at **[agentscan.online](https://agentscan.online)**
+resolves the proof chain in any browser — no wallet, no login.
+Operators reveal content via the in-chat \`/share\` command; the key
+travels in the URL fragment and never reaches the server.
+
+## Install (testnet, ~3 minutes)
+
+These steps in order. Skipping any of them is the single most common
+reason the plugin appears to "not work."
 
 \`\`\`bash
-openclaw plugins install npm:@blockchainoracle/openclaw-verifiable-execution
+# 1. Install from npm via OpenClaw's plugin installer
+openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
+
+# 2. Enable it
+openclaw plugins enable verifiable-execution
+
+# 3. Restart the gateway so the new plugin loads
 openclaw gateway restart
 \`\`\`
 
-Then set your config in \`~/.openclaw/openclaw.json\` (see [docs](https://github.com/Blockchain-Oracle/verifiable-agent-execution/blob/main/docs/installation.md)).
+The plugin creates a signing wallet at
+\`~/.openclaw/verifiable-execution/wallet.json\` on first load and
+prints the address to the gateway log. Copy that address.
 
-## What it does
+### 4. Fund the wallet (REQUIRED, free on testnet)
 
-- **Captures** every \`after_tool_call\` and \`session_end\` event
-- **Hashes** tool params + results (sha256, no plaintext to chain)
-- **Anchors** the session Merkle root on **AgenticID** (ERC-7857 iNFT)
-- **Publishes** a verify URL the dashboard can resolve without a wallet
+The plugin pays gas every time it mints a receipt. Without funds,
+every anchor attempt fails with **insufficient funds for gas**.
+
+- Open [faucet.0g.ai](https://faucet.0g.ai)
+- Paste your wallet address
+- Claim 0.1 0G (free, daily limit)
+
+Mainnet has no faucet — bridge or CEX-withdraw 0G to your wallet on
+the **Aristotle** chain (chainId 16661).
+
+## Usage
+
+Send any message to an OpenClaw bot you have wired (Telegram, Discord,
+CLI). On every \`agent_end\`, the plugin auto-anchors and emits a
+structured log line:
+
+\`\`\`json
+{
+  "level": "INFO",
+  "component": "agent_end",
+  "msg": "Session anchored on-chain",
+  "data": {
+    "tokenId": "42",
+    "verifyUrl": "https://agentscan.online/verify/42"
+  }
+}
+\`\`\`
+
+Cold visitors to that URL see a 🔒 encrypted-locked page (the proof
+chain verifies, content stays hidden). To share the content, type
+\`/share\` in the chat — the bot replies with a URL containing your
+reveal key in the URL fragment (\`#k=...\`). Recipients decrypt
+client-side in their browser via WebCrypto; the key never reaches the
+verifier server.
 
 ## Networks
 
-| Network | chainId | AgenticID | MockTEEVerifier |
+| Network | chainId | AgenticID | TEE Verifier |
 |---|---|---|---|
 | 0G Galileo (testnet) | 16602 | \`0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38\` | \`0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad\` |
 | 0G Aristotle (mainnet) | 16661 | \`0xC6f7fB1511a7483C6e14258c70529e37ec698937\` | \`0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2\` |
+
+## Documentation
+
+Full guide at **[docs.agentscan.online](https://docs.agentscan.online)**:
+
+- Per-field config reference (\`~/.openclaw/openclaw.json\`)
+- Mainnet deployment walkthrough
+- Slash commands (\`/share\`, \`/tokens\`)
+- Reading a receipt + the entry types
+- Verifying a receipt cold (no plugin install needed)
+- REST API reference (\`/api/verify/<tokenId>\`)
+- Embedding the dashboard or pointing it at a custom AgenticID
 
 ## License
 

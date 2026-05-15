@@ -1,340 +1,143 @@
-# Verifiable Agent Execution
+# AGENTSCAN — Verifiable Agent Execution
 
-> **Etherscan for AI agents — share a URL, verify any agent run cold.**
+> **Etherscan for AI agents.** Every agent run becomes a cryptographically signed, on-chain-anchored receipt. Share a URL, verify any run cold.
 
-**Hackathon:** 0G APAC Hackathon 2026 — Track 1 (Agentic Infrastructure & OpenClaw Lab)
-**Deadline:** May 16, 2026
-
----
-
-## The wedge
-
-AI agents act autonomously. Today, there's no way to prove what one actually did. Anyone can claim an agent ran a task correctly; no one can verify it.
-
-**Verifiable Agent Execution** is an OpenClaw plugin + dashboard that produces a cryptographically signed, on-chain-anchored proof for every agent session — **encrypted by default**, with selective reveal via a per-session key the operator chooses when to share. v0.3.0 pivoted from "public Etherscan-style log" to "encrypted-by-default receipts" after [Codex review](#codex-review--security-trail) caught that auto-publishing agent prompts/outputs is a privacy violation.
-
-The proof chain:
-
-```
-Tool call (params + result)
-   ↓
-TEE signature (agent-wrapper, recovered against deployed verifier)
-   ↓
-SessionLog (full content, sha256-hashed, JSON)
-   ↓
-AES-256-GCM encrypt → v1 envelope {v, alg, iv, ciphertext, tag}
-   ↓ (key K stays in the operator's local keystore, mode 0600)
-0G Storage (encrypted blob — rootHash anchored)
-   ↓
-ERC-7857 iNFT mint on AgenticID (Galileo)
-   ↓
-KEY-FREE verifier URL  https://agentscan.online/verify/<tokenId>
-   ↓
-   ├─ Cold visitor (no key):       sees 🔒 Encrypted — metadata + chain anchor only
-   └─ Operator types `/share` in chat → bot replies with FULL URL
-                                       https://agentscan.online/verify/<id>#k=<base64url>
-                                       ↓
-                                       Recipient opens URL → WebCrypto decrypts in
-                                       BROWSER (key never leaves the device) → 4 row
-                                       badges flip green sequentially. Server is
-                                       key-blind by design.
-```
-
-Anyone clicks the **key-free** URL on any device — no wallet, no login, no setup — and sees a verifiable locked-state proof. The operator-controlled `/share` slash command is the ONLY path that emits a `#k=` reveal URL. No keys appear in URLs without an explicit operator action, in any server log, or in any HTTP access trace.
+Live at **[agentscan.online](https://agentscan.online)**. Docs at **[docs.agentscan.online](https://docs.agentscan.online)**.
 
 ---
 
-## Plug-and-play (the canonical UX)
+## What you get
 
-The product is an **OpenClaw plugin**, not a script. Install it once in your OpenClaw config; from that point every agent session auto-anchors to 0G with zero per-session friction.
+Install the AGENTSCAN plugin once in your OpenClaw config. From that moment forward, every agent reply produces a receipt:
 
-```jsonc
-// ~/.openclaw/config.json  →  plugins block
+- 📝 **Full audit trail** — every tool call (web search, file read, MCP call, anything Claude Code or your agent invokes) is hashed, signed, and recorded
+- 🔒 **Encrypted by default** — the receipt is stored encrypted on 0G Storage. The key stays on your machine. You decide who sees the content with a `/share` command in the chat
+- ⛓ **On-chain anchor** — the receipt's root hash is minted as an ERC-7857 iNFT on 0G Chain. Tamper-proof, wallet-free verification for anyone
+- 🌐 **Cold-verifiable** — paste the URL into any browser. No login, no wallet, no setup. Five live reads flip green checkmarks per row
+
+**Example receipt:** [agentscan.online/verify/112](https://agentscan.online/verify/112) → see a real agent's 4 web searches + LLM response, end-to-end verifiable.
+
+---
+
+## Quickstart (testnet, ~3 minutes)
+
+You need [OpenClaw](https://openclaw.ai) installed, plus Node.js 20+ on your system.
+
+### 1. Install the plugin from npm
+
+```bash
+openclaw plugins install @blockchainoracle/openclaw-verifiable-execution
+```
+
+### 2. Enable it
+
+```bash
+openclaw plugins enable verifiable-execution
+```
+
+### 3. Restart the OpenClaw gateway
+
+```bash
+openclaw gateway restart
+```
+
+The plugin auto-generates a signing wallet on first load and writes it to `~/.openclaw/verifiable-execution/wallet.json` (mode `0o600`, never leaves your machine). The startup banner prints the wallet address — copy it.
+
+### 4. Fund the wallet from the testnet faucet
+
+The plugin needs a few testnet 0G tokens to pay gas when it mints receipts. Without this step, every anchor attempt fails with "insufficient funds for gas."
+
+- Open [faucet.0g.ai](https://faucet.0g.ai)
+- Paste the wallet address from step 3
+- Claim 0.1 0G (free, daily limit)
+
+### 5. Fire your agent
+
+Send a message to your bot, run a Claude Code session, anything that triggers `agent_end`. The plugin auto-anchors and prints:
+
+```json
 {
-  "plugins": [
-    {
-      "path": "<path-to-this-repo>/openclaw-skills/verifiable-execution",
-      "config": {
-        // Galileo testnet (default, recommended for first run):
-        "rpcUrl": "https://evmrpc-testnet.0g.ai",
-        "indexerUrl": "https://indexer-storage-testnet-turbo.0g.ai",
-        "agenticIdAddress": "0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38",
-        "verifierAddress": "0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad",
-        "chainId": 16602,
-        "verifyUrlBase": "https://agentscan.online",
-        "agentId": "<your-0x-address>",
-        "modelId": "claude-sonnet-4-6"
-      }
-    }
-  ]
+  "level": "INFO",
+  "component": "agent_end",
+  "msg": "Session anchored on-chain",
+  "data": {
+    "tokenId": "42",
+    "verifyUrl": "https://agentscan.online/verify/42"
+  }
 }
 ```
 
-### First-run flow (testnet, fully automatic)
+### 6. Share the receipt
 
-1. **Plugin auto-creates a wallet** on first load and persists it to `~/.openclaw/verifiable-execution/wallet.json` (mode 0o600). No `PRIVATE_KEY` env var to manage. (Override via env if you want — see `privateKeyEnvVar` in the schema.)
-2. The plugin prints a banner to stderr the FIRST time:
-   ```
-   ═══════════════════════════════════════════════════════════════
-     Verifiable Execution — First Run Setup
-     Wallet:    0xABC...                              ← YOUR address
-     Saved to:  ~/.openclaw/verifiable-execution/wallet.json
-     Network:   0G Galileo testnet (chainId 16602)
+Type `/share` in the chat. The bot replies with a URL containing your reveal key in the URL fragment (`#k=...`). Send that URL to anyone — they decrypt and verify in their browser, your server never sees the key.
 
-     Fund this wallet ONCE so the plugin can mint proofs:
-       1. Visit https://faucet.0g.ai
-       2. Paste:  0xABC...
-       3. Claim 0.1 0G (free, daily limit)
-   ═══════════════════════════════════════════════════════════════
-   ```
-3. **Claim from the faucet once.** That's the only setup.
-4. **Run OpenClaw normally.** Every session you complete auto-anchors at session-end and the plugin emits a structured log line with the verify URL:
-   ```json
-   {"level":"INFO","component":"session_end","msg":"Session anchored on-chain",
-    "data":{"tokenId":"123","verifyUrl":"https://agentscan.online/verify/123"}}
-   ```
+> **See all your tokens:** open `https://agentscan.online/agent/<your-wallet-address>` for a feed of every receipt you've ever minted.
 
-### Switching to mainnet
-
-Swap the testnet block in `config` for these values — wallet, faucet flow, everything else stays the same. Mainnet has no faucet, so fund the wallet via a CEX withdrawal to native 0G chain (Aristotle, chainId 16661).
-
-```jsonc
-{
-  "rpcUrl": "https://evmrpc.0g.ai",
-  "indexerUrl": "https://indexer-storage-turbo.0g.ai",
-  "agenticIdAddress": "0xC6f7fB1511a7483C6e14258c70529e37ec698937",
-  "verifierAddress":  "0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2",
-  "chainId": 16661,
-  // ... other fields unchanged
-}
-```
+For per-flag configuration, mainnet setup, troubleshooting, and the full API → [docs.agentscan.online](https://docs.agentscan.online).
 
 ---
 
-## Verify the pre-minted demo (no install needed)
+## Networks
 
-If you just want to SEE a proof — no setup, no wallet — run the dashboard locally and open the canonical demo:
+| Network | chainId | AgenticID | TEE Verifier |
+|---|---|---|---|
+| **0G Galileo** (testnet) | `16602` | [`0xd4a5eA…0E38`](https://chainscan-galileo.0g.ai/address/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38) | [`0x058fc3…C3AD`](https://chainscan-galileo.0g.ai/address/0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad) |
+| **0G Aristotle** (mainnet) | `16661` | [`0xC6f7fB…8937`](https://chainscan.0g.ai/address/0xC6f7fB1511a7483C6e14258c70529e37ec698937) | [`0x4fffB5…58D2`](https://chainscan.0g.ai/address/0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2) |
+
+Mainnet has no faucet — fund the wallet via a CEX withdrawal to native 0G chain. Everything else stays the same.
+
+---
+
+## Verify a receipt without installing anything
+
+Want to just *see* a proof? No setup required:
+
+- Open any receipt at [agentscan.online/verify/&lt;tokenId&gt;](https://agentscan.online/verify/112)
+- Or hit the JSON: [agentscan.online/api/verify/112](https://agentscan.online/api/verify/112)
+- Or read the iNFT directly on the explorer: [chainscan-galileo.0g.ai/token/0xd4a5eA…0E38?a=0](https://chainscan-galileo.0g.ai/token/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38?a=0)
+
+---
+
+## Repo layout (for contributors)
+
+```
+apps/
+  dashboard/                Next.js 14 verifier UI (agentscan.online)
+  docs/                     Nextra docs site (docs.agentscan.online)
+openclaw-skills/
+  verifiable-execution/     The OpenClaw plugin (published to npm)
+packages/
+  logger/                   SessionLogger + 0G Storage client
+  tee-adapter/              Signing-message helpers + MockTEEVerifier ABI
+  chain-client/             AgenticIDClient + SessionAnchor
+contracts/                  AgenticID.sol + MockTEEVerifier.sol (Hardhat)
+scripts/smoke/              Live testnet smoke tests
+```
+
+To build from source:
 
 ```bash
 git clone https://github.com/Blockchain-Oracle/verifiable-agent-execution
 cd verifiable-agent-execution
 pnpm install
-pnpm --filter @verifiable-agent-execution/dashboard dev    # zero env vars
-open http://localhost:3000/verify/0                         # the demo proof
+pnpm exec tsc --noEmit && pnpm run lint && pnpm test && pnpm run build
 ```
 
-Or skip the dashboard entirely and read the iNFT on-chain:
-- Galileo: https://chainscan-galileo.0g.ai/token/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38?a=0
-- Aristotle: https://chainscan.0g.ai/token/0xC6f7fB1511a7483C6e14258c70529e37ec698937?a=0
-
-You'll see the multi-step session, fully decoded, with green TEE Verified badges flipping in sequence.
-
----
-
-## Dev scripts (internals)
-
-Smoke scripts under `scripts/smoke/` exercise the same code path as the plugin but as one-shot programs — useful for re-minting the demo session against a fresh contract, debugging the SDK surface, or sanity-checking new deploys.
-
-```bash
-# Re-mint the 4-entry DeFi swap demo on testnet (idempotent; produces a NEW tokenId)
-set -a && source .env && set +a
-pnpm exec tsx scripts/smoke/defi-swap-demo.ts
-
-# 5-entry version: prepends a REAL 0G Compute TeeML inference call (requires ≥4 0G in wallet on mainnet for ledger bootstrap)
-pnpm exec tsx scripts/smoke/defi-swap-demo-with-compute.ts
-```
-
-These are the same scripts the deploy walkthrough in `DEMO.md` uses; they're not the recommended UX for shipping an agent, just for repo maintainers.
-
----
-
-## 0G primitives integrated
-
-| Primitive | Role |
-|---|---|
-| **0G Storage** | Immutable session log blob (rootHash anchored on-chain) |
-| **0G Chain** | EVM-compatible RPC for the AgenticID + verifier contracts |
-| **AgenticID (ERC-7857 iNFT)** | Per-session proof token. **Galileo: `0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38` (OUR deploy, Epic-7).** Mainnet: see Deployments section below. |
-| **TEE Verifier (MockTEEVerifier.sol)** | Our deploy. **Galileo: `0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad`** — `verifyTEESignature(bytes32,bytes)` view function with `teeOracleAddress = deployer wallet`. |
-| **0G Compute Network** (TeeML) | Per-session inference call via `@0gfoundation/0g-compute-ts-sdk`. See `scripts/smoke/defi-swap-demo-with-compute.ts`. |
-| **agent-wrapper signing convention** | `keccak256(agentId\|sealId\|signedAt\|bodyHashHex)` per the upstream Go signSession code |
-
----
-
-## Architecture
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│  OpenClaw                                                              │
-│  ┌──────────────────────────────────────────────────────────────────┐ │
-│  │ verifiable-execution plugin (openclaw-skills/verifiable-execution)│ │
-│  │   • register(api): wires api.on("after_tool_call", session_end)  │ │
-│  │   • after_tool_call: appendEntry(seq, ts, tool, params, result,  │ │
-│  │                                  inputHash, outputHash, teeSig)  │ │
-│  │   • session_end: SessionAnchor.anchor() → mint iNFT              │ │
-│  │   • Wallet: ~/.openclaw/verifiable-execution/wallet.json (auto)  │ │
-│  └──────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  packages/  (TypeScript workspaces)                                    │
-│  • logger        SessionLogger + StorageClient + schema               │
-│  • tee-adapter   HeaderParser + signing-message + MockTEEVerifier ABI │
-│  • chain-client  AgenticIDClient + SessionAnchor + retryMint          │
-│  • contracts     MockTEEVerifier.sol (Solidity 0.8.24, evm cancun)    │
-└────────────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  apps/dashboard  (Next.js 14 App Router, dark, Geist, zero-config)    │
-│  • /                       Landing                                    │
-│  • /verify/[tokenId]       Proof chain page (server component)        │
-│  • /api/verify/[tokenId]   Aggregate proof JSON                       │
-│  • /api/verify/[tokenId]/entry/[seq]   Per-entry verify (badge flip)  │
-└────────────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  0G Galileo testnet (chainId 16602)                                    │
-│  • AgenticID:        0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38       │
-│  • MockTEEVerifier:  0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad       │
-│  • Storage indexer:  https://indexer-storage-testnet-turbo.0g.ai      │
-│  • Demo session:     tokenId 0 (4 signed entries, all TEE Verified)   │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-## Deployments
-
-| Network | Chain ID | Status | AgenticID | MockTEEVerifier |
-|---|---|---|---|---|
-| **Galileo (testnet)** | 16602 | LIVE | [`0xd4a5eA…0E38`](https://chainscan-galileo.0g.ai/address/0xd4a5eA2501810d7C81464aa3CdBa58Bfded09E38) | [`0x058fc3…C3AD`](https://chainscan-galileo.0g.ai/address/0x058fc372562D195F1c2356e4DcFfD94de98Ec3ad) |
-| **Aristotle (mainnet)** | 16661 | **LIVE** | [`0xC6f7fB…8937`](https://chainscan.0g.ai/address/0xC6f7fB1511a7483C6e14258c70529e37ec698937) | [`0x4fffB5…58D2`](https://chainscan.0g.ai/address/0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2) |
-
-**Mainnet demo session:** tokenId 0 on [`0xC6f7fB…8937`](https://chainscan.0g.ai/token/0xC6f7fB1511a7483C6e14258c70529e37ec698937?a=0). Five anchored entries:
-- `seq 0` — REAL 0G Compute TeeML inference (qwen3.6-plus, provider `0x992e6396…`, verifiability `TeeML`)
-- `seq 1-4` — signed DeFi swap tool calls (quote, liquidity, simulate-swap, final-approval)
-- Mint tx: [`0xd1b14b30…dfb6d152`](https://chainscan.0g.ai/tx/0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152)
-- 0G Storage rootHash: `0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c`
-
-Both mainnet contracts deployed via `pnpm --filter @verifiable-agent-execution/contracts deploy:all:mainnet` (orchestrator script — deploys AgenticID then MockTEEVerifier and writes both deployment records under `contracts/deployments/0g-mainnet/`). See `context/docs/architecture.md` ADR-13 for why we deploy our own AgenticID instead of relying on 0G's testnet example.
-
----
-
-## Zero-config UX
-
-Inspired by [xlmtools](https://github.com/Blockchain-Oracle/xlmtools)'s wallet-on-first-run pattern.
-
-| What | How |
-|---|---|
-| **Dashboard** | 0 env vars required. Galileo addresses + RPC are compiled-in constants. Override via env to self-host on mainnet |
-| **Plugin wallet** | First run auto-creates a wallet at `~/.openclaw/verifiable-execution/wallet.json` (mode 0o600). Friendly banner with faucet URL. PRIVATE_KEY env stays as advanced override |
-| **Verifier contract** | Pre-deployed by us. Plugin and dashboard both know the address — operators don't configure it |
-
-The ONLY user step on first run: paste your auto-generated wallet address into [https://faucet.0g.ai](https://faucet.0g.ai) and claim 0.1 0G. After that, sessions auto-mint.
-
----
-
-## Demo session (the canonical artifact)
-
-**TokenId 0** anchored on BOTH networks — autonomous DeFi swap simulator with a real 0G Compute TeeML inference call:
-
-### Galileo (testnet) — `0xd4a5eA…0E38`
-
-| Seq | Type | What |
-|---|---|---|
-| 0 | `tool_call` quote | USDC→ETH 1000 → rate 2380.42, ethOut 0.42 |
-| 1 | `tool_call` liquidity | Uniswap V3 USDC/WETH 0.3% → depth $1.23M, slippage 0.42% |
-| 2 | `tool_call` simulate-swap | slippage=0.5% → executed=true, gas 142k |
-| 3 | `tool_call` final-approval | human=`0x3b56...33A3` → approved=false (demo mode) |
-
-All 4 entries TEE-signed. Storage rootHash: `0x53bee8f7174b132fc4e8a85631a41a923a7952117a6e14fdf56fcb1fef6049e6`.
-
-### Aristotle (mainnet) — `0xC6f7fB…8937` (the submission artifact)
-
-| Seq | Type | What |
-|---|---|---|
-| 0 | `inference` | **REAL 0G Compute TeeML call** to `qwen3.6-plus` model (provider `0x992e6396…`), verifiability `TeeML` |
-| 1 | `tool_call` quote | USDC→ETH 1000 → rate 2380.42, ethOut 0.42 |
-| 2 | `tool_call` liquidity | Uniswap V3 USDC/WETH 0.3% → depth $1.23M |
-| 3 | `tool_call` simulate-swap | slippage=0.5% → executed=true, gas 142k |
-| 4 | `tool_call` final-approval | human=`0x3b56...33A3` → approved=false (demo mode) |
-
-All 5 entries signed; on-chain `verifyTEESignature` recovers to the configured oracle. Storage rootHash: `0xecb433f7b311cd5c4313035c156d42df153f0283391af73f4f297758cff3022c`. Mint tx: [`0xd1b14b30…dfb6d152`](https://chainscan.0g.ai/tx/0xd1b14b30894a91e160e35b70e2f834920fe85d0cee8cc24e19f677b4dfb6d152).
-
-Re-mint a fresh session anytime: `pnpm exec tsx scripts/smoke/defi-swap-demo.ts`.
-
----
-
-## Smoke scripts (live testnet)
-
-```bash
-# Mint a fresh DeFi swap demo session (~25-30s):
-pnpm exec tsx scripts/smoke/defi-swap-demo.ts
-
-# Resolve a tokenId end-to-end (chain + storage + TEE verify):
-pnpm exec tsx scripts/smoke/verify-token.ts <tokenId>
-
-# Per-entry verification (drives the badge-flip animation):
-pnpm exec tsx scripts/smoke/per-entry-verify.ts <tokenId>
-
-# Mint a single-entry signed session:
-pnpm exec tsx scripts/smoke/signed-anchor.ts
-```
-
----
-
-## Repo layout
-
-```
-apps/
-  dashboard/              Next.js 14 verifier dashboard
-contracts/
-  contracts/MockTEEVerifier.sol   verifyTEESignature view function
-  scripts/deploy-mock.ts          deploy MockTEEVerifier only (legacy entrypoint)
-  scripts/deploy-agenticid.ts     deploy AgenticID only
-  scripts/deploy-all.ts           orchestrator — deploys BOTH + writes deployment JSONs
-  scripts/update-oracle.ts        rotate MockTEEVerifier.teeOracleAddress (onlyOwner)
-openclaw-skills/
-  verifiable-execution/   OpenClaw plugin (register, hooks, wallet, hash)
-packages/
-  logger/                 SessionLogger + StorageClient (0G Storage)
-  tee-adapter/            HeaderParser, signing-message, error classes
-  chain-client/           AgenticIDClient + SessionAnchor + retryMint
-scripts/
-  smoke/                  live testnet smoke tests
-context/
-  PRD.md, ux-spec.md, architecture.md   spec stack
-docs/stories/             14 BDD-shaped implementation stories
-```
-
----
-
-## Status
-
-| Epic | Status |
-|---|---|
-| Epic 1 — Logger Core | ✅ on main (PR #17) |
-| Epic 2 — TEE Adapter | ✅ on main (PR #18) |
-| Epic 3 — On-chain Anchor | ✅ on main (PR #19) |
-| Epic 4 — OpenClaw Plugin | ✅ on main (PR #20) |
-| Epic 5 — Verifier Dashboard | 🟡 PR #21 in review |
-| Epic 6 — Zero-config UX + demo polish | 🟡 epic/06-zero-config-ux |
-| Design polish (Magic MCP, scamper, frontend skill) | 👤 Abu |
+Full developer setup, smoke scripts, contract redeployment, and contribution guide → **[docs.agentscan.online/contributing](https://docs.agentscan.online/contributing)**.
 
 ---
 
 ## Links
 
-- **Hackathon:** https://www.hackquest.io/hackathons/0G-APAC-Hackathon
-- **0G Docs:** https://docs.0g.ai
-- **0G Faucet:** https://faucet.0g.ai (Galileo testnet, 0.1 0G/day)
-- **0G Galileo Explorer:** https://chainscan-galileo.0g.ai
-- **Reference plugin (OpenClaw):** https://github.com/0gfoundation/0g-memory/tree/main/openclaw-skills/evermemos
-- **Wallet UX inspiration:** https://github.com/Blockchain-Oracle/xlmtools
+- **Live dashboard:** [agentscan.online](https://agentscan.online) (testnet) · [mainnet.agentscan.online](https://mainnet.agentscan.online) (mainnet)
+- **Documentation:** [docs.agentscan.online](https://docs.agentscan.online)
+- **npm package:** [@blockchainoracle/openclaw-verifiable-execution](https://www.npmjs.com/package/@blockchainoracle/openclaw-verifiable-execution)
+- **OpenClaw:** [openclaw.ai](https://openclaw.ai)
+- **0G Network:** [0g.ai](https://0g.ai) · [docs.0g.ai](https://docs.0g.ai)
+- **Testnet faucet:** [faucet.0g.ai](https://faucet.0g.ai) (0.1 0G/day, Galileo only)
 
 ---
 
-## Demo script (3 minutes)
+## License
 
-See [DEMO.md](./DEMO.md) for the 5-step reverse-arc walkthrough.
+Apache-2.0. See [LICENSE](./LICENSE).
