@@ -28,8 +28,30 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighterBase } from "react-syntax-highlighter";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
+
+// Cast needed: @types/react-syntax-highlighter lags React 18's `refs` field.
+const SyntaxHighlighter = SyntaxHighlighterBase as unknown as (
+  props: SyntaxHighlighterProps & { children: string }
+) => React.ReactElement;
 
 import { Mono } from "./Mono";
+
+// Dashboard-palette Prism theme — matches bg-surface + brand accent colors
+const agentscanTheme: Record<string, React.CSSProperties> = {
+  'code[class*="language-"]': { color: "#A3A6B1", background: "none", fontSize: "0.75rem", fontFamily: "var(--font-mono, monospace)" },
+  'pre[class*="language-"]': { color: "#A3A6B1", background: "#15171A", margin: 0, padding: "0.75rem 1rem", borderRadius: "0.25rem", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" },
+  "property": { color: "#10B981" },        // keys — accent-verify green
+  "string": { color: "#F5F5F5" },          // string values — text-primary
+  "number": { color: "#F59E0B" },          // numbers — accent-mock amber
+  "boolean": { color: "#3B82F6" },         // booleans — link blue
+  "null": { color: "#EF4444" },            // null — accent-unverified red
+  "punctuation": { color: "#363A45" },     // brackets/commas — border color
+  "comment": { color: "#4B5563", fontStyle: "italic" },
+  "keyword": { color: "#10B981" },
+  "operator": { color: "#A3A6B1" },
+};
 
 export type EntryStatus =
   | { state: "pending" }
@@ -64,18 +86,42 @@ interface EntryProps {
  * Real tools (web_search, fetch_url, MCP tools) fall through to
  * the default branch and render as "Tool: web_search" etc.
  *
- * (Abu's 2026-05-13 feedback on token 65: "If you are trying to
- * trace what an agent does ... we only saw CLI calls. Okay, we saw
- * the prompt build. The output just says prompt length, everything.
- * Who wants to care about this?")
+ * Skill invocations: when a Read tool targets a SKILL.md path
+ * (e.g. /skills/agentmail/SKILL.md), the OpenClaw SDK surfaces it
+ * as an after_tool_call event — we detect and relabel it here so
+ * auditors see "Skill: agentmail" rather than an opaque "Tool: Read".
  */
 function entryDisplay(props: EntryProps): {
   title: string;
   subtitle: string | null;
   inputLabel: string;
   outputLabel: string;
+  kind?: "skill";
 } {
   const tool = props.tool ?? props.type;
+
+  // Detect skill invocations: Read on any /skills/<name>/SKILL.md path
+  if (tool === "Read" || tool === "read") {
+    const p = props.params;
+    const filePath =
+      typeof p === "object" && p !== null
+        ? (p as Record<string, unknown>).file_path
+        : undefined;
+    if (typeof filePath === "string") {
+      const m = filePath.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
+      if (m) {
+        const skillName = m[1] ?? "unknown";
+        return {
+          title: `Skill: ${skillName}`,
+          subtitle: "skill loaded",
+          inputLabel: "Skill file",
+          outputLabel: "Skill content",
+          kind: "skill",
+        };
+      }
+    }
+  }
+
   switch (tool) {
     case "user_input":
       return {
@@ -124,8 +170,8 @@ function entryDisplay(props: EntryProps): {
 }
 
 export function EntryCard(props: EntryProps) {
-  const [paramsOpen, setParamsOpen] = useState(true);
-  const [resultOpen, setResultOpen] = useState(true);
+  const [paramsOpen, setParamsOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const display = entryDisplay(props);
 
   return (
@@ -141,6 +187,11 @@ export function EntryCard(props: EntryProps) {
           {display.subtitle !== null && (
             <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary sm:inline">
               {display.subtitle}
+            </span>
+          )}
+          {display.kind === "skill" && (
+            <span className="hidden items-center gap-1 rounded border border-accent-verify/40 bg-accent-verify/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent-verify sm:inline-flex">
+              ✦ skill
             </span>
           )}
         </div>
@@ -273,23 +324,27 @@ function ContentBlock({
         </span>
       </button>
       {open && renderAsMarkdown && stringValue !== null && (
-        // Markdown path. `markdown-body` is the wrapper for our
-        // prose styles (defined in globals.css). `break-words` +
-        // `whitespace-pre-wrap` on the wrapper ensures long URLs in
-        // search results wrap instead of triggering horizontal scroll.
         <div className="markdown-body mt-2 break-words rounded border border-border/40 bg-bg px-4 py-3 text-sm leading-relaxed text-text-primary">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {stringValue}
           </ReactMarkdown>
         </div>
       )}
-      {open && !renderAsMarkdown && (
-        // Plain/JSON path. Switched from `overflow-x-auto` to
-        // `whitespace-pre-wrap break-words` so long lines (URLs,
-        // sessionKeys, paths) wrap inside the card. The card grows
-        // vertically instead of forcing a horizontal scrollbar.
-        <pre className="mt-2 whitespace-pre-wrap break-words rounded border border-border/40 bg-bg px-4 py-3 font-mono text-xs leading-relaxed text-text-primary">
-          {stringValue ?? `sha256: ${fallbackHash}`}
+      {open && !renderAsMarkdown && stringValue !== null && (
+        <div className="mt-2 overflow-hidden rounded border border-border/40">
+          <SyntaxHighlighter
+            language={typeof value === "object" ? "json" : "bash"}
+            style={agentscanTheme}
+            wrapLines
+            wrapLongLines
+          >
+            {stringValue}
+          </SyntaxHighlighter>
+        </div>
+      )}
+      {open && !isPresent && (
+        <pre className="mt-2 rounded border border-border/40 bg-bg px-4 py-3 font-mono text-xs text-text-secondary">
+          sha256: {fallbackHash}
         </pre>
       )}
     </div>

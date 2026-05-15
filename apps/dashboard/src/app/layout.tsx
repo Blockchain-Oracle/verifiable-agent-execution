@@ -16,6 +16,12 @@ export const metadata: Metadata = {
   title: "AGENTSCAN — Etherscan for AI agents",
   description:
     "AGENTSCAN: cryptographically signed, on-chain-anchored receipts for every AI agent run. Share a URL, verify any session cold. Anchored on 0G AgenticID.",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", type: "image/x-icon", sizes: "48x48" },
+    ],
+  },
 };
 
 export default function RootLayout({

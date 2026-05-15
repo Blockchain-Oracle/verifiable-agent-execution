@@ -1,31 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
-  <!--
-    AGENTSCAN brand mark — favicon / app icon.
-    Iconographic story:
-      • Outer hexagon — Etherscan family resemblance (block / chain anchor).
-      • Inner concentric hex — a second-pass perimeter, hinting at the
-        verify-twice motion of the proof chain (chain anchor + content hash).
-      • Central checkmark — receipt verified.
-      • The check breaks through the inner hex on the upper-right, telling
-        the eye "the proof passed."
-    Palette: amber / warm brown (#B45309 → #FCD34D) per Abu 2026-05-15
-    direction ("apply the brown color in the docs design"). Replaces the
-    cold-green hex-check from the 90-second sprint.
-  -->
   <defs>
-    <linearGradient id="agentscan-mark-grad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FCD34D"/>
-      <stop offset="1" stop-color="#B45309"/>
+    <linearGradient id="hex-grad-icon" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#059669"/>
     </linearGradient>
   </defs>
-  <!-- Outer hex -->
   <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
-           stroke="url(#agentscan-mark-grad)" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
-  <!-- Inner hex (subtle second perimeter) -->
-  <polygon points="24,10 35,16 35,32 24,38 13,32 13,16"
-           stroke="url(#agentscan-mark-grad)" stroke-width="1.2" fill="none" stroke-linejoin="round" opacity="0.55"/>
-  <!-- Verify checkmark — breaks through inner hex top-right -->
-  <path d="M13 24 L21 32 L37 14"
-        stroke="url(#agentscan-mark-grad)" stroke-width="3.5"
+           fill="url(#hex-grad-icon)" opacity="0.15"/>
+  <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
+           stroke="url(#hex-grad-icon)" stroke-width="2" fill="none" stroke-linejoin="round"/>
+  <path d="M14 24 L21 31 L36 15"
+        stroke="#FFFFFF" stroke-width="3"
         stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>

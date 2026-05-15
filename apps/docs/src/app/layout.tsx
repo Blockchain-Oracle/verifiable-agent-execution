@@ -13,6 +13,12 @@ export const metadata = {
   description:
     'AGENTSCAN end-user docs. Install the plugin, share verifiable agent receipts, decrypt them in the dashboard, and verify any session cold from a URL.',
   applicationName: 'AGENTSCAN',
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', type: 'image/x-icon', sizes: '48x48' },
+    ],
+  },
 }
 
 // Logo: the brand mark from /public/logo.svg. SVG inherits
