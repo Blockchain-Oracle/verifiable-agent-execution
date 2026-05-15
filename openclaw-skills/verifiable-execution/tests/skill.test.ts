@@ -156,6 +156,85 @@ describe("register() — happy path with full config", () => {
     );
   });
 
+  // v0.3.7 — Tier 1.4: /tokens command registration + agent-feed URL
+  // construction. Abu's 2026-05-15 directive: "/share dosent makes
+  // sense we begin to have mutiple users and more how can they tell
+  // all thier token id". /tokens replies with the per-agent feed URL
+  // so operators can discover every receipt their wallet has minted.
+  it("registers BOTH /share AND /tokens slash commands (v0.3.7)", () => {
+    const registerCommandSpy = vi.fn();
+    const onSpy = vi.fn();
+    const api = {
+      id: plugin.id,
+      name: plugin.name,
+      pluginConfig: FULL_CONFIG,
+      on: onSpy,
+      registerCommand: registerCommandSpy,
+    } as unknown as Parameters<typeof plugin.register>[0];
+
+    plugin.register(api);
+
+    // Both commands registered:
+    expect(registerCommandSpy).toHaveBeenCalledTimes(2);
+    const names = registerCommandSpy.mock.calls.map(
+      (call) => (call[0] as { name: string }).name,
+    );
+    expect(names).toEqual(expect.arrayContaining(["share", "tokens"]));
+
+    // The /tokens handler returns a URL containing the agent's address
+    // and the configured verifyUrlBase. We can't easily read state.config
+    // from the test, but we can assert the handler returns SOMETHING
+    // with the agentscan domain and /agent/ path shape.
+    const tokensCmd = registerCommandSpy.mock.calls.find(
+      (call) => (call[0] as { name: string }).name === "tokens",
+    )?.[0] as { handler: () => { text: string } } | undefined;
+    expect(tokensCmd).toBeDefined();
+    const reply = tokensCmd!.handler();
+    // URL shape: <verifyUrlBase>/agent/<addr> — verifyUrlBase comes
+    // from the test fixture's FULL_CONFIG (verify.example.com), not
+    // the production default. The pattern check is config-agnostic.
+    expect(reply.text).toMatch(/https?:\/\/[^/]+\/agent\/0x[0-9a-fA-F]{40}/);
+    // Reply must mention how to share a single receipt (the
+    // discoverability cross-link from /tokens → /share).
+    expect(reply.text).toContain("/share");
+  });
+
+  // The /share reply now appends a "See all your receipts →" footer
+  // linking to /agent/<addr>. Without this cross-link, operators who
+  // /share once wouldn't discover the /agent feed page. (Abu's
+  // directive bundles both commands as one UX surface.)
+  it("v0.3.7: /share reply appends a 'See all your receipts →' link to /agent/<address>", () => {
+    const registerCommandSpy = vi.fn();
+    const onSpy = vi.fn();
+    const api = {
+      id: plugin.id,
+      name: plugin.name,
+      pluginConfig: FULL_CONFIG,
+      on: onSpy,
+      registerCommand: registerCommandSpy,
+    } as unknown as Parameters<typeof plugin.register>[0];
+    plugin.register(api);
+
+    const shareCmd = registerCommandSpy.mock.calls.find(
+      (call) => (call[0] as { name: string }).name === "share",
+    )?.[0] as
+      | {
+          handler: (ctx: {
+            commandBody?: string;
+            args?: string;
+            isAuthorizedSender?: boolean;
+          }) => { text: string };
+        }
+      | undefined;
+    expect(shareCmd).toBeDefined();
+    const reply = shareCmd!.handler({
+      commandBody: "/share",
+      isAuthorizedSender: true,
+    });
+    expect(reply.text).toContain("See all your receipts");
+    expect(reply.text).toMatch(/\/agent\/0x[0-9a-fA-F]{40}/);
+  });
+
   it("hook handlers are functions (the test fixtures, not undefined)", () => {
     const { api, onSpy } = makeFakeApi(FULL_CONFIG);
     plugin.register(api);

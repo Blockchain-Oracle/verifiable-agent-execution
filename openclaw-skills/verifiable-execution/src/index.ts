@@ -1931,6 +1931,14 @@ export default {
         api as unknown as { registerCommand?: RegisterCommandFn }
       ).registerCommand;
       if (typeof reg === "function") {
+        // Helper: build the per-agent receipts feed URL. Same logic
+        // for the /share reply footer AND the /tokens command body.
+        // state.config.agentId is auto-bound to the plugin's wallet
+        // address at register time (buildPluginState), so this URL
+        // always lands on the wallet's own receipts feed.
+        const allReceiptsUrl = () =>
+          `${state.config.verifyUrlBase.replace(/\/$/, "")}/agent/${state.config.agentId}`;
+
         reg.call(api, {
           name: "share",
           // nativeNames pin: same on every native command surface.
@@ -1958,16 +1966,46 @@ export default {
                 args: argsArr,
               },
             );
-            // PluginCommandResult requires { text }. If our handler
-            // returns no reply (handled:false), surface a generic
-            // diagnostic — but that shouldn't happen given we
-            // already validated commandAuthorized + content above.
-            return { text: result.reply?.text ?? "/share: no reply produced" };
+            const shareText =
+              result.reply?.text ?? "/share: no reply produced";
+            // v0.3.7: append a footer linking to ALL the operator's
+            // receipts. Abu's 2026-05-15 directive ("how can they tell
+            // all thier token id and im thinking that a ui thing we
+            // can do too like with an address now you can get all its
+            // token id"): /share solves the single-token case; /tokens
+            // solves the discover-everything case. Always show the
+            // discover link so the operator never has to remember it.
+            return {
+              text: `${shareText}\n\nSee all your receipts → ${allReceiptsUrl()}`,
+            };
+          },
+        });
+
+        // v0.3.7: /tokens slash command. Returns the per-agent feed
+        // URL — every receipt this wallet has ever minted. Discover
+        // surface for operators who lost track of their tokenIds, and
+        // a shareable handle for showing a single agent's full audit
+        // trail to an auditor. Same registerCommand shape as /share
+        // (nativeNames + acceptsArgs:false since the command takes no
+        // args — it's always "all your tokens").
+        reg.call(api, {
+          name: "tokens",
+          nativeNames: { default: "tokens" },
+          description:
+            "Get the URL to ALL your verifiable receipts (every tokenId minted by this agent wallet).",
+          acceptsArgs: false,
+          handler: () => {
+            return {
+              text:
+                `📜 Your receipts feed:\n${allReceiptsUrl()}\n\n` +
+                `Every session this agent has anchored on-chain, newest first. ` +
+                `For a single receipt, type \`/share\` (last one) or \`/share <tokenId>\`.`,
+            };
           },
         });
       }
     } catch (cause) {
-      structuredLog("WARN", "register", "registerCommand(share) failed; falling back to inbound_claim text-match only", {
+      structuredLog("WARN", "register", "registerCommand(share/tokens) failed; falling back to inbound_claim text-match only", {
         cause: cause instanceof Error ? cause.message : String(cause),
       });
     }
