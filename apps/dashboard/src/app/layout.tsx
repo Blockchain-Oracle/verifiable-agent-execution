@@ -1,6 +1,14 @@
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { Rajdhani } from "next/font/google";
+
+const rajdhani = Rajdhani({
+  weight: ["600", "700"],
+  subsets: ["latin"],
+  variable: "--font-rajdhani",
+  display: "swap",
+});
 
 import { MainnetAnnouncementTicker } from "@/components/MainnetAnnouncementTicker";
 import { loadEnv, networkBadge } from "@/lib/env";
@@ -13,9 +21,9 @@ import "./globals.css";
 // directly is a one-line change when we upgrade.
 
 export const metadata: Metadata = {
-  title: "AGENTSCAN — Etherscan for AI agents",
+  title: "Agent Scan for OpenClaw",
   description:
-    "AGENTSCAN: cryptographically signed, on-chain-anchored receipts for every AI agent run. Share a URL, verify any session cold. Anchored on 0G AgenticID.",
+    "Agent Scan for OpenClaw creates cryptographically signed, on-chain anchored receipts for every OpenClaw agent run.",
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
@@ -50,7 +58,7 @@ export default function RootLayout({
       ? badge.oppositeUrl
       : "https://mainnet.agentscan.online";
   return (
-    <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable} ${rajdhani.variable}`}>
       <body>
         <MainnetAnnouncementTicker isMainnet={isMainnet} mainnetHref={mainnetHref} />
         {children}

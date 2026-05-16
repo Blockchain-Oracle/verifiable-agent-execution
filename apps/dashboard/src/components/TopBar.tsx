@@ -2,10 +2,10 @@
  * TopBar — sticky header on every page. Logo-left, search-center,
  * network-chip-right.
  *
- * Aesthetic: editorial cryptographic broadsheet.
- *   - Wordmark in Geist Sans 700 with extra letter-spacing
- *   - Sub-label "Etherscan for AI agents · <network>" in Geist Mono
- *     uppercase to set the forensic tone
+ * Aesthetic: compact verifier console.
+ *   - Brand lockup says "Agent Scan for OpenClaw" directly
+ *   - Sub-label carries the active network without turning the header
+ *     into a marketing strip
  *   - Search bar centered with a thin border, mono input
  *   - Network chip on the right shows the active chain (TESTNET /
  *     MAINNET) with a cross-link to the sibling deployment so judges
@@ -26,29 +26,22 @@ export function TopBar() {
   const badge = networkBadge(env);
   const isMainnet = badge.label === "MAINNET";
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-bg/95 backdrop-blur-sm">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-8 sm:px-6 sm:py-4">
+    <header className="sticky top-0 z-50 border-b border-border/60 bg-bg/95 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-2.5 sm:flex-nowrap sm:gap-6 sm:px-6">
         <Link
           href="/"
-          className="group flex flex-col gap-1 leading-none transition-opacity hover:opacity-80"
+          className="group flex-shrink-0 leading-none transition-opacity hover:opacity-85"
         >
-          {/* AGENTSCAN brand lockup — mark + wordmark from
-              /logo.svg. Using next/image keeps the SVG optimized +
-              properly sized; the SVG inherits currentColor for the
-              wordmark so it adapts to text-primary. */}
           <Image
             src="/logo.svg"
-            alt="AGENTSCAN"
-            width={156}
-            height={28}
+            alt="Agent Scan for OpenClaw"
+            width={200}
+            height={32}
             priority
-            className="h-7 w-auto text-text-primary"
+            className="h-7 w-auto sm:h-8"
           />
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-secondary">
-            Etherscan for AI agents · {badge.network}
-          </span>
         </Link>
-        <div className="flex-1">
+        <div className="order-last w-full sm:order-none sm:flex-1">
           <SearchBar />
         </div>
         <NetworkChip badge={badge} isMainnet={isMainnet} />
@@ -56,9 +49,9 @@ export function TopBar() {
           href="https://github.com/Blockchain-Oracle/agentscan"
           target="_blank"
           rel="noreferrer"
-          className="hidden font-mono text-xs uppercase tracking-[0.12em] text-text-secondary transition-colors hover:text-text-primary md:block"
+          className="hidden rounded-md border border-border/70 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.12em] text-text-secondary transition-colors hover:border-accent-link/50 hover:text-text-primary md:block"
         >
-          GitHub →
+          GitHub
         </a>
       </div>
     </header>
@@ -87,7 +80,7 @@ function NetworkChip({
     : "bg-text-secondary/60";
   const chipClasses = isMainnet
     ? "border-accent-verify/40 bg-accent-verify/10 text-accent-verify"
-    : "border-border bg-surface text-text-secondary";
+    : "border-border/80 bg-surface/80 text-text-secondary";
 
   const showCrossLink =
     typeof badge.oppositeUrl === "string" && badge.oppositeUrl.length > 0;
@@ -104,7 +97,7 @@ function NetworkChip({
       aria-label={`Live on ${badge.label}`}
     >
       <span
-        className={`flex items-center gap-1.5 rounded-sm border px-2 py-1 ${chipClasses}`}
+        className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 ${chipClasses}`}
       >
         <span className="relative inline-flex h-1.5 w-1.5">
           <span
@@ -125,7 +118,7 @@ function NetworkChip({
           rel="noreferrer"
           className="hidden text-text-secondary transition-colors hover:text-text-primary md:inline"
         >
-          view {badge.oppositeLabel.toLowerCase()} ↗
+          view {badge.oppositeLabel.toLowerCase()}
         </a>
       ) : null}
     </div>
