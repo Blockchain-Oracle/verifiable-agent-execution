@@ -39,7 +39,8 @@ const AUTO_VERIFY_INITIAL_DELAY_MS = 600; // breathing room before badges start 
  * /api/verify/<id>/entry/<seq> response and `verifyEntryClient`.
  */
 interface VerifyEntryResult {
-  verified: "verified" | "unverified" | "unsigned";
+  // "error" = transport/RPC failure; "unverified" = bad signature.
+  verified: "verified" | "unverified" | "unsigned" | "error";
   reason?: string;
 }
 
