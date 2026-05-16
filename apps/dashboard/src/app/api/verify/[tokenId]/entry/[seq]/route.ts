@@ -53,6 +53,13 @@ export async function GET(
   }
   const seqNum = Number.parseInt(seq, 10);
 
+  // v0.3.0 SECURITY: route is intentionally key-blind. Encrypted
+  // receipts surface STORAGE_BLOB_ENCRYPTED_CLIENT_ONLY (422); the
+  // dashboard's encrypted-mode SessionView verifies entries client-
+  // side via ethers instead of round-tripping the reveal key through
+  // here. This route only handles legacy plaintext receipts
+  // (token 0 + pre-v0.3.0 mints).
+
   try {
     const { sessionLog, verifier } = await loadSessionLogForToken(tokenId);
     const entry = sessionLog.entries.find((e) => e.seq === seqNum);

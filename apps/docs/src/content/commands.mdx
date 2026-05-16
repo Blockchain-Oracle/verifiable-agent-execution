@@ -1,0 +1,130 @@
+---
+title: Commands
+description: The /agentscan_wallet, /agentscan_share and /agentscan_tokens slash commands you use from inside your agent's chat.
+---
+
+# Commands
+
+The plugin adds **three slash commands** to your agent. They work
+identically across every OpenClaw channel — Telegram, Discord,
+Slack, CLI, the web embed. The plugin intercepts them before they
+reach your agent, so the agent itself never sees them.
+
+| Command | What you get | Safe to share publicly? |
+|---|---|---|
+| [`/agentscan_wallet`](#agentscan_wallet) | Your agent's signing-wallet address | ✅ Yes (it's a public chain address) |
+| [`/agentscan_share`](#agentscan_share) | A receipt URL with the decryption key in the fragment | ⚠️ Recipient-only |
+| [`/agentscan_tokens`](#agentscan_tokens) | A feed URL of every receipt this agent has minted | ✅ Yes (locked view, no key) |
+
+## /agentscan_wallet
+
+Show this agent's signing-wallet address. Same address you fund
+from the faucet, same address that appears in `/agent/<address>`
+feed URLs.
+
+### Usage
+
+```
+/agentscan_wallet
+```
+
+### What you get back
+
+```
+🔑 Signing wallet:
+`0xC156E52882b4AF03f2FFe96374ccB46bbc639103`
+
+💧 Fund it from https://faucet.0g.ai (free, 0.1 0G/day)
+
+This is the address that signs every receipt and pays gas for
+each mint. Browse this agent's full receipt feed:
+https://agentscan.online/agent/0xC156E52882b4AF03f2FFe96374ccB46bbc639103
+```
+
+(The faucet line shows only on testnet. On mainnet you fund via a CEX
+withdrawal or bridge — see [Mainnet vs Testnet](/networks).)
+
+## /agentscan_share
+
+Get the shareable URL for one of your receipts, with the decryption
+key embedded.
+
+### Usage
+
+```
+/agentscan_share              -- URL for the most recent receipt
+/agentscan_share 42           -- URL for a specific tokenId
+```
+
+### What you get back
+
+```
+Share this receipt:
+https://agentscan.online/verify/42#k=jWk_ZvF...K8Q
+
+The recipient can decrypt this in any browser.
+No wallet or login needed.
+
+See all your receipts -> https://agentscan.online/agent/0xC156...9103
+```
+
+The `#k=...` fragment carries the AES-256-GCM key that decrypts the
+receipt. **URL fragments are never sent in HTTP requests** — only the
+part before the `#` reaches our server. The recipient's browser
+reads the fragment locally and uses it to decrypt the encrypted
+blob client-side.
+
+### Why a fragment, not a query parameter
+
+A query parameter `?k=...` would be sent to our server on every
+request and end up in our access logs. The fragment never leaves
+the recipient's browser. We deliberately don't accept the key on
+the server side at all — the verify route returns HTTP 400 if it
+sees a `k` query parameter. This is documented and tested.
+
+[See the verify route source on GitHub](https://github.com/Blockchain-Oracle/agentscan/blob/main/apps/dashboard/src/app/api/verify/%5BtokenId%5D/route.ts).
+
+## /agentscan_tokens
+
+Get the URL to all your receipts at once.
+
+### Usage
+
+```
+/agentscan_tokens
+```
+
+### What you get back
+
+```
+Your receipts feed:
+https://agentscan.online/agent/0xC156E52882b4AF03f2FFe96374ccB46bbc639103
+
+Every session this agent has anchored on-chain, newest first.
+For a single receipt, type /agentscan_share or /agentscan_share TOKEN_ID.
+```
+
+The per-agent feed page lists every iNFT receipt owned by the
+agent's signing wallet, in reverse-chronological order. Each entry
+links to its receipt page.
+
+This is the URL you'd share with someone who wants to audit your
+agent over time — not just one session.
+
+## Privacy model
+
+- `/agentscan_share` reveals the decryption key via a URL fragment that only
+  the recipient sees. The page then reveals the encrypted content
+  after the recipient opens it.
+- `/agentscan_tokens` reveals neither the key nor any encrypted content — it
+  links to the locked, metadata-only view of each receipt. Safe to
+  paste publicly.
+
+`/agentscan_share` includes a decryption key. Treat the URL it returns the
+way you'd treat any sensitive link — send it to one recipient, not
+to a public channel.
+
+## Next
+
+- [Dashboard](/dashboard) — what your recipient sees when they click the URL
+- [Verify cold](/verify) — for the recipient

@@ -14,26 +14,30 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Backgrounds + surfaces (UX spec § Palette table)
-        bg: "#15171A",
-        surface: "#1A1B1F",
-        "surface-elev": "#22252D",
-        border: "#363A45",
+        // Backgrounds + surfaces — slightly warmer/deeper for red brand
+        bg: "#07090D",
+        surface: "#0D1119",
+        "surface-elev": "#131C28",
+        border: "#1C2A3C",
         // Text
-        "text-primary": "#F5F5F5",
-        "text-secondary": "#A3A6B1",
-        // Accents — semantic, NOT decorative
-        "accent-verify": "#10B981", // verified / success
-        "accent-mock": "#F59E0B",   // mock / warning
-        "accent-unverified": "#EF4444", // unverified / error
-        link: "#3B82F6",
+        "text-primary": "#F0F4F8",
+        "text-secondary": "#7A8FA0",
+        // Semantic accents — green/amber retain their meaning
+        "accent-verify": "#36D399", // verified / success
+        "accent-mock": "#F5B84B",   // mock / warning
+        "accent-unverified": "#FF6B6B", // unverified / error (salmon, distinct from brand red)
+        // Brand primary: crimson red — replaces blue across all interactive
+        // elements (links, eyebrow labels, step numbers, hover borders).
+        // Both aliases kept so existing callsites compile unchanged.
+        link: "#E5263A",
+        "accent-link": "#E5263A",
       },
       fontFamily: {
-        // Geist Sans for body + headings; Geist Mono for hashes /
-        // timestamps / addresses. Wired via next/font/google in
-        // src/app/layout.tsx; the CSS variables are bound here.
         sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
+        // Rajdhani: condensed military-grade display font for hero headings.
+        // Imported via next/font/google in layout.tsx.
+        display: ["var(--font-rajdhani)", "Rajdhani", "sans-serif"],
       },
       // 4px base scale per UX spec § Spacing.
       spacing: {

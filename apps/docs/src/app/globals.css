@@ -1,0 +1,19 @@
+@import 'nextra-theme-docs/style.css';
+
+/* AGENTSCAN docs palette — warm amber/brown family (per Abu 2026-05-15
+ * direction: "apply the brown color in the docs design"). Replaces
+ * the initial cold-green setting. Targets the editorial / broadsheet
+ * feel: think aged-paper warm tones, not Notion-blue or hex-green.
+ *
+ * Hue 30deg is mid-amber. Saturation 90% gives saturated headlines +
+ * link colors; lightness shifts dark-mode to ~58% for AA contrast.
+ */
+:root {
+  --nextra-primary-hue: 30deg;
+  --nextra-primary-saturation: 90%;
+  --nextra-primary-lightness: 42%;
+}
+
+.dark {
+  --nextra-primary-lightness: 58%;
+}

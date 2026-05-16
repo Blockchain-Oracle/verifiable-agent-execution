@@ -1,0 +1,107 @@
+---
+title: Mainnet vs Testnet
+description: Which 0G chain to anchor on — Galileo testnet for free experimentation, Aristotle mainnet for production receipts.
+---
+
+# Mainnet vs Testnet
+
+AGENTSCAN ships on both 0G chains. Use whichever fits the receipt
+you're producing.
+
+## At a glance
+
+| | Galileo testnet | Aristotle mainnet |
+|---|---|---|
+| Chain ID | **16602** | **16661** |
+| Site | [agentscan.online](https://agentscan.online) | [mainnet.agentscan.online](https://mainnet.agentscan.online) |
+| Faucet | [faucet.0g.ai](https://faucet.0g.ai) — 0.1 0G/day free | none (real OG required) |
+| RPC | `https://evmrpc-testnet.0g.ai` | `https://evmrpc.0g.ai` |
+| Storage indexer | `https://indexer-storage-testnet-turbo.0g.ai` | `https://indexer-storage-turbo.0g.ai` |
+| Block explorer | [chainscan-galileo.0g.ai](https://chainscan-galileo.0g.ai) | [chainscan.0g.ai](https://chainscan.0g.ai) |
+| AgenticID contract | `0xd4a5eA…0E38` | `0xC6f7fB…8937` |
+| TEE verifier contract | `0x058fc3…C3ad` | `0x4fffB5…58D2` |
+| Best for | development, demos, public shares of "did this agent do X" | production receipts you want to last |
+
+## When to use testnet
+
+Default. Use testnet unless you have a specific reason not to:
+
+- You're developing or demoing
+- You're sharing a receipt as a one-off illustration ("look what
+  my agent did")
+- You don't want to spend real 0G
+
+The plugin defaults to testnet. Out of the box, every receipt mints
+on Galileo. Receipts on testnet are real — same cryptographic
+guarantees, same `/verify/<tokenId>` flow, same `/agentscan_share` command.
+The only difference is the chain they anchor on.
+
+## When to use mainnet
+
+Use mainnet when **permanence matters**:
+
+- You're producing a receipt that needs to outlast a testnet reset
+- You're publishing a receipt as a public audit artifact
+- The receipt is part of a compliance trail
+
+Mainnet receipts cost real 0G to mint (typically a few cents per
+session, but check current gas).
+
+## Switching the plugin to mainnet
+
+The plugin reads its chain configuration from
+`~/.openclaw/openclaw.json`. Edit the
+`plugins.entries.verifiable-execution.config` block:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "verifiable-execution": {
+        "config": {
+          "chainId": 16661,
+          "rpcUrl": "https://evmrpc.0g.ai",
+          "indexerUrl": "https://indexer-storage-turbo.0g.ai",
+          "agenticIdAddress": "0xC6f7fB1511a7483C6e14258c70529e37ec698937",
+          "teeVerifierAddress": "0x4fffB58B488bBeD9f072Ad68EeB77F643b8858D2",
+          "verifyUrlBase": "https://mainnet.agentscan.online"
+        }
+      }
+    }
+  }
+}
+```
+
+Then `openclaw gateway restart`. Every subsequent session anchors
+on mainnet and prints `mainnet.agentscan.online/verify/<tokenId>`.
+
+> The signing wallet at `~/.openclaw/verifiable-execution/wallet.json`
+> is the SAME wallet across chains. You'll need to fund it on
+> mainnet separately — testnet 0G doesn't carry over.
+
+## Funding the wallet on mainnet
+
+There is no faucet. Options:
+
+1. **Buy 0G on a centralized exchange** (Bitget, Bybit, etc. — 0G
+   has been listed since the September 2025 mainnet launch).
+2. **Withdraw to your AGENTSCAN signing wallet** on 0G mainnet
+   (chainId 16661). Confirm the exchange supports native 0G
+   mainnet withdrawals; if not, withdraw to BSC/ETH and bridge to
+   0G via the [official bridge](https://hub.0g.ai).
+3. **Add 0G mainnet to MetaMask**: RPC `https://evmrpc.0g.ai`,
+   chainId `16661`, symbol `0G`, explorer `https://chainscan.0g.ai`.
+
+A few tenths of a 0G covers many mints — gas on 0G mainnet is low.
+
+## Cross-network browsing
+
+Every page on the testnet site has a `🟢 LIVE ON MAINNET` ticker at
+the top with a cross-link to the mainnet site. The mainnet site
+itself doesn't show this ticker — but its `view testnet ↗` chip
+in the top-right network indicator works the same way.
+
+## Next
+
+- [Verify cold](/verify) — what someone you shared a receipt with sees
+- [For developers](/developers) — contracts source, deploy scripts

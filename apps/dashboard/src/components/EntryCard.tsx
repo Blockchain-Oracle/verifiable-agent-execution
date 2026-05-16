@@ -26,14 +26,39 @@
  */
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighterBase } from "react-syntax-highlighter";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
+
+// Cast needed: @types/react-syntax-highlighter lags React 18's `refs` field.
+const SyntaxHighlighter = SyntaxHighlighterBase as unknown as (
+  props: SyntaxHighlighterProps & { children: string }
+) => React.ReactElement;
 
 import { Mono } from "./Mono";
+
+// Dashboard-palette Prism theme — matches bg-surface + brand accent colors
+const agentscanTheme: Record<string, React.CSSProperties> = {
+  'code[class*="language-"]': { color: "#A3A6B1", background: "none", fontSize: "0.75rem", fontFamily: "var(--font-mono, monospace)" },
+  'pre[class*="language-"]': { color: "#A3A6B1", background: "#15171A", margin: 0, padding: "0.75rem 1rem", borderRadius: "0.25rem", overflowX: "hidden", whiteSpace: "pre-wrap", wordBreak: "break-all" },
+  "property": { color: "#10B981" },        // keys — accent-verify green
+  "string": { color: "#F5F5F5" },          // string values — text-primary
+  "number": { color: "#F59E0B" },          // numbers — accent-mock amber
+  "boolean": { color: "#3B82F6" },         // booleans — link blue
+  "null": { color: "#EF4444" },            // null — accent-unverified red
+  "punctuation": { color: "#363A45" },     // brackets/commas — border color
+  "comment": { color: "#4B5563", fontStyle: "italic" },
+  "keyword": { color: "#10B981" },
+  "operator": { color: "#A3A6B1" },
+};
 
 export type EntryStatus =
   | { state: "pending" }
   | { state: "verifying" }
   | { state: "verified" }
   | { state: "unverified"; reason?: string }
+  | { state: "error"; reason?: string }
   | { state: "unsigned" };
 
 interface EntryProps {
@@ -49,9 +74,106 @@ interface EntryProps {
   status: EntryStatus;
 }
 
+/**
+ * Friendly-title + label mapping for the synthetic plugin entry
+ * "tools" (user_input, prompt_build, llm_call) — these aren't real
+ * tools the agent invoked, they're plugin-injected entries that
+ * capture what the agent runtime DID (received a message, built a
+ * prompt, got an LLM response). Rendering them as "tool_call /
+ * user_input" is misleading; rendering as "User message" with
+ * sensible input/output labels makes the receipt read like a
+ * timeline an auditor can follow.
+ *
+ * Real tools (web_search, fetch_url, MCP tools) fall through to
+ * the default branch and render as "Tool: web_search" etc.
+ *
+ * Skill invocations: when a Read tool targets a SKILL.md path
+ * (e.g. /skills/agentmail/SKILL.md), the OpenClaw SDK surfaces it
+ * as an after_tool_call event — we detect and relabel it here so
+ * auditors see "Skill: agentmail" rather than an opaque "Tool: Read".
+ */
+function entryDisplay(props: EntryProps): {
+  title: string;
+  subtitle: string | null;
+  inputLabel: string;
+  outputLabel: string;
+  kind?: "skill";
+} {
+  const tool = props.tool ?? props.type;
+
+  // Detect skill invocations: Read on any /skills/<name>/SKILL.md path
+  if (tool === "Read" || tool === "read") {
+    const p = props.params;
+    const filePath =
+      typeof p === "object" && p !== null
+        ? (p as Record<string, unknown>).file_path
+        : undefined;
+    if (typeof filePath === "string") {
+      const m = filePath.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
+      if (m) {
+        const skillName = m[1] ?? "unknown";
+        return {
+          title: `Skill: ${skillName}`,
+          subtitle: "skill loaded",
+          inputLabel: "Skill file",
+          outputLabel: "Skill content",
+          kind: "skill",
+        };
+      }
+    }
+  }
+
+  switch (tool) {
+    case "user_input":
+      return {
+        title: "User message",
+        subtitle: "inbound",
+        inputLabel: "Sender",
+        outputLabel: "Message",
+      };
+    case "prompt_build":
+      return {
+        title: "Prompt assembled",
+        subtitle: "agent → LLM",
+        inputLabel: "Session ref",
+        outputLabel: "Prompt + system + history",
+      };
+    case "llm_call":
+    case "llm_text":
+      return {
+        title: "LLM response",
+        subtitle: "LLM → agent",
+        inputLabel: "Run context",
+        outputLabel: "Response content",
+      };
+    case "session_end":
+      return {
+        title: "Session end",
+        subtitle: "lifecycle",
+        inputLabel: "Trigger",
+        outputLabel: "Summary",
+      };
+    case "agent_end":
+      return {
+        title: "Agent end",
+        subtitle: "lifecycle",
+        inputLabel: "Trigger",
+        outputLabel: "Summary",
+      };
+    default:
+      return {
+        title: `Tool: ${tool}`,
+        subtitle: "agent → tool",
+        inputLabel: "Params",
+        outputLabel: "Result",
+      };
+  }
+}
+
 export function EntryCard(props: EntryProps) {
-  const [paramsOpen, setParamsOpen] = useState(true);
-  const [resultOpen, setResultOpen] = useState(true);
+  const [paramsOpen, setParamsOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
+  const display = entryDisplay(props);
 
   return (
     <article className="group min-w-0 overflow-hidden rounded-md border border-border bg-surface transition-colors hover:border-border/80">
@@ -61,11 +183,18 @@ export function EntryCard(props: EntryProps) {
             #{props.seq.toString().padStart(3, "0")}
           </span>
           <span className="truncate font-sans text-base font-semibold text-text-primary">
-            {props.tool ?? props.type}
+            {display.title}
           </span>
-          <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary sm:inline">
-            {props.type}
-          </span>
+          {display.subtitle !== null && (
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary sm:inline">
+              {display.subtitle}
+            </span>
+          )}
+          {display.kind === "skill" && (
+            <span className="hidden items-center gap-1 rounded border border-accent-verify/40 bg-accent-verify/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent-verify sm:inline-flex">
+              ✦ skill
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <time
@@ -80,14 +209,14 @@ export function EntryCard(props: EntryProps) {
 
       <div className="min-w-0 space-y-4 px-4 py-4 sm:px-5">
         <ContentBlock
-          label="Input"
+          label={display.inputLabel}
           value={props.params}
           fallbackHash={props.inputHash}
           open={paramsOpen}
           onToggle={() => setParamsOpen((v) => !v)}
         />
         <ContentBlock
-          label="Output"
+          label={display.outputLabel}
           value={props.result}
           fallbackHash={props.outputHash}
           open={resultOpen}
@@ -119,7 +248,40 @@ export function EntryCard(props: EntryProps) {
   );
 }
 
-function ContentBlock({
+/**
+ * Detect whether a string value SHOULD be rendered as markdown.
+ *
+ * Tool results from WebSearch/WebFetch/Read often come back as
+ * markdown (Claude Code's tool-result encoding). Rendering them in a
+ * plain `<pre>` produces an unreadable wall of `*` and `#` characters,
+ * AND triggers a horizontal scrollbar when URLs / long paths wrap
+ * past the viewport — the exact issue Abu called out 2026-05-15
+ * ("i had to scroll horizonally to the left which dosent make sense").
+ *
+ * We keep this conservative: only opt into markdown rendering if the
+ * string actually has a structural markdown signal (header line,
+ * fenced code block, link/image syntax, list bullets). Plain prose
+ * still renders as plain text. JSON-like content (starts with `{` or
+ * `[`) stays in the monospace `<pre>` because JSON looks weird under
+ * a markdown renderer.
+ */
+function looksLikeMarkdown(s: string): boolean {
+  // Reject things that obviously aren't markdown documents.
+  const trimmed = s.trimStart();
+  if (trimmed.length === 0) return false;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return false;
+  // Strong signals: ATX headers, fenced code, links/images, bulleted
+  // list items, markdown tables. Any one is sufficient.
+  return (
+    /^#{1,6}\s/m.test(s) ||
+    /```/.test(s) ||
+    /\[[^\]]+\]\([^)]+\)/.test(s) ||
+    /^\s{0,3}[-*+]\s/m.test(s) ||
+    /^\|.+\|.+\|/m.test(s)
+  );
+}
+
+export function ContentBlock({
   label,
   value,
   fallbackHash,
@@ -133,11 +295,17 @@ function ContentBlock({
   onToggle: () => void;
 }) {
   const isPresent = value !== undefined && value !== null;
-  const display = isPresent
+  const stringValue = isPresent
     ? typeof value === "string"
       ? value
       : safeStringify(value)
     : null;
+  // Markdown-render only when the value is a STRING (not stringified
+  // JSON) AND has structural markdown signals. Otherwise fall back to
+  // the existing monospace presentation. The conservative gate keeps
+  // hash strings / JSON / plain prose rendering correctly.
+  const renderAsMarkdown =
+    typeof value === "string" && looksLikeMarkdown(value);
 
   return (
     <div>
@@ -156,9 +324,28 @@ function ContentBlock({
           )}
         </span>
       </button>
-      {open && (
-        <pre className="mt-2 overflow-x-auto rounded border border-border/40 bg-bg px-4 py-3 font-mono text-xs leading-relaxed text-text-primary">
-          {display ?? `sha256: ${fallbackHash}`}
+      {open && renderAsMarkdown && stringValue !== null && (
+        <div className="markdown-body mt-2 break-words rounded border border-border/40 bg-bg px-4 py-3 text-sm leading-relaxed text-text-primary">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {stringValue}
+          </ReactMarkdown>
+        </div>
+      )}
+      {open && !renderAsMarkdown && stringValue !== null && (
+        <div className="mt-2 overflow-hidden rounded border border-border/40">
+          <SyntaxHighlighter
+            language={typeof value === "object" ? "json" : "bash"}
+            style={agentscanTheme}
+            wrapLines
+            wrapLongLines
+          >
+            {stringValue}
+          </SyntaxHighlighter>
+        </div>
+      )}
+      {open && !isPresent && (
+        <pre className="mt-2 rounded border border-border/40 bg-bg px-4 py-3 font-mono text-xs text-text-secondary">
+          sha256: {fallbackHash}
         </pre>
       )}
     </div>
@@ -224,6 +411,15 @@ function EntryBadge({ status }: { status: EntryStatus }) {
           title={status.reason}
         >
           ✗ Unverified
+        </span>
+      );
+    case "error":
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border border-accent-mock/40 bg-accent-mock/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-accent-mock"
+          title={status.reason ?? "Verifier unreachable"}
+        >
+          ⚠ RPC error
         </span>
       );
     case "unsigned":

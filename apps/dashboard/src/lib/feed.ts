@@ -19,6 +19,10 @@
 import { Contract, JsonRpcProvider } from "ethers";
 
 import { loadEnv } from "./env.js";
+import {
+  isExecutionLogDescription,
+  parseExecutionLogDescription,
+} from "./exec-log-parser.js";
 
 const FEED_PROBE_CEILING_OFFSET = 0n; // probe FROM nextTokenId-1 backward
 const FEED_PROBE_DEPTH = 64; // walk this many tokenIds back
@@ -65,17 +69,33 @@ const CEILING_TTL_MS = 30_000;
 const AGENTICID_FEED_ABI = [
   "function getIntelligentDatas(uint256 tokenId) view returns ((string dataDescription, bytes32 dataHash)[])",
   "function ownerOf(uint256 tokenId) view returns (address)",
-  // Older AgenticID example contracts expose `_nextTokenId` only as
-  // an internal var; the deployed example exposes a public getter.
-  // Fallback strategy: probe a high ceiling if the call reverts.
+  // Ceiling-resolution chain (cheapest first, most expensive last):
+  //   1. _nextTokenId() — public getter on newer AgenticID variants.
+  //      Reverts on our Epic-7 deploys (which use the upstream
+  //      `agenticID-examples/01` source where it's private).
+  //   2. totalSupply() — ERC-721 standard, exposed by every AgenticID
+  //      variant since it inherits from OpenZeppelin's ERC721Enumerable.
+  //      Returns the COUNT of minted tokens. For sequentially-minted
+  //      ids starting at 0 this equals (nextTokenId), so latest = N - 1.
+  //   3. binarySearchLatestTokenId — last-resort 16-32 RPC walk if
+  //      both reverted. The old default before adding totalSupply()
+  //      fallback (which made the dashboard cold-start 30s+ on every
+  //      cache miss). VPS E2E 2026-05-12: confirmed _nextTokenId()
+  //      reverts on 0xd4a5eA…0E38, dashboard binary-searched every
+  //      uncached request.
   "function _nextTokenId() view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
 ] as const;
 
 export interface FeedRow {
   tokenId: string;
   /** Owner address from `ownerOf`. */
   owner: string;
-  /** dataDescription as anchored on-chain — `exec-log:<sessionId>:<modelId>`. */
+  /**
+   * dataDescription as anchored on-chain — `exec-log:<sessionId>:<modelId>`
+   * for normal agent_end anchors, or `exec-log-orphan:<sessionId>:<modelId>`
+   * for session_end recovery anchors (v0.3.4).
+   */
   dataDescription: string;
   /** sessionId parsed out of dataDescription. */
   sessionId: string;
@@ -83,6 +103,12 @@ export interface FeedRow {
   modelId: string;
   /** rootHash bytes32 hex (the 0G Storage anchor). */
   rootHash: string;
+  /**
+   * v0.3.4 — true when this row was minted under the `exec-log-orphan:`
+   * prefix. FeedTable renders a small badge so auditors can spot orphan
+   * recoveries without opening the receipt.
+   */
+  recoveryAnchor: boolean;
 }
 
 /**
@@ -168,7 +194,16 @@ async function resolveCeiling(
     const next = (await contract._nextTokenId()) as bigint;
     latest = next - 1n;
   } catch {
-    latest = await binarySearchLatestTokenId(contract);
+    // Fall to ERC-721 totalSupply() before the binary search — that's
+    // a single RPC call and works on every standard AgenticID variant.
+    // We only hit binarySearchLatestTokenId for non-enumerable forks
+    // where neither getter is exposed.
+    try {
+      const supply = (await contract.totalSupply()) as bigint;
+      latest = supply > 0n ? supply - 1n : 0n;
+    } catch {
+      latest = await binarySearchLatestTokenId(contract);
+    }
   }
   cachedCeiling = { value: latest, at: now };
   return latest - offset;
@@ -283,7 +318,7 @@ async function fetchOneRow(contract: Contract, id: bigint): Promise<FeedRow | nu
     if (isTokenDoesNotExistRevert(err)) return null;
     throw err;
   }
-  const exec = datas.find((d) => d.dataDescription?.startsWith?.("exec-log:"));
+  const exec = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (exec === undefined) return null;
 
   // ownerOf failure is NOT silently masked anymore. Burned tokens are
@@ -302,16 +337,27 @@ async function fetchOneRow(contract: Contract, id: bigint): Promise<FeedRow | nu
     throw err;
   }
 
-  const parts = exec.dataDescription.split(":");
-  const sessionId = parts[1] ?? "";
-  const modelId = parts.slice(2).join(":");
+  // Centralized parser handles BOTH the `exec-log:` and `exec-log-orphan:`
+  // prefixes AND honors `lastIndexOf(":")` so OpenClaw sessionKeys
+  // containing colons (e.g. `agent:core:telegram:direct:802…`) survive
+  // the round-trip. The pre-v0.3.4 inline `split(":")` here truncated
+  // such sessionIds — same bug Codex round-4 P1 caught in verify-proof.ts.
+  const parsed = parseExecutionLogDescription(exec.dataDescription);
+  if (parsed === null) {
+    // The findByPrefix above accepted this row, but the full parse
+    // failed (empty sessionId/modelId tail). Skip it from the feed
+    // rather than crashing the walk — malformed tokens shouldn't
+    // poison the landing page.
+    return null;
+  }
 
   return {
     tokenId: id.toString(),
     owner,
     dataDescription: exec.dataDescription,
-    sessionId,
-    modelId,
+    sessionId: parsed.sessionId,
+    modelId: parsed.modelId,
     rootHash: exec.dataHash,
+    recoveryAnchor: parsed.recoveryAnchor,
   };
 }

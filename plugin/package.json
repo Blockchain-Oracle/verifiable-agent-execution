@@ -1,0 +1,37 @@
+{
+  "name": "@verifiable-agent-execution/plugin",
+  "version": "0.3.9",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "description": "OpenClaw plugin that captures every tool call inside an agent session, flushes the log to 0G Storage at session end, and mints an AgenticID iNFT anchoring the rootHash on-chain. Produces a /verify/<tokenId> URL the dashboard can verify cold (network is implicit from the verifyUrlBase domain — Epic-7 subdomain split).",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
+    "@verifiable-agent-execution/chain-client": "workspace:*",
+    "@verifiable-agent-execution/logger": "workspace:*",
+    "ethers": "~6.13.1"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@vitest/coverage-v8": "^2.0.0",
+    "esbuild": "^0.24.0",
+    "openclaw": "^2026.5.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.0"
+  }
+}

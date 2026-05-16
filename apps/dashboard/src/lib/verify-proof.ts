@@ -45,6 +45,7 @@
 import {
   Contract,
   JsonRpcProvider,
+  recoverAddress,
   type Provider,
 } from "ethers";
 
@@ -59,7 +60,15 @@ import {
 import { signingMessageDigestFromString } from "@verifiable-agent-execution/tee-adapter";
 import { Indexer } from "@0gfoundation/0g-storage-ts-sdk";
 
+import {
+  isEncryptedEnvelope,
+  type EncryptedSessionLogEnvelope,
+} from "./crypto.js";
 import { loadEnv, type DashboardEnv } from "./env.js";
+import {
+  isExecutionLogDescription,
+  parseExecutionLogDescription,
+} from "./exec-log-parser.js";
 import {
   agenticIdContractUrl,
   agenticIdTokenUrl,
@@ -97,14 +106,20 @@ export interface ProofResponse {
    * (no signatures present) and pre-verifier-deploy environments
    * (TEE_VERIFIER_ADDRESS unset).
    */
-  verified: "verified" | "preview" | "unverified";
+  verified: "verified" | "preview" | "unverified" | "encrypted";
   /**
    * Selected fields from each ExecutionLogEntry — the dashboard
    * doesn't need the full entry shape (most fields are optional and
    * uninteresting at scan time). Trimming reduces payload size +
    * means schema evolution in the logger doesn't ripple here.
+   *
+   * **Optional** (v0.3.0): for encrypted receipts with no client-side
+   * reveal key, the server returns metadata only (verified === "encrypted")
+   * and omits this field entirely — `entries` is undefined, not an empty
+   * array. The client decrypts the envelope locally via /blob and
+   * synthesizes the entries column without server involvement.
    */
-  entries: Array<{
+  entries?: Array<{
     seq: number;
     ts: number;
     type: string;
@@ -112,6 +127,11 @@ export interface ProofResponse {
     inputHash: string;
     outputHash: string;
     hasTeeSignature: boolean;
+    /** Per-entry signature material, used by client-side verifyEntry. */
+    teeSignature?: string;
+    agentId?: string;
+    sealId?: string;
+    signedAt?: number;
     /**
      * Decoded tool input — present when the plugin captured
      * unredacted serializable params. Hash field above (`inputHash`)
@@ -139,6 +159,15 @@ export interface ProofResponse {
   meta: {
     chainId: number;
     dataDescription: string;
+    /**
+     * v0.3.4 — true when this anchor was minted via the
+     * `exec-log-orphan:` prefix (the plugin's `session_end` recovery
+     * branch fired because `agent_end` never did — typically a
+     * harness crash mid-run). The dashboard renders a distinct
+     * "recovery anchor" badge so auditors see the unusual provenance
+     * without having to inspect the raw dataDescription.
+     */
+    recoveryAnchor: boolean;
     storageUrl: string;
     /**
      * Pre-computed explorer URLs — server-side resolves these so the
@@ -152,6 +181,15 @@ export interface ProofResponse {
     };
     /** Pre-computed faucet URL (testnet only). */
     faucetUrl: string;
+    /**
+     * Public infra for client-side on-chain verify (encrypted-mode
+     * SessionView calls MockTEEVerifier.verifyTEESignature from the
+     * browser via ethers). Both are public values — no secrets.
+     * Plaintext receipts ignore these; verification stays server-side
+     * for backward compat.
+     */
+    rpcUrl: string;
+    verifierAddress: string;
   };
 }
 
@@ -224,13 +262,20 @@ export function __setCachedClientsForTests(clients: CachedClients | null): void 
  * verify route (Stage 5 — badge-flip animation) so the route can
  * grab one entry by seq without reconstructing the whole proof.
  *
+ * v0.3.0 SECURITY: this function does NOT accept a reveal key. The
+ * server is intentionally key-blind — the only entity that ever holds
+ * a reveal key is the operator's browser via the URL fragment.
+ * Encrypted receipts can ONLY be verified client-side; the server
+ * route surfaces the encrypted-locked state and the dashboard's
+ * client decrypts + verifies via ethers in the browser.
+ *
  * Throws ProofResolutionError on the same paths as resolveProof
  * (404 token-not-found, 422 schema mismatch, 502 chain/storage
  * transport failure).
  */
 export async function loadSessionLogForToken(
   tokenIdRaw: string,
-): Promise<{ sessionLog: SessionLog; verifier: Contract }> {
+): Promise<{ sessionLog: SessionLog; verifier: Contract; encrypted: false }> {
   const tokenId = parseTokenId(tokenIdRaw);
   const { agenticIdClient, indexer, verifier, env } = getClients();
 
@@ -255,7 +300,7 @@ export async function loadSessionLogForToken(
     });
   }
 
-  const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
+  const execLogEntry = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (execLogEntry === undefined) {
     throw new ProofResolutionError({
       status: 404,
@@ -265,8 +310,23 @@ export async function loadSessionLogForToken(
   }
 
   const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
-  const sessionLog = parseSessionLog(blobBytes);
-  return { sessionLog, verifier };
+  const parsed = parseSessionLog(blobBytes);
+  // For per-entry verify (badge cascade) we need an actual SessionLog.
+  // Encrypted receipts can't be served via this endpoint — clients
+  // decrypt + verify in the browser. Surface a 422 with a code that
+  // tells the client to fall back to client-side ethers verify.
+  if (parsed.kind === "encrypted-locked") {
+    throw new ProofResolutionError({
+      status: 422,
+      code: "STORAGE_BLOB_ENCRYPTED_CLIENT_ONLY",
+      message: `Token ${tokenId.toString()}'s blob is encrypted. Per-entry verify must run client-side — the server is key-blind by design.`,
+    });
+  }
+  return {
+    sessionLog: parsed.sessionLog,
+    verifier,
+    encrypted: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -277,8 +337,18 @@ export async function loadSessionLogForToken(
  * Resolve the full proof chain for a tokenId. Throws ProofResolutionError
  * with HTTP-mapped status/code on every failure so the route handler
  * can pass them straight through.
+ *
+ * v0.3.0 SECURITY: this function is intentionally key-blind. Encrypted
+ * receipts return metadata only with `verified: "encrypted"` and the
+ * `entries` field OMITTED (undefined, not []). The dashboard's
+ * `EncryptedReveal` client component reads the URL fragment, fetches
+ * the raw envelope from /api/verify/<id>/blob, decrypts in the
+ * browser, and synthesizes the full entries column locally. The
+ * server never sees the reveal key.
  */
-export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
+export async function resolveProof(
+  tokenIdRaw: string,
+): Promise<ProofResponse> {
   const tokenId = parseTokenId(tokenIdRaw);
   const { agenticIdClient, indexer, verifier, env } = getClients();
 
@@ -303,19 +373,64 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
     });
   }
 
-  const execLogEntry = datas.find((d) => d.dataDescription.startsWith("exec-log:"));
+  const execLogEntry = datas.find((d) => isExecutionLogDescription(d.dataDescription));
   if (execLogEntry === undefined) {
     throw new ProofResolutionError({
       status: 404,
       code: "NO_EXEC_LOG_ANCHOR",
-      message: `Token ${tokenId.toString()} has IntelligentData entries but none use the "exec-log:..." prefix; this token was not minted by the verifiable-execution plugin.`,
+      message: `Token ${tokenId.toString()} has IntelligentData entries but none use the "exec-log:..."/"exec-log-orphan:..." prefix; this token was not minted by the verifiable-execution plugin.`,
     });
   }
 
-  const sessionId = parseSessionIdFromDescription(execLogEntry.dataDescription);
+  const parsedDescription = parseExecutionLogDescription(execLogEntry.dataDescription);
+  if (parsedDescription === null) {
+    // The startsWith check above passed but full parse failed — this
+    // means the dataDescription has a known prefix but malformed
+    // sessionId/modelId tail (empty after the prefix, no trailing
+    // colon, etc.). 422 mirrors the previous parseSessionIdFromDescription
+    // throw.
+    throw new ProofResolutionError({
+      status: 422,
+      code: "MALFORMED_DATA_DESCRIPTION",
+      message: `dataDescription must follow ADR-08 "<prefix>:<sessionId>:<modelId>" with non-empty sessionId and modelId; got "${execLogEntry.dataDescription}".`,
+    });
+  }
+  const sessionId = parsedDescription.sessionId;
+  const recoveryAnchor = parsedDescription.recoveryAnchor;
 
   const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
-  const sessionLog = parseSessionLog(blobBytes);
+  const parsed = parseSessionLog(blobBytes);
+
+  // v0.3.0 encrypted-locked path: the blob on 0G Storage is an
+  // envelope. Server returns metadata + verified="encrypted"; entries
+  // is OMITTED (not []). Client fetches the envelope from /blob and
+  // decrypts locally with the URL fragment key.
+  if (parsed.kind === "encrypted-locked") {
+    return {
+      tokenId: tokenId.toString(),
+      sessionId,
+      rootHash: execLogEntry.dataHash,
+      entryCount: 0,
+      verified: "encrypted",
+      // entries intentionally omitted — discriminator for client.
+      meta: {
+        chainId: env.CHAIN_ID,
+        dataDescription: execLogEntry.dataDescription,
+        recoveryAnchor,
+        storageUrl: storageBlobUrl(execLogEntry.dataHash),
+        explorer: {
+          token: agenticIdTokenUrl(tokenId.toString()),
+          contract: agenticIdContractUrl(),
+          verifierContract: teeVerifierContractUrl(),
+        },
+        faucetUrl: faucetUrl(),
+        rpcUrl: env.ZG_RPC,
+        verifierAddress: env.TEE_VERIFIER_ADDRESS,
+      },
+    };
+  }
+
+  const sessionLog = parsed.sessionLog;
 
   if (sessionLog.sessionId !== sessionId) {
     throw new ProofResolutionError({
@@ -341,6 +456,13 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
       inputHash: e.inputHash,
       outputHash: e.outputHash,
       hasTeeSignature: e.teeSignature !== undefined,
+      // Signature material for client-side verify (encrypted mode).
+      // Plaintext-receipt path doesn't use these (existing /entry/<seq>
+      // server route handles it); they ride along for parity.
+      ...(e.teeSignature !== undefined ? { teeSignature: e.teeSignature } : {}),
+      ...(e.agentId !== undefined ? { agentId: e.agentId } : {}),
+      ...(e.sealId !== undefined ? { sealId: e.sealId } : {}),
+      ...(e.signedAt !== undefined ? { signedAt: e.signedAt } : {}),
       // Decoded content — additive, only present on entries the plugin
       // captured AFTER the Stage 3 schema upgrade (2026-05-06). Old
       // SessionLog blobs without these fields render as hash-only,
@@ -352,6 +474,7 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
     meta: {
       chainId: env.CHAIN_ID,
       dataDescription: execLogEntry.dataDescription,
+      recoveryAnchor,
       storageUrl: storageBlobUrl(execLogEntry.dataHash),
       explorer: {
         token: agenticIdTokenUrl(tokenId),
@@ -359,6 +482,8 @@ export async function resolveProof(tokenIdRaw: string): Promise<ProofResponse> {
         verifierContract: teeVerifierContractUrl(),
       },
       faucetUrl: faucetUrl(),
+      rpcUrl: env.ZG_RPC,
+      verifierAddress: env.TEE_VERIFIER_ADDRESS,
     },
   };
 }
@@ -385,19 +510,6 @@ function parseTokenId(raw: string): bigint {
       cause,
     });
   }
-}
-
-function parseSessionIdFromDescription(dataDescription: string): string {
-  // ADR-08: "exec-log:<sessionId>:<modelId>".
-  const parts = dataDescription.split(":");
-  if (parts.length < 3 || parts[0] !== "exec-log") {
-    throw new ProofResolutionError({
-      status: 422,
-      code: "MALFORMED_DATA_DESCRIPTION",
-      message: `dataDescription must follow ADR-08 "exec-log:<sessionId>:<modelId>"; got "${dataDescription}".`,
-    });
-  }
-  return parts[1];
 }
 
 async function downloadStorageBlob(
@@ -438,7 +550,20 @@ async function downloadStorageBlob(
   }
 }
 
-function parseSessionLog(bytes: Uint8Array): SessionLog {
+/**
+ * Result of parsing the 0G Storage blob bytes for a tokenId.
+ *
+ * Two states (v0.3.0 — server is key-blind):
+ *   - `kind: "plaintext"` — legacy pre-v0.3.0 SessionLog (token 0 + all
+ *     pre-v0.3.0 receipts). Server can render full entries.
+ *   - `kind: "encrypted-locked"` — v0.3.0 envelope detected. Server
+ *     returns metadata only; client decrypts via /blob endpoint.
+ */
+export type ParsedBlob =
+  | { kind: "plaintext"; sessionLog: SessionLog }
+  | { kind: "encrypted-locked"; envelope: EncryptedSessionLogEnvelope };
+
+function parseSessionLog(bytes: Uint8Array): ParsedBlob {
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -450,6 +575,15 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
       cause,
     });
   }
+
+  // v0.3.0: detect the EncryptedSessionLogEnvelope shape first. Server
+  // is key-blind by design — it returns the locked state and lets the
+  // client decrypt with the URL fragment key.
+  if (isEncryptedEnvelope(parsed)) {
+    return { kind: "encrypted-locked", envelope: parsed };
+  }
+
+  // Legacy plaintext path (token 0 + all pre-v0.3.0 receipts).
   const result = sessionLogSchema.safeParse(parsed);
   if (!result.success) {
     throw new ProofResolutionError({
@@ -458,7 +592,60 @@ function parseSessionLog(bytes: Uint8Array): SessionLog {
       message: `0G Storage blob does not match SessionLog schema: ${result.error.message}`,
     });
   }
-  return result.data;
+  return { kind: "plaintext", sessionLog: result.data };
+}
+
+/**
+ * Fetch the raw 0G Storage envelope for a tokenId (key-blind). Used
+ * by the /blob route so the client can read the encrypted bytes
+ * directly without piping the reveal key through the server.
+ */
+export async function fetchEncryptedEnvelope(
+  tokenIdRaw: string,
+): Promise<EncryptedSessionLogEnvelope> {
+  const tokenId = parseTokenId(tokenIdRaw);
+  const { agenticIdClient, indexer, env } = getClients();
+
+  let datas: IntelligentData[];
+  try {
+    datas = [...(await agenticIdClient.getIntelligentDatas(tokenId))];
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (/Token does not exist|nonexistent/i.test(message)) {
+      throw new ProofResolutionError({
+        status: 404,
+        code: "TOKEN_NOT_FOUND",
+        message: `tokenId ${tokenId.toString()} does not exist on AgenticID at ${env.AGENTICID_ADDRESS}.`,
+        cause,
+      });
+    }
+    throw new ProofResolutionError({
+      status: 502,
+      code: "CHAIN_READ_FAILED",
+      message: `Failed to read AgenticID.getIntelligentDatas(${tokenId.toString()}): ${message}`,
+      cause,
+    });
+  }
+
+  const execLogEntry = datas.find((d) => isExecutionLogDescription(d.dataDescription));
+  if (execLogEntry === undefined) {
+    throw new ProofResolutionError({
+      status: 404,
+      code: "NO_EXEC_LOG_ANCHOR",
+      message: `Token ${tokenId.toString()} has no exec-log anchor.`,
+    });
+  }
+
+  const blobBytes = await downloadStorageBlob(indexer, execLogEntry.dataHash);
+  const parsed = parseSessionLog(blobBytes);
+  if (parsed.kind !== "encrypted-locked") {
+    throw new ProofResolutionError({
+      status: 422,
+      code: "BLOB_NOT_ENCRYPTED",
+      message: `Token ${tokenId.toString()} is a legacy plaintext receipt. Use /api/verify/${tokenId.toString()} directly.`,
+    });
+  }
+  return parsed.envelope;
 }
 
 /**
@@ -510,36 +697,61 @@ export async function verifyOneEntry(
   }
   const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
   const digest = signingMessageDigestFromString(message);
-  let ok: boolean;
+
+  // v0.2.0 verification model: agent's OWN wallet is the trusted
+  // signer for ITS entries. We `ecrecover` locally and check the
+  // result against `entry.agentId`. Falls back to the legacy
+  // MockTEEVerifier.verifyTEESignature path (which checks against a
+  // GLOBAL teeOracleAddress) only when recovery doesn't match agentId
+  // — that handles the SYNTHETIC demo (token 0) which is signed by
+  // the deployer wallet, not by an agent-bound key. New plugin-
+  // captured entries (token 1+) verify in-process; legacy/demo entries
+  // still go through the on-chain verifier as before.
+  let ok = false;
+  let reason: string | undefined;
   try {
-    ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
-  } catch (cause) {
-    const code = (cause as { code?: string } | null)?.code;
-    const reason = (cause as { reason?: string | null } | null)?.reason;
-    if (code === "CALL_EXCEPTION" && typeof reason === "string" && reason.length > 0) {
-      console.error(
-        "[verify-proof] verifier reverted on entry %d: %s",
-        entry.seq,
-        reason,
-      );
-      return {
-        seq: entry.seq,
-        verified: "unverified",
-        reason,
-        durationMs: Date.now() - start,
-      };
+    const recovered = recoverAddress(digest, entry.teeSignature);
+    if (recovered.toLowerCase() === entry.agentId.toLowerCase()) {
+      ok = true;
     }
-    const message = cause instanceof Error ? cause.message : String(cause);
-    throw new ProofResolutionError({
-      status: 502,
-      code: "VERIFIER_CALL_FAILED",
-      message: `Verifier RPC call failed for entry ${entry.seq} (${code ?? "unknown code"}): ${message}`,
-      cause,
-    });
+  } catch (cause) {
+    // Bad signature shape — falls through to the verifier contract
+    // which may still consider it valid under its own rules.
+    reason = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  if (!ok) {
+    try {
+      ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
+    } catch (cause) {
+      const code = (cause as { code?: string } | null)?.code;
+      const revertReason = (cause as { reason?: string | null } | null)?.reason;
+      if (code === "CALL_EXCEPTION" && typeof revertReason === "string" && revertReason.length > 0) {
+        console.error(
+          "[verify-proof] verifier reverted on entry %d: %s",
+          entry.seq,
+          revertReason,
+        );
+        return {
+          seq: entry.seq,
+          verified: "unverified",
+          reason: revertReason,
+          durationMs: Date.now() - start,
+        };
+      }
+      const errMessage = cause instanceof Error ? cause.message : String(cause);
+      throw new ProofResolutionError({
+        status: 502,
+        code: "VERIFIER_CALL_FAILED",
+        message: `Verifier RPC call failed for entry ${entry.seq} (${code ?? "unknown code"}): ${errMessage}`,
+        cause,
+      });
+    }
   }
   return {
     seq: entry.seq,
     verified: ok ? "verified" : "unverified",
+    ...(reason !== undefined && !ok ? { reason } : {}),
     durationMs: Date.now() - start,
   };
 }
@@ -581,11 +793,26 @@ async function computeVerificationStatus(
     // response body, lowercase hex no 0x prefix — that's what
     // agent-wrapper writes into the signing message per the upstream
     // Go convention; see tee-adapter/signing-message.ts).
+    // entriesWithSigs filter above guarantees teeSignature is defined;
+    // narrow it for TypeScript via a local const.
+    const teeSignature = entry.teeSignature;
+    if (teeSignature === undefined) continue; // unreachable, satisfies TS
     const message = `${entry.agentId}|${entry.sealId}|${entry.signedAt}|${entry.outputHash}`;
     const digest = signingMessageDigestFromString(message);
-    let ok: boolean;
+    // v0.2.0: try local ecrecover first; fall back to the on-chain
+    // verifier for legacy entries signed by an off-agent oracle.
+    let ok = false;
     try {
-      ok = (await verifier.verifyTEESignature(digest, entry.teeSignature)) as boolean;
+      const recovered = recoverAddress(digest, teeSignature);
+      if (recovered.toLowerCase() === entry.agentId.toLowerCase()) {
+        ok = true;
+      }
+    } catch {
+      // Falls through to verifier contract.
+    }
+    if (ok) continue;
+    try {
+      ok = (await verifier.verifyTEESignature(digest, teeSignature)) as boolean;
     } catch (cause) {
       // Discriminate verifier-said-no from infrastructure-failure.
       //

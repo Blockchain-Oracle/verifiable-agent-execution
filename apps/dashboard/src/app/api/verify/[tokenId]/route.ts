@@ -31,6 +31,13 @@ export async function GET(
   context: { params: Promise<{ tokenId: string }> },
 ): Promise<NextResponse> {
   const { tokenId } = await context.params;
+  // v0.3.0 SECURITY: this route is intentionally key-blind. The URL
+  // fragment (`#k=...`) NEVER reaches the server — that's the whole
+  // point of using a fragment for the reveal key. For encrypted
+  // receipts, `resolveProof` returns metadata + verified="encrypted"
+  // with `entries` omitted; the client fetches /blob (also key-blind)
+  // and decrypts in the browser. Any attempt to add `?k=` parsing
+  // here is a defense-in-depth violation.
   try {
     const proof = await resolveProof(tokenId);
     return NextResponse.json(proof, { status: 200 });

@@ -6,7 +6,7 @@
  * directly too: `pnpm exec tsx scripts/init-wallet.ts`.
  */
 
-import { resolveWallet, printFirstRunBanner } from "../openclaw-skills/verifiable-execution/src/wallet.js";
+import { resolveWallet, printFirstRunBanner } from "../plugin/src/wallet.js";
 
 const wallet = resolveWallet();
 printFirstRunBanner(wallet);

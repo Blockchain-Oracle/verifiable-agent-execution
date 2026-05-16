@@ -22,7 +22,7 @@
  * an interactive experiment.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import { EntryCard, type EntryStatus } from "./EntryCard";
@@ -34,9 +34,53 @@ import type { ProofResponse } from "@/lib/verify-proof";
 const SEQUENTIAL_DELAY_MS = 220; // gap between per-entry verify fires
 const AUTO_VERIFY_INITIAL_DELAY_MS = 600; // breathing room before badges start flipping
 
-export function SessionView({ proof }: { proof: ProofResponse }) {
+/**
+ * Per-entry verify result shape — matches the GET
+ * /api/verify/<id>/entry/<seq> response and `verifyEntryClient`.
+ */
+interface VerifyEntryResult {
+  // "error" = transport/RPC failure; "unverified" = bad signature.
+  verified: "verified" | "unverified" | "unsigned" | "error";
+  reason?: string;
+}
+
+/**
+ * Plaintext path: server-side verification via the existing /entry/<seq> route.
+ * Encrypted path: EncryptedReveal injects a client-side ethers verifier.
+ */
+type VerifyEntryFn = (entry: {
+  seq: number;
+  outputHash: string;
+  teeSignature?: string;
+  agentId?: string;
+  sealId?: string;
+  signedAt?: number;
+}) => Promise<VerifyEntryResult>;
+
+export function SessionView({
+  proof,
+  verifyEntry,
+}: {
+  proof: ProofResponse;
+  /**
+   * Optional per-entry verify callback. When provided, SessionView uses
+   * it instead of fetching /api/verify/<id>/entry/<seq>. Set by
+   * EncryptedReveal for v0.3.0 encrypted receipts so verification stays
+   * fully client-side (the reveal key never leaves the browser).
+   */
+  verifyEntry?: VerifyEntryFn;
+}) {
+  // `entries` is optional on ProofResponse now (locked encrypted receipts
+  // omit it). SessionView only renders when entries are present — the
+  // caller (page.tsx or EncryptedReveal-decrypted-state) is responsible
+  // for not handing us a locked proof.
+  //
+  // useMemo so the array identity is stable across renders (the verify
+  // cascade depends on it; without memoization the useCallback below
+  // would re-derive on every render and re-fire the badge cascade).
+  const entries = useMemo(() => proof.entries ?? [], [proof.entries]);
   const [statuses, setStatuses] = useState<EntryStatus[]>(() =>
-    proof.entries.map(() => ({ state: "pending" })),
+    entries.map(() => ({ state: "pending" })),
   );
   const [running, setRunning] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -48,49 +92,56 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
     setRunning(true);
     setCompleted(false);
 
-    for (let i = 0; i < proof.entries.length; i++) {
+    for (let i = 0; i < entries.length; i++) {
       setStatuses((s) => {
         const next = [...s];
         next[i] = { state: "verifying" };
         return next;
       });
-      // Use the entry's actual `seq` (NOT the array index) — the API
-      // resolves entries by `seqNum === entry.seq`, so a session with
-      // non-zero-based or non-contiguous sequence numbers would
-      // silently 404 every entry under the index-based URL.
-      // (Codex bot round-11 P2 on PR #23.)
-      const entrySeq = proof.entries[i]!.seq;
+      const entry = entries[i]!;
       try {
-        const res = await fetch(
-          `/api/verify/${proof.tokenId}/entry/${entrySeq}`,
-          { cache: "no-store" },
-        );
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as {
-            error?: { message?: string };
-          };
-          setStatuses((s) => {
-            const next = [...s];
-            next[i] = {
-              state: "unverified",
-              reason: body.error?.message ?? `HTTP ${res.status}`,
-            };
-            return next;
+        let result: VerifyEntryResult;
+        if (verifyEntry !== undefined) {
+          result = await verifyEntry({
+            seq: entry.seq,
+            outputHash: entry.outputHash,
+            teeSignature: entry.teeSignature,
+            agentId: entry.agentId,
+            sealId: entry.sealId,
+            signedAt: entry.signedAt,
           });
         } else {
-          const body = (await res.json()) as {
-            verified: "verified" | "unverified" | "unsigned";
-            reason?: string;
-          };
-          setStatuses((s) => {
-            const next = [...s];
-            next[i] =
-              body.verified === "unverified"
-                ? { state: "unverified", reason: body.reason }
-                : { state: body.verified };
-            return next;
-          });
+          // Plaintext path: hit the server route. Uses entry.seq (NOT
+          // the array index) — the API resolves entries by
+          // `seqNum === entry.seq`, so a session with non-contiguous
+          // sequence numbers would silently 404 every entry under
+          // the index-based URL. (Codex bot round-11 P2 on PR #23.)
+          const res = await fetch(
+            `/api/verify/${proof.tokenId}/entry/${entry.seq}`,
+            { cache: "no-store" },
+          );
+          if (!res.ok) {
+            const body = (await res.json().catch(() => ({}))) as {
+              error?: { message?: string };
+            };
+            result = {
+              verified: "unverified",
+              reason: body.error?.message ?? `HTTP ${res.status}`,
+            };
+          } else {
+            result = (await res.json()) as VerifyEntryResult;
+          }
         }
+        setStatuses((s) => {
+          const next = [...s];
+          // "unverified" = bad signature; "error" = RPC/transport failure.
+          // Both carry a reason string; only "unverified" counts as a proof failure.
+          next[i] =
+            result.verified === "unverified" || result.verified === "error"
+              ? { state: result.verified, reason: result.reason }
+              : { state: result.verified };
+          return next;
+        });
       } catch (e) {
         setStatuses((s) => {
           const next = [...s];
@@ -107,7 +158,7 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
     setRunning(false);
     setCompleted(true);
     startedRef.current = false; // permit replay
-  }, [proof.tokenId, proof.entries.length]);
+  }, [proof.tokenId, entries, verifyEntry]);
 
   // AUTO-VERIFY on mount — the bold move. Empty deps so the effect
   // runs exactly once per mount; startedRef inside verifyOnChain
@@ -129,7 +180,7 @@ export function SessionView({ proof }: { proof: ProofResponse }) {
 
   const allVerified = completed && statuses.every((s) => s.state === "verified");
   const anyFailed = completed && statuses.some((s) => s.state === "unverified");
-  const tickerEntries = proof.entries.map((e, i) => ({
+  const tickerEntries = entries.map((e, i) => ({
     seq: e.seq,
     tool: e.tool,
     status: statuses[i] ?? { state: "pending" as const },
@@ -197,6 +248,25 @@ function NumericHero({
           label="Description"
           value={<span className="text-text-primary">{proof.meta.dataDescription}</span>}
         />
+        {proof.meta.recoveryAnchor && (
+          // v0.3.4 — this token was minted by the plugin's session_end
+          // recovery branch because agent_end never fired. The bytes are
+          // anchored and the proof chain is real, but the run terminated
+          // abnormally. Render a row-level badge in the metadata column
+          // so auditors see the unusual provenance even before scanning
+          // the entries below.
+          <FieldRow
+            label="Provenance"
+            value={
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-accent-mock/40 bg-accent-mock/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-mock"
+                title="agent_end never fired for this session; the plugin's session_end recovery branch anchored the entries that were collected before the harness terminated."
+              >
+                Orphan recovery anchor
+              </span>
+            }
+          />
+        )}
         <FieldRow
           label="Anchor"
           value={
@@ -364,11 +434,15 @@ function EntryChain({
   proof: ProofResponse;
   statuses: EntryStatus[];
 }) {
+  // `entries` is optional on ProofResponse (encrypted-locked omits it).
+  // EntryChain only renders the cards when entries exist; locked
+  // receipts are handled by the EncryptedReveal wrapper, not here.
+  const entries = proof.entries ?? [];
   return (
     <section>
       <header className="mb-6 flex items-baseline justify-between">
         <h2 className="font-sans text-sm font-semibold uppercase tracking-[0.18em] text-text-primary">
-          Tool calls · {proof.entries.length}
+          Tool calls · {entries.length}
         </h2>
         <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary">
           Each step verified independently
@@ -383,7 +457,7 @@ function EntryChain({
           className="absolute bottom-4 left-[11px] top-4 w-px bg-border sm:left-[15px]"
         />
         <ol className="min-w-0 space-y-4">
-          {proof.entries.map((entry, i) => {
+          {entries.map((entry, i) => {
             const status = statuses[i] ?? { state: "pending" as const };
             return (
               <li key={entry.seq} className="relative min-w-0 pl-8 sm:pl-12">
@@ -415,11 +489,13 @@ function ChainNode({ status }: { status: EntryStatus }) {
       ? "border-accent-verify bg-accent-verify"
       : status.state === "unverified"
         ? "border-accent-unverified bg-accent-unverified"
-        : status.state === "verifying"
-          ? "border-text-primary bg-bg animate-pulse"
-          : status.state === "unsigned"
-            ? "border-accent-mock bg-bg"
-            : "border-border bg-bg";
+        : status.state === "error"
+          ? "border-accent-mock bg-accent-mock"
+          : status.state === "verifying"
+            ? "border-text-primary bg-bg animate-pulse"
+            : status.state === "unsigned"
+              ? "border-accent-mock bg-bg"
+              : "border-border bg-bg";
   return (
     <span
       aria-hidden="true"

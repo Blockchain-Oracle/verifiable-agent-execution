@@ -79,6 +79,37 @@ export interface AnchorInput {
    * the SessionLogger metadata before calling flush().
    */
   containerHash: string;
+  /**
+   * v0.3.0 optional client-side encryption. When provided, the
+   * SessionLog plaintext JSON is transformed by `encrypt()` before
+   * upload. The cipher closure owns the key; SessionAnchor + SessionLogger
+   * stay key-agnostic. Plugins set up the keystore.setPending →
+   * encrypt → keystore.commitPending ordering AROUND this call to
+   * survive crashes between flush and mint (see
+   * plugin/src/keystore.ts).
+   *
+   * Return contract: must be a Uint8Array (or Buffer) of upload-ready
+   * bytes. Recommended: serialize an `EncryptedSessionLogEnvelope`
+   * (`crypto.ts`) and `TextEncoder.encode` the JSON.
+   */
+  encrypt?: (plaintextJson: string) => Uint8Array;
+  /**
+   * v0.3.4 — prefix segment of the on-chain `dataDescription`.
+   * Defaults to `"exec-log"`. The orphan-recovery branch in the
+   * plugin's `handleSessionEnd` passes `"exec-log-orphan"` so the
+   * dashboard's centralized parser can render a distinct
+   * "recovery anchor" badge for tokens minted because `agent_end`
+   * never fired.
+   *
+   * Why pass through here vs. baking the convention into the plugin:
+   * `mintAndBuildResult` builds the final `dataDescription` string
+   * itself, so the prefix only lives in one place. Without this hook
+   * the orphan branch would need to call `agenticIdClient.mint()`
+   * directly, duplicating SessionAnchor's flush-then-mint error
+   * handling — including the failure wrap as
+   * `SessionAnchorMintAfterFlushError`.
+   */
+  dataDescriptionPrefix?: string;
 }
 
 export interface AnchorResult {
@@ -93,8 +124,8 @@ export interface AnchorResult {
   /**
    * Verifier URL pattern `/verify/<tokenId>` — relative path. The chain
    * (testnet vs mainnet) is disambiguated by the DOMAIN the verifyUrl
-   * gets prepended to (e.g., `verifiable.0g.ai` = testnet,
-   * `mainnet.verifiable.0g.ai` = mainnet), matching the Etherscan vs
+   * gets prepended to (e.g., `agentscan.online` = testnet,
+   * `mainnet.agentscan.online` = mainnet), matching the Etherscan vs
    * Sepolia.Etherscan model. Do NOT bake chainId into the URL path —
    * the deploy topology already carries it and a path-prefixed chainId
    * forces ugly URLs + dead routes.
@@ -196,7 +227,9 @@ export class SessionAnchor {
       containerHash: input.containerHash,
     });
 
-    const flushResult = await this.sessionLogger.flush();
+    const flushResult = await this.sessionLogger.flush(
+      input.encrypt !== undefined ? { encrypt: input.encrypt } : undefined,
+    );
 
     // Mint AFTER successful flush. If mint fails, the SessionLogger
     // is already sealed (flushed=true) and a second `anchor()` would
@@ -209,6 +242,7 @@ export class SessionAnchor {
       input.sessionId,
       flushResult.rootHash,
       flushResult.entryCount,
+      input.dataDescriptionPrefix ?? "exec-log",
     );
   }
 
@@ -234,6 +268,15 @@ export class SessionAnchor {
     rootHash: string;
     entryCount: number;
     sessionId: string;
+    /**
+     * v0.3.4 — same semantics as `AnchorInput.dataDescriptionPrefix`.
+     * Operators recovering from `SessionAnchorMintAfterFlushError`
+     * pass back `error.dataDescriptionPrefix` so the retry preserves
+     * the original prefix (notably for `"exec-log-orphan"` anchors —
+     * a recovery retry under `"exec-log"` would mislabel the token).
+     * Defaults to `"exec-log"` for backwards compat.
+     */
+    dataDescriptionPrefix?: string;
   }): Promise<AnchorResult> {
     if (!bytes32Schema.safeParse(input.rootHash).success) {
       throw new SessionAnchorError(
@@ -254,6 +297,7 @@ export class SessionAnchor {
       input.sessionId,
       input.rootHash,
       input.entryCount,
+      input.dataDescriptionPrefix ?? "exec-log",
     );
   }
 
@@ -272,8 +316,9 @@ export class SessionAnchor {
     sessionId: string,
     rootHash: string,
     entryCount: number,
+    dataDescriptionPrefix: string,
   ): Promise<AnchorResult> {
-    const dataDescription = `exec-log:${sessionId}:${this.modelId}`;
+    const dataDescription = `${dataDescriptionPrefix}:${sessionId}:${this.modelId}`;
     const data: IntelligentData = { dataDescription, dataHash: rootHash };
 
     let mintResult: Awaited<ReturnType<AgenticIDClient["mint"]>>;
@@ -289,6 +334,7 @@ export class SessionAnchor {
         entryCount,
         sessionId,
         dataDescription,
+        dataDescriptionPrefix,
         cause,
       });
     }

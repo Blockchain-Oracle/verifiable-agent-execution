@@ -23,7 +23,7 @@ The 0G APAC Hackathon 2026 entry on **Track 1 (Agentic Infrastructure & OpenClaw
 - **Compute SDK:** `@0gfoundation/0g-compute-ts-sdk` v0.8.0 (formerly `@0glabs/0g-serving-broker`, deprecated re-export shim)
 - **Web3:** ethers ~6.13.1 (NOT v5; SDK peerDep is strict on this minor)
 - **Contracts:** Solidity 0.8.24, Hardhat 2.22, **`evmVersion: "cancun"` is REQUIRED** (per `0g-agent-skills/patterns/CHAIN.md` — ADR-09)
-- **OpenClaw plugin:** layout is `openclaw-skills/<id>/openclaw.plugin.json` + `src/index.ts` importing `OpenClawPluginApi` from `openclaw/plugin-sdk/core` (NOT `SKILL.md`)
+- **OpenClaw plugin:** layout is `plugin/openclaw.plugin.json` + `src/index.ts` importing `OpenClawPluginApi` from `openclaw/plugin-sdk/core` (NOT `SKILL.md`). (Renamed 2026-05-15 from `openclaw-skills/verifiable-execution/` — singular `plugin/` since this repo only ever ships one OpenClaw plugin, and OpenClaw itself renamed "skills" → "plugins" in 2026.4.)
 - **UI framework:** Next.js 14 App Router
 - **Styling:** Tailwind CSS + shadcn/ui (Trigger.dev anchor, see `context/docs/ux-spec.md`)
 - **Testing:** Vitest (unit), Playwright @ 2% odiff (visual), Hardhat + chai (contracts)
@@ -114,7 +114,7 @@ Pass this rule into every subagent brief. **"If you don't know, look it up — d
 
 ## Rules for this repo (anti-slop list — grows with every burn)
 
-**Hot-path source files** (`packages/logger/src/`, `packages/tee-adapter/src/`, `packages/chain-client/src/`, `openclaw-skills/verifiable-execution/src/`, `apps/dashboard/src/lib/`, `contracts/contracts/MockTEEVerifier.sol`):
+**Hot-path source files** (`packages/logger/src/`, `packages/tee-adapter/src/`, `packages/chain-client/src/`, `plugin/src/`, `apps/dashboard/src/lib/`, `contracts/contracts/MockTEEVerifier.sol`):
 
 - No `mock|fake|dummy|hardcoded` strings (§14 grep gate). Fixtures and recording adapters live under `__tests__/` and `__fixtures__/`.
 - Contract addresses come from `.env` (loaded once at startup) — never hardcoded in a component.
@@ -156,7 +156,7 @@ HOT_PATHS=(
   packages/logger/src
   packages/tee-adapter/src
   packages/chain-client/src
-  openclaw-skills/verifiable-execution/src
+  plugin/src
   apps/dashboard/src/lib
   contracts/contracts/MockTEEVerifier.sol
 )

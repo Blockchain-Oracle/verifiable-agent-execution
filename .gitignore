@@ -1,6 +1,7 @@
 node_modules/
 .next/
 dist/
+plugin/dist/
 *.tsbuildinfo
 
 # Hardhat — `artifacts/`, `cache/`, `typechain-types/` (no slash in the
@@ -16,9 +17,8 @@ typechain-types/
 **/deployments/*/
 !**/deployments/.gitkeep
 
-# Coverage outputs — generated per-machine, contain absolute paths.
-# (Closes Codex P3 on epic/02 — coverage-summary.json was accidentally
-# committed with /Users/abu/... paths and would create noisy diffs.)
+# Coverage outputs — generated per-machine, contain absolute paths
+# that would create noisy per-checkout diffs.
 coverage/
 
 # Env / secrets — NEVER commit
@@ -30,13 +30,44 @@ screenshots/current/
 .claude/visual-check.log
 .claude/last-review.json
 
-# Coverage outputs — contain absolute paths, regenerated per machine
-coverage/
+# ── Internal dev / AI-tooling artifacts — NOT for the public repo ────────────
+# These exist to help me + subagents build the project. They are NOT
+# end-user documentation. End-user docs live at docs.agentscan.online
+# (apps/docs/ package, served separately). Untracked here so the public
+# repo surface is the code + user-facing README + dashboard, nothing else.
+#
+# Per Abu's 2026-05-15 cleanup directive: "context folder or any
+# documentation whose sole purpose is to assit you or anyone you created
+# your self to aid developemnt or auditing".
 
-# Hardhat / typechain (will sync from Epic 2's gitignore on main merge,
-# but added here too so Epic 3 doesn't accidentally commit them).
-artifacts/
-cache/
-typechain-types/
-**/deployments/*/
-!**/deployments/.gitkeep
+# Internal product/architecture/audit notes (PRD, ADRs, story BDDs,
+# competitor scan, reference-repo audit, source-of-truth verdict).
+context/
+
+# Per-version implementation plans (v0.3.0 / v0.3.4 / v0.3.5 design docs
+# written for me during multi-round Codex review).
+.claude/plans/
+
+# AI agent tooling — scripts, hooks, custom agents/skills/commands the
+# CLAUDE.md harness invokes. None of this is for the public repo.
+.claude/scripts/
+.claude/hooks/
+.claude/agents/
+.claude/commands/
+.claude/skills/
+.claude/settings.json
+.claude/settings.local.json
+
+# Top-level AI-agent instruction file (mirror of CLAUDE.md but for the
+# claude-mem auto-injected memory context). Not user-facing.
+AGENTS.md
+
+# Internal demo-day script — reverse demo arc with judge timing,
+# fallback paths, etc. Useful for me when prepping the video but
+# not part of the public repo surface.
+DEMO.md
+
+# Anchor + visual-baseline screenshots — used by the local visual-check
+# loop only. screenshots/current/ already ignored above.
+screenshots/anchor/
+screenshots/baseline/

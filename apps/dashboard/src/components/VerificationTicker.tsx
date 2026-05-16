@@ -29,6 +29,7 @@ export function VerificationTicker({ entries }: { entries: TickerEntry[] }) {
     (e) =>
       e.status.state === "verified" ||
       e.status.state === "unverified" ||
+      e.status.state === "error" ||
       e.status.state === "unsigned",
   );
   const anyVerifying = entries.some((e) => e.status.state === "verifying");
@@ -46,6 +47,8 @@ export function VerificationTicker({ entries }: { entries: TickerEntry[] }) {
         return { text: `${seq} ${tool} → ✓ VERIFIED`, tone: "verified" as const };
       case "unverified":
         return { text: `${seq} ${tool} → ✗ UNVERIFIED`, tone: "unverified" as const };
+      case "error":
+        return { text: `${seq} ${tool} ⚠ RPC ERROR`, tone: "unverified" as const };
       case "unsigned":
         return { text: `${seq} ${tool} — UNSIGNED`, tone: "muted" as const };
     }

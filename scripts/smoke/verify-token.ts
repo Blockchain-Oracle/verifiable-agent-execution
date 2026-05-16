@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   console.log(`elapsed:           ${elapsed}ms`);
   console.log("");
   console.log("Entries:");
-  for (const e of proof.entries) {
+  for (const e of proof.entries ?? []) {
     console.log(
       `  #${e.seq.toString().padStart(3, "0")} ${e.type} ${e.tool ?? ""} hasTeeSig=${e.hasTeeSignature}`,
     );

@@ -16,6 +16,7 @@
     "vitest": "vitest"
   },
   "dependencies": {
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@verifiable-agent-execution/chain-client": "workspace:*",
     "@verifiable-agent-execution/logger": "workspace:*",
     "@verifiable-agent-execution/tee-adapter": "workspace:*",
@@ -24,6 +25,9 @@
     "next": "^14.2.18",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-gfm": "^4.0.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

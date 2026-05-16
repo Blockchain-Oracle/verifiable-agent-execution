@@ -32,6 +32,25 @@ export interface SessionMetadata {
   modelId: string;
 }
 
+/**
+ * Optional flush() callback for v0.3.0 client-side encryption. When
+ * provided, the SessionLogger calls `encrypt(jsonPlaintext)` and
+ * uploads the returned bytes verbatim. The cipher closure encapsulates
+ * the key (the SessionLogger NEVER sees it); the plugin owns
+ * generation + persistence (see `keystore.ts` for the crash-recovery
+ * ordering that wraps this).
+ *
+ * Return contract: must be a Uint8Array (or Buffer) ready to upload.
+ * The bytes' format is the caller's responsibility; recommended is
+ * `TextEncoder.encode(JSON.stringify(envelope))` where envelope is an
+ * `EncryptedSessionLogEnvelope` from `plugin/src/crypto.ts`.
+ * The dashboard's `isEncryptedEnvelope` type guard distinguishes
+ * encrypted-envelope bytes from legacy plaintext SessionLog bytes.
+ */
+export interface FlushOptions {
+  encrypt?: (plaintextJson: string) => Uint8Array;
+}
+
 export interface SessionLoggerOptions extends Partial<SessionMetadata> {
   /** Override the initial timestamp (ms). Defaults to Date.now() at construction. */
   startedAt?: number;
@@ -180,7 +199,7 @@ export class SessionLogger {
    * Metadata must be set first or this throws SessionLoggerError(
    * "METADATA_MISSING").
    */
-  async flush(): Promise<LogFlushResult> {
+  async flush(opts?: FlushOptions): Promise<LogFlushResult> {
     if (this.flushed || this.flushing) {
       throw new SessionLoggerError(
         "ALREADY_FLUSHED",
@@ -220,9 +239,15 @@ export class SessionLogger {
       );
     }
 
-    const buffer = new TextEncoder().encode(
-      JSON.stringify(parseResult.data),
-    );
+    // v0.3.0: optional encryption hook. When provided, the plaintext
+    // JSON is transformed into the upload buffer by the caller (the
+    // plugin). The cipher closure encapsulates the key — SessionLogger
+    // never sees it. Bytes uploaded are whatever the cipher emits.
+    const plaintextJson = JSON.stringify(parseResult.data);
+    const buffer =
+      opts?.encrypt !== undefined
+        ? opts.encrypt(plaintextJson)
+        : new TextEncoder().encode(plaintextJson);
 
     // Lock-before-await: any concurrent flush() will see flushing=true
     // and throw before reaching the upload, and any concurrent

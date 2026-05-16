@@ -495,6 +495,157 @@ describe("SessionAnchor.anchor — orchestration", () => {
     expect(mintSpy).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------
+  // v0.3.4 — dataDescriptionPrefix plumbing (orphan-recovery support)
+  // -------------------------------------------------------------------------
+
+  it("v0.3.4: AnchorInput.dataDescriptionPrefix overrides the default 'exec-log' prefix on mint", async () => {
+    // Plugin's session_end orphan-recovery branch passes
+    // "exec-log-orphan" so the dashboard can render a distinct
+    // recovery-anchor badge. Without this hook, the orphan branch
+    // would either have to call AgenticIDClient.mint() directly
+    // (duplicating SessionAnchor's post-flush error handling) or
+    // mislabel the token.
+    const logger = buildSessionLogger();
+    logger.appendEntry({
+      seq: 0,
+      ts: Date.now(),
+      type: "tool_call",
+      tool: "noop",
+      inputHash: "a".repeat(64),
+      outputHash: "b".repeat(64),
+    });
+    const { client, mintSpy } = buildAgenticIdClient();
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+    await anchor.anchor({
+      sessionId: SESSION_ID,
+      containerHash: CONTAINER_HASH,
+      dataDescriptionPrefix: "exec-log-orphan",
+    });
+    const datas = mintSpy.mock.calls[0]?.[1] as IntelligentData[];
+    expect(datas[0].dataDescription).toBe(
+      `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+    );
+  });
+
+  it("v0.3.4: SessionAnchorMintAfterFlushError carries dataDescriptionPrefix so retry can preserve it", async () => {
+    // Without the prefix on the error, an operator-driven retryMint()
+    // would default back to "exec-log" — silently re-labeling an
+    // orphan-recovery rootHash as a normal anchor. The dashboard
+    // parser would then miscategorize the retry-minted token.
+    const logger = buildSessionLogger();
+    const { client } = buildAgenticIdClient({
+      mintImpl: async () => {
+        throw new Error("transient RPC failure");
+      },
+    });
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+    let caught: SessionAnchorMintAfterFlushError | undefined;
+    try {
+      await anchor.anchor({
+        sessionId: SESSION_ID,
+        containerHash: CONTAINER_HASH,
+        dataDescriptionPrefix: "exec-log-orphan",
+      });
+    } catch (err) {
+      if (err instanceof SessionAnchorMintAfterFlushError) caught = err;
+      else throw err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.dataDescriptionPrefix).toBe("exec-log-orphan");
+    expect(caught!.dataDescription).toBe(
+      `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+    );
+    // The error message embeds the prefix in the suggested retry call
+    // so a copy-paste recovery preserves it.
+    expect(caught!.message).toContain(
+      `dataDescriptionPrefix: "exec-log-orphan"`,
+    );
+  });
+
+  it("v0.3.4: retryMint() honors dataDescriptionPrefix on the retry", async () => {
+    // Recovery flow: anchor() failed post-flush, operator passes the
+    // error's dataDescriptionPrefix back to retryMint(). Validate the
+    // retry mints with the SAME prefix, not the default.
+    const logger = buildSessionLogger();
+    let callCount = 0;
+    const mintImpl = async (
+      _to: string,
+      datas: ReadonlyArray<IntelligentData>,
+      _confirmations?: number,
+    ): Promise<MintResult> => {
+      callCount++;
+      if (callCount === 1) throw new Error("transient RPC failure");
+      // Capture the retry call's dataDescription for the assertion below.
+      expect(datas[0].dataDescription).toBe(
+        `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+      );
+      return { tokenId: MINT_TOKEN_ID, txHash: MINT_TX_HASH };
+    };
+    const { client } = buildAgenticIdClient({ mintImpl });
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+    let firstErr: SessionAnchorMintAfterFlushError | undefined;
+    try {
+      await anchor.anchor({
+        sessionId: SESSION_ID,
+        containerHash: CONTAINER_HASH,
+        dataDescriptionPrefix: "exec-log-orphan",
+      });
+    } catch (err) {
+      if (err instanceof SessionAnchorMintAfterFlushError) firstErr = err;
+      else throw err;
+    }
+    expect(firstErr).toBeDefined();
+    const result = await anchor.retryMint({
+      rootHash: firstErr!.rootHash,
+      entryCount: firstErr!.entryCount,
+      sessionId: firstErr!.sessionId,
+      dataDescriptionPrefix: firstErr!.dataDescriptionPrefix,
+    });
+    expect(result.tokenId).toBe(MINT_TOKEN_ID);
+    expect(callCount).toBe(2);
+  });
+
+  it("v0.3.4: dataDescriptionPrefix default 'exec-log' preserved for v0.3.0-style callers", async () => {
+    // Backwards compat: existing call sites (the smoke scripts, the
+    // pre-v0.3.4 plugin code paths) don't pass dataDescriptionPrefix
+    // and must still produce `exec-log:` anchors.
+    const logger = buildSessionLogger();
+    const { client, mintSpy } = buildAgenticIdClient();
+    const anchor = new SessionAnchor(
+      logger,
+      client,
+      VALID_AGENT_ADDRESS,
+      MODEL_ID,
+      { chainId: GALILEO_CHAIN_ID },
+    );
+    await anchor.anchor({
+      sessionId: SESSION_ID,
+      containerHash: CONTAINER_HASH,
+      // dataDescriptionPrefix intentionally omitted.
+    });
+    const datas = mintSpy.mock.calls[0]?.[1] as IntelligentData[];
+    expect(datas[0].dataDescription).toBe(`exec-log:${SESSION_ID}:${MODEL_ID}`);
+  });
+
   it("propagates StorageUploadError from flush() unchanged (does not wrap)", async () => {
     // SessionAnchor must not swallow lower-layer errors — operators
     // need the original class so they can branch on transport vs

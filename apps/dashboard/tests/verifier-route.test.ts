@@ -159,6 +159,49 @@ describe("GET /api/verify/[tokenId] — happy path", () => {
       inputHash: "a".repeat(64),
       outputHash: "b".repeat(64),
     });
+    // v0.3.4-15: normal `exec-log:` anchor → meta.recoveryAnchor === false.
+    // Asserting BOTH true and false (in the next test) wires the boolean
+    // end-to-end so a future regression that hardcodes `recoveryAnchor:false`
+    // would be caught by the orphan-token test.
+    expect(body.meta?.recoveryAnchor).toBe(false);
+  });
+
+  // Codex round-3 v0.3.4-15: pins the BDD "And" line "SessionView
+  // renders an 'Orphan recovery anchor' badge" via the
+  // ProofResponse.meta.recoveryAnchor field that drives it. The
+  // SessionView render itself is verified by anchor-comparison
+  // Playwright screenshots in Epic 5, not unit tests (would require
+  // jsdom + RTL — new infra for a 5-line conditional badge, not worth
+  // the scope creep on v0.3.4).
+  it("v0.3.4-15: orphan-recovery anchor surfaces meta.recoveryAnchor === true on the plaintext path", async () => {
+    installFakeClients({
+      intelligentDatas: [
+        {
+          // The plugin's session_end orphan-recovery branch mints
+          // tokens with the `exec-log-orphan:` prefix.
+          dataDescription: `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+          dataHash: VALID_ROOT_HASH,
+        },
+      ],
+      storageBlob: makeSessionLogBlob(),
+    });
+
+    const request = new Request("http://localhost:3000/api/verify/99");
+    const response = await GET(request, {
+      params: Promise.resolve({ tokenId: "99" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // sessionId still parses out correctly from the orphan prefix.
+    expect(body.sessionId).toBe(SESSION_ID);
+    // The dataDescription round-trips with the orphan prefix.
+    expect(body.meta?.dataDescription).toBe(
+      `exec-log-orphan:${SESSION_ID}:${MODEL_ID}`,
+    );
+    // The recoveryAnchor flag MUST be true so the dashboard renders
+    // the "Orphan recovery anchor" badge.
+    expect(body.meta?.recoveryAnchor).toBe(true);
   });
 });
 
@@ -432,6 +475,66 @@ describe("GET /api/verify/[tokenId]/entry/[seq]", () => {
     const body = await response.json();
     expect(body).toMatchObject({ seq: 0, verified: "verified" });
     expect(typeof body.durationMs).toBe("number");
+  });
+
+  // Pins the v0.2.0 ecrecover-first trust model (ADR-10 — wedge is
+  // "TEE-rooted, not trustless"): when a signature recovers locally
+  // to entry.agentId, the dashboard reports "verified" WITHOUT
+  // round-tripping to the on-chain MockTEEVerifier. Codex round-5
+  // flagged this as too permissive ("any wallet can self-sign green"),
+  // which it is — but it's the documented design choice from v0.2.0,
+  // ADR-10 explicitly says the model is "agent's own wallet is the
+  // trusted signer for ITS entries." This test pins that semantic so
+  // a future "fix" doesn't accidentally regress the agent-wrapper
+  // attestation path. (TEE-attestation-only is v0.4.0 scope.)
+  it("returns 'verified' when ecrecover matches agentId — even if MockTEEVerifier would reject", async () => {
+    const { GET: GET_ENTRY } = await importEntryRoute();
+    // Build a real signed entry: agent wallet signs the digest the
+    // dashboard expects per tee-adapter convention. ecrecover MUST
+    // match agentId; verifier stub returns FALSE to assert that
+    // path B (on-chain) is NOT consulted when path A succeeds.
+    const wallet = new Wallet(
+      "0x" + "1".repeat(64),
+    );
+    const sealId = `0x${"e".repeat(64)}`;
+    const signedAt = 1700000000040;
+    const outputHash = "b".repeat(64);
+    const digest = (await import("ethers")).keccak256(
+      (await import("ethers")).toUtf8Bytes(
+        `${wallet.address}|${sealId}|${signedAt}|${outputHash}`,
+      ),
+    );
+    const sig = await wallet.signingKey.sign(digest).serialized;
+
+    installFakeClients({
+      intelligentDatas: [
+        { dataDescription: `exec-log:${SESSION_ID}:${MODEL_ID}`, dataHash: VALID_ROOT_HASH },
+      ],
+      storageBlob: blobWithEntries([
+        {
+          seq: 0,
+          ts: 1700000000050,
+          type: "tool_call",
+          tool: "quote",
+          inputHash: "a".repeat(64),
+          outputHash,
+          teeSignature: sig,
+          agentId: wallet.address,
+          sealId,
+          signedAt,
+        },
+      ]),
+      // Verifier WOULD say "no" — but the route should never call it
+      // because path A (ecrecover) succeeded first.
+      verifierResult: false,
+    });
+    const response = await GET_ENTRY(
+      new Request("http://localhost:3000/api/verify/1/entry/0"),
+      { params: Promise.resolve({ tokenId: "1", seq: "0" }) },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.verified).toBe("verified");
   });
 
   it("returns 200 verified='unsigned' when entry has no teeSignature (badge stays grey)", async () => {

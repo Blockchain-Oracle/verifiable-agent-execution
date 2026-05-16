@@ -13,21 +13,31 @@
   }
   body {
     @apply bg-bg text-text-primary font-sans;
-    /* Anti-jitter for hash/address strings — the mono font has tabular
-       digits which the proof-detail page needs heavily. */
+    background-image:
+      linear-gradient(rgba(229, 38, 58, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(229, 38, 58, 0.04) 1px, transparent 1px);
+    background-size: 44px 44px;
     font-variant-numeric: tabular-nums;
   }
-  /* Dark-mode-only — no light-mode media query toggling per the UX
-     spec scope cap. */
   ::selection {
-    background-color: theme("colors.accent-verify");
+    background-color: theme("colors.accent-link");
     color: theme("colors.bg");
   }
 }
 
-/* Marquee ticker animation — used by VerificationTicker. Linear,
-   infinite loop, 24s wrap-around. The track holds 2x the content
-   so the wrap is seamless. */
+/* Staggered card entrance — used by the Capture/Anchor/Reveal stat
+   cards on the landing page. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes ticker {
   from {
     transform: translateX(0%);
@@ -35,6 +45,40 @@
   to {
     transform: translateX(-50%);
   }
+}
+
+@keyframes scan-sweep {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    transform: translateY(120%);
+    opacity: 0;
+  }
+}
+
+.scan-surface {
+  position: relative;
+  overflow: hidden;
+}
+
+.scan-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(54, 211, 153, 0.11),
+    transparent
+  );
+  transform: translateY(-120%);
+  animation: scan-sweep 4.8s ease-in-out infinite;
 }
 
 /* Massive numeric stamp — used for the tokenId hero on /verify/[tokenId].
@@ -47,7 +91,7 @@
 .token-stamp {
   font-feature-settings: "tnum" 1, "ss01" 1;
   font-weight: 700;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
 }
 
@@ -60,8 +104,12 @@
   .animate-\[ticker_12s_linear_infinite\] {
     animation: none !important;
   }
+  .animate-\[fade-up_0\.45s_ease-out_both\] {
+    animation: none !important;
+  }
   .animate-pulse,
-  .animate-ping {
+  .animate-ping,
+  .scan-surface::after {
     animation: none !important;
   }
 }
@@ -77,4 +125,58 @@
   background-size: 8px 1px;
   background-repeat: repeat-x;
   background-position: bottom;
+}
+
+/* Markdown prose inside decrypted tool_result entries — v0.3.7 Tier 1.5.
+   Tool results from WebSearch/WebFetch are markdown. Rendered via
+   react-markdown + remark-gfm; this layer paints the prose styles
+   without pulling in a full Tailwind Typography plugin. Scope: only
+   `.markdown-body` wrapper so it never leaks to the rest of the UI.
+
+   Palette = UX-spec tokens (no shadcn prose defaults — those would
+   override our text-primary / border / link colors). Long URLs +
+   tables wrap inside the card via the `break-words` utility at the
+   wrapper level (set in EntryCard.tsx) — these rules just style the
+   content. */
+.markdown-body :where(h1, h2, h3, h4, h5, h6) {
+  @apply font-semibold text-text-primary;
+}
+.markdown-body > :first-child { @apply mt-0; }
+.markdown-body > :last-child { @apply mb-0; }
+.markdown-body h1 { @apply text-lg mt-4 mb-2; }
+.markdown-body h2 { @apply text-base mt-4 mb-2; }
+.markdown-body h3 { @apply text-sm mt-3 mb-1 uppercase tracking-wider text-text-secondary; }
+.markdown-body p { @apply text-sm leading-relaxed text-text-primary my-2; }
+.markdown-body strong { @apply font-semibold text-text-primary; }
+.markdown-body em { @apply italic; }
+.markdown-body a {
+  @apply text-link underline decoration-link/40 underline-offset-2;
+}
+.markdown-body a:hover { @apply decoration-link; }
+.markdown-body ul { @apply list-disc pl-5 my-2 space-y-1 text-sm; }
+.markdown-body ol { @apply list-decimal pl-5 my-2 space-y-1 text-sm; }
+.markdown-body li { @apply text-text-primary; }
+.markdown-body :where(code):not(pre code) {
+  @apply rounded bg-surface-elev px-1 py-0.5 font-mono text-[0.85em] text-text-primary border border-border/40;
+}
+.markdown-body pre {
+  @apply mt-2 mb-2 overflow-x-auto rounded border border-border/40 bg-bg px-3 py-2 font-mono text-xs leading-relaxed text-text-primary;
+}
+.markdown-body pre code {
+  @apply bg-transparent border-0 p-0 text-inherit;
+}
+.markdown-body blockquote {
+  @apply border-l-2 border-border pl-3 my-2 italic text-text-secondary;
+}
+.markdown-body table {
+  @apply my-2 w-full border-collapse text-sm;
+}
+.markdown-body th, .markdown-body td {
+  @apply border border-border px-2 py-1 text-left;
+}
+.markdown-body th {
+  @apply bg-surface-elev font-semibold text-text-primary;
+}
+.markdown-body hr {
+  @apply my-3 border-border/60;
 }

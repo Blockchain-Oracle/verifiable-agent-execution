@@ -18,6 +18,7 @@
 
 import Link from "next/link";
 
+import { EncryptedReveal } from "@/components/EncryptedReveal";
 import { Mono } from "@/components/Mono";
 import { RootHashWatermark } from "@/components/RootHashWatermark";
 import { SessionView } from "@/components/SessionView";
@@ -52,7 +53,22 @@ export default async function VerifyPage({ params }: PageProps) {
         <TopBar />
         {proof !== null ? (
           <main>
-            <SessionView proof={proof} />
+            {/* v0.3.0: encrypted receipts render a metadata-only locked
+                state. Client-side EncryptedReveal reads the URL
+                fragment (#k=…), fetches the raw envelope from the
+                key-blind /blob endpoint (NO ?k= on the wire), decrypts
+                via WebCrypto in the browser, and hydrates SessionView
+                with a client-side ethers verifyEntry callback. The
+                reveal key NEVER reaches the server (Codex round-1
+                security fix; pinned by tests/encrypted-route.test.ts).
+                Legacy plaintext receipts (verified =
+                "verified"|"preview"|"unverified") skip the wrapper
+                and render SessionView directly. */}
+            {proof.verified === "encrypted" ? (
+              <EncryptedReveal initialProof={proof} />
+            ) : (
+              <SessionView proof={proof} />
+            )}
           </main>
         ) : (
           <main className="mx-auto max-w-5xl px-6 py-10">

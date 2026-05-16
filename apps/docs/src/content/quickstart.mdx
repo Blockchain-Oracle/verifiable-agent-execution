@@ -1,0 +1,97 @@
+---
+title: Quickstart
+description: Install the AGENTSCAN plugin and ship your first verifiable agent receipt in 90 seconds.
+---
+
+# Quickstart — 90 seconds to your first receipt
+
+You'll install the plugin, fund a wallet with free testnet 0G,
+restart the OpenClaw gateway, and run any agent command. By the
+end you'll have a `/verify/<tokenId>` URL you can share with
+anyone on the internet — they'll verify the receipt cold, no
+wallet required, in their browser.
+
+## What you need
+
+- [OpenClaw CLI](https://openclaw.ai) ≥ 2026.4.25
+- Node.js 20 or later
+- A few minutes
+
+## The fast path — one command
+
+```bash
+git clone https://github.com/Blockchain-Oracle/agentscan
+cd agentscan
+./install.sh
+openclaw gateway restart
+```
+
+`./install.sh` does everything in the right order:
+
+1. Installs workspace deps + bundles the plugin
+2. **Generates your signing wallet** at `~/.openclaw/verifiable-execution/wallet.json` (mode 0600)
+3. Wires the wallet's address into the plugin config as `agentId`
+4. Flips both OpenClaw permission gates (allowlist + conversation access)
+5. Links the bundled plugin into OpenClaw via `--link`
+6. Prints the wallet address you need to fund
+
+If you'd rather install from npm directly (no clone), [see Install](/install) — same outcome, more steps.
+
+## Fund the wallet
+
+Once `./install.sh` prints your wallet address, fund it from the
+testnet faucet (free):
+
+1. Open [faucet.0g.ai](https://faucet.0g.ai)
+2. Paste your wallet address
+3. Claim 0.1 0G (daily limit — enough for hundreds of mints)
+4. Wait ~10 seconds for the transfer to land
+
+> **Don't remember your address?** From inside any chat the bot
+> is in, type `/agentscan_wallet`. It prints the address + the faucet link.
+> No terminal, no `jq`, no JSON-file hunting.
+
+## Run any agent command
+
+```bash
+openclaw query "What's the current ETH price?"
+```
+
+While the agent runs, the plugin silently:
+
+1. Hashes every tool call (sha256, no plaintext leaves your machine)
+2. On session end, encrypts the log + uploads to 0G Storage
+3. Mints an iNFT receipt anchoring the content hash
+4. Prints a `/verify/<tokenId>` URL to stderr
+
+```
+[verifiable-execution] session anchored:
+  tokenId=42 verifyUrl=https://agentscan.online/verify/42
+```
+
+## Share the receipt
+
+From the same chat the bot is in, type:
+
+```
+/agentscan_share
+```
+
+You'll get back a URL with a `#k=<key>` fragment. **The fragment
+never reaches our server** — browsers don't include `#` parts in
+HTTP requests. Send the URL to anyone via DM, email, anywhere.
+They click it, the decryption happens in their browser, the proof
+chain verifies live against 0G Chain + 0G Storage.
+
+Want all your receipts at once? Type `/agentscan_tokens`.
+
+## Done
+
+You're shipping verifiable agent runs. From here:
+
+- **[Concepts](/concepts)** — what's actually on-chain vs what's encrypted
+- **[Commands](/commands)** — the full `/agentscan_wallet`, `/agentscan_share`, `/agentscan_tokens` reference
+- **[Architecture](/architecture)** — how the plugin, 0G Storage, and the iNFT fit together
+- **[Mainnet vs Testnet](/networks)** — when to switch
+
+Hit a snag? See [Install](/install) for the full troubleshooting walkthrough.
