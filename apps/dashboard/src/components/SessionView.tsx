@@ -189,7 +189,7 @@ export function SessionView({
   return (
     <>
       <VerificationTicker entries={tickerEntries} />
-      <div className="relative mx-auto mt-6 max-w-5xl space-y-8 px-4 pb-16 sm:mt-8 sm:space-y-10 sm:px-6">
+      <div className="relative mx-auto mt-6 max-w-6xl space-y-8 px-4 pb-16 sm:mt-8 sm:space-y-10 sm:px-6">
         <NumericHero
           proof={proof}
           running={running}
@@ -225,11 +225,14 @@ function NumericHero({
   onReplay: () => void;
 }) {
   return (
-    <header className="relative grid grid-cols-1 items-end gap-8 lg:grid-cols-[auto_1fr_auto]">
+    <header className="relative grid grid-cols-1 items-end gap-6 rounded-md border border-border/80 bg-surface/90 p-5 shadow-[0_20px_70px_rgba(0,0,0,0.24)] sm:p-6 lg:grid-cols-[auto_1fr_auto]">
       {/* Massive numeric tokenId — the brand mark of the proof. */}
       <div className="relative">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-accent-link">
+          Agent Scan receipt
+        </p>
         <div
-          className="token-stamp font-mono text-[80px] leading-none text-text-primary sm:text-[120px] md:text-[160px]"
+          className="token-stamp font-mono text-[68px] leading-none text-text-primary sm:text-[96px] md:text-[120px]"
           aria-label={`Token ${proof.tokenId}`}
         >
           <span className="text-text-secondary/40">#</span>
@@ -289,7 +292,7 @@ function NumericHero({
           onClick={onReplay}
           disabled={running}
           className={
-            "inline-flex items-center justify-center gap-2 rounded-none border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] transition-all " +
+            "inline-flex items-center justify-center gap-2 rounded-md border px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.16em] transition-all " +
             (running
               ? "cursor-wait border-border/60 text-text-secondary"
               : completed && allVerified
@@ -305,9 +308,15 @@ function NumericHero({
               Auto-verifying {proof.entryCount}
             </>
           ) : completed && allVerified ? (
-            <>↺ Replay verification</>
+            <>
+              <ReplayIcon className="h-3.5 w-3.5" />
+              Replay verification
+            </>
           ) : completed && anyFailed ? (
-            <>↺ Re-run failed verification</>
+            <>
+              <ReplayIcon className="h-3.5 w-3.5" />
+              Re-run failed verification
+            </>
           ) : (
             // Pre-cascade label matches the running state — the page
             // auto-fires within 600ms of mount, so there's no window
@@ -326,6 +335,25 @@ function NumericHero({
         </p>
       </div>
     </header>
+  );
+}
+
+function ReplayIcon({ className }: { className: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
   );
 }
 
@@ -440,7 +468,7 @@ function EntryChain({
   const entries = proof.entries ?? [];
   return (
     <section>
-      <header className="mb-6 flex items-baseline justify-between">
+      <header className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-sans text-sm font-semibold uppercase tracking-[0.18em] text-text-primary">
           Tool calls · {entries.length}
         </h2>

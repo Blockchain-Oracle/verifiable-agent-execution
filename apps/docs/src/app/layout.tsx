@@ -7,12 +7,12 @@ import './globals.css'
 
 export const metadata = {
   title: {
-    template: '%s — AGENTSCAN docs',
-    default: 'AGENTSCAN — Etherscan for AI agents',
+    template: '%s — Agent Scan docs',
+    default: 'Agent Scan for OpenClaw',
   },
   description:
-    'AGENTSCAN end-user docs. Install the plugin, share verifiable agent receipts, decrypt them in the dashboard, and verify any session cold from a URL.',
-  applicationName: 'AGENTSCAN',
+    'Agent Scan for OpenClaw docs. Install the plugin, share verifiable agent receipts, decrypt them in the dashboard, and verify any session cold from a URL.',
+  applicationName: 'Agent Scan',
   icons: {
     icon: [
       { url: '/icon.svg', type: 'image/svg+xml' },
@@ -29,11 +29,11 @@ export const metadata = {
 const logo = (
   <Image
     src="/logo.svg"
-    alt="AGENTSCAN"
-    width={156}
-    height={28}
+    alt="Agent Scan for OpenClaw"
+    width={222}
+    height={36}
     priority
-    style={{ height: 28, width: 'auto' }}
+    style={{ height: 36, width: 'auto' }}
   />
 )
 
@@ -43,7 +43,7 @@ const logo = (
 // new features without leaving the old strip dismissed forever.
 const banner = (
   <Banner storageKey="agentscan-docs-banner-v1">
-    🟢 LIVE on 0G — testnet <a href="https://agentscan.online" style={{ textDecoration: 'underline' }}>agentscan.online</a> · mainnet <a href="https://mainnet.agentscan.online" style={{ textDecoration: 'underline' }}>mainnet.agentscan.online</a>
+    LIVE on 0G: testnet <a href="https://agentscan.online" style={{ textDecoration: 'underline' }}>agentscan.online</a> · mainnet <a href="https://mainnet.agentscan.online" style={{ textDecoration: 'underline' }}>mainnet.agentscan.online</a>
   </Banner>
 )
 

@@ -53,6 +53,36 @@ describe("ContentBlock — rendering (v0.3.7 Tier 1.5)", () => {
     expect(html).not.toContain("[coingecko.com]");
   });
 
+  it("renders bold-only markdown as prose instead of leaking stars", () => {
+    const markdownResult =
+      "**Decision:** buy coverage.\n\n**Reason:** the receipt verifies on chain.";
+    const html = renderBlock(markdownResult);
+
+    expect(html).toMatch(/<strong>Decision:<\/strong>/);
+    expect(html).toMatch(/<strong>Reason:<\/strong>/);
+    expect(html).not.toContain("**Decision:**");
+    expect(html).not.toContain("**Reason:**");
+  });
+
+  it("extracts markdown from nested decrypted tool-result content", () => {
+    const nestedResult = {
+      content: [
+        {
+          type: "text",
+          text:
+            "## Search summary\n\n1. Verified the AgenticID token.\n2. Checked [OpenClaw](https://openclaw.ai).",
+        },
+      ],
+      source: "tool_result",
+    };
+    const html = renderBlock(nestedResult);
+
+    expect(html).toMatch(/<h2[^>]*>Search summary<\/h2>/);
+    expect(html).toMatch(/<ol[^>]*>/);
+    expect(html).toMatch(/href="https:\/\/openclaw\.ai"/);
+    expect(html).not.toContain("## Search summary");
+  });
+
   it("renders JSON-shaped content as a syntax-highlighted code block (NOT markdown)", () => {
     const jsonResult = { rate: 2380.42, ethOut: 0.42 };
     const html = renderBlock(jsonResult);

@@ -15,7 +15,7 @@
  * but removes the text from the DOM entirely.
  */
 
-const ACCENT_VERIFY = "#10B981";
+const ACCENT_VERIFY = "#36D399";
 
 export function RootHashWatermark({ rootHash }: { rootHash: string }) {
   // Strip 0x prefix if present so the hex itself is what tiles.

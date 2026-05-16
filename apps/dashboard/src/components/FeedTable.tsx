@@ -58,18 +58,23 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
   }, []);
 
   return (
-    <section className="overflow-hidden rounded-md border border-border bg-surface">
-      <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-3 sm:px-5">
-        <h2 className="font-sans text-sm font-semibold uppercase tracking-[0.16em] text-text-primary">
-          Latest sessions
-        </h2>
+    <section className="overflow-hidden rounded-md border border-border/80 bg-surface/90 shadow-[0_20px_70px_rgba(0,0,0,0.24)]">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/80 px-4 py-4 sm:px-5">
+        <div>
+          <h2 className="font-sans text-base font-semibold text-text-primary">
+            Latest receipts
+          </h2>
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-text-secondary">
+            OpenClaw sessions anchored on 0G
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] uppercase tracking-wider text-text-secondary">
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5 rounded-full border border-accent-verify/25 bg-accent-verify/10 px-2.5 py-1 text-accent-verify">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-verify opacity-75" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent-verify" />
             </span>
-            Live · refresh 15s
+            Live feed
           </span>
           {updatedAt > 0 && (
             <time dateTime={new Date(updatedAt).toISOString()}>
@@ -80,7 +85,7 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
       </header>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="bg-bg">
+          <thead className="bg-bg/75">
             <tr className="text-[10px] uppercase tracking-[0.14em] text-text-secondary">
               <th className="px-3 py-2 font-mono font-normal sm:px-5">Token</th>
               <th className="px-3 py-2 font-mono font-normal sm:px-5">Session</th>
@@ -100,12 +105,12 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
             {rows.map((row) => (
               <tr
                 key={row.tokenId}
-                className="border-t border-border/60 transition-colors hover:bg-surface-elev"
+                className="border-t border-border/60 transition-colors hover:bg-surface-elev/80"
               >
                 <td className="whitespace-nowrap px-3 py-3 font-mono text-text-primary sm:px-5">
                   <Link
                     href={`/verify/${row.tokenId}`}
-                    className="text-link hover:underline"
+                    className="rounded-sm text-link transition-colors hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-link/50"
                   >
                     #{row.tokenId}
                   </Link>
@@ -116,7 +121,7 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
                 <td className="px-3 py-3 font-mono text-xs sm:px-5">
                   <Link
                     href={`/agent/${row.owner}`}
-                    className="text-link hover:underline"
+                    className="rounded-sm text-link transition-colors hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-link/50"
                     title={row.owner}
                   >
                     {truncateAddress(row.owner)}
@@ -126,7 +131,7 @@ export function FeedTable({ initialRows }: { initialRows: FeedRow[] }) {
                   {row.modelId || "—"}
                 </td>
                 <td className="px-3 py-3 text-right sm:px-5">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-accent-verify/30 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-verify">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-accent-verify/30 bg-accent-verify/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-verify">
                     <span className="h-1 w-1 rounded-full bg-accent-verify" />
                     Anchored
                   </span>

@@ -4,11 +4,11 @@
  * VerificationTicker — the Bloomberg-style scrolling ticker that
  * narrates the verify cascade as it happens.
  *
- * Shows: "VERIFYING #001 quote → ✓ verified · #002 liquidity → ✓ verified · ..."
+ * Shows compact text updates for each per-entry verification state.
  *
  * Driven by the same `statuses` state that powers the per-entry
  * badges. Renders below the TopBar, above the hero. As statuses flip
- * from pending → verifying → verified, the ticker text rebuilds and
+ * from pending to verifying to verified, the ticker text rebuilds and
  * scrolls in.
  *
  * Pattern adapted from 21st.dev's Marquee component (linear infinite
@@ -40,17 +40,17 @@ export function VerificationTicker({ entries }: { entries: TickerEntry[] }) {
     const seq = `#${e.seq.toString().padStart(3, "0")}`;
     switch (e.status.state) {
       case "pending":
-        return { text: `${seq} ${tool} — PENDING`, tone: "muted" as const };
+        return { text: `${seq} ${tool} - PENDING`, tone: "muted" as const };
       case "verifying":
-        return { text: `${seq} ${tool} — VERIFYING…`, tone: "active" as const };
+        return { text: `${seq} ${tool} - VERIFYING`, tone: "active" as const };
       case "verified":
-        return { text: `${seq} ${tool} → ✓ VERIFIED`, tone: "verified" as const };
+        return { text: `${seq} ${tool} - VERIFIED`, tone: "verified" as const };
       case "unverified":
-        return { text: `${seq} ${tool} → ✗ UNVERIFIED`, tone: "unverified" as const };
+        return { text: `${seq} ${tool} - UNVERIFIED`, tone: "unverified" as const };
       case "error":
-        return { text: `${seq} ${tool} ⚠ RPC ERROR`, tone: "unverified" as const };
+        return { text: `${seq} ${tool} - RPC ERROR`, tone: "unverified" as const };
       case "unsigned":
-        return { text: `${seq} ${tool} — UNSIGNED`, tone: "muted" as const };
+        return { text: `${seq} ${tool} - UNSIGNED`, tone: "muted" as const };
     }
   });
 

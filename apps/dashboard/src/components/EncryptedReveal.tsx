@@ -6,7 +6,7 @@
  * Server returns metadata with `verified === "encrypted"` and no entries.
  * This component:
  *
- *   1. Renders the metadata-only "🔒 Encrypted" state immediately
+ *   1. Renders the metadata-only encrypted state immediately
  *   2. On mount, reads `window.location.hash` for `#k=<base64url-key>`
  *   3. If found, fetches the **encrypted envelope** from
  *      `/api/verify/[tokenId]/blob` (a key-blind passthrough — the
@@ -191,7 +191,7 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
   // outer padding (`px-4`/`p-5` mobile → `px-6`/`p-8` desktop).
   return (
     <section className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
-      <div className="rounded-md border border-border bg-surface p-5 sm:p-8">
+      <div className="rounded-md border border-border/80 bg-surface/95 p-5 shadow-[0_20px_70px_rgba(0,0,0,0.24)] sm:p-8">
         <header className="flex flex-wrap items-baseline justify-between gap-4">
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-text-secondary">
@@ -207,8 +207,8 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
         <p className="mt-6 max-w-prose font-sans text-sm leading-relaxed text-text-secondary">
           This receipt&apos;s contents are encrypted off-chain. The proof
           chain (hash, signature, mint transaction) is verifiable cold by
-          anyone visiting this URL — but to see WHAT the agent did, the
-          owner must share a reveal link with you.
+          anyone visiting this URL. The agent transcript stays private until
+          the owner shares a reveal link.
         </p>
 
         <dl className="mt-8 grid grid-cols-1 gap-y-3 font-mono text-xs sm:grid-cols-[200px_1fr]">
@@ -252,10 +252,13 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
           </dd>
         </dl>
 
-        <div className="mt-8 rounded-md border border-border/60 bg-bg/40 p-4 font-sans text-sm leading-relaxed text-text-secondary">
+        <div className="mt-8 rounded-md border border-border/60 bg-bg/55 p-4 font-sans text-sm leading-relaxed text-text-secondary">
           {state.status === "locked" && (
             <>
-              <p className="text-text-primary">🔒 No reveal key provided</p>
+              <p className="flex items-center gap-2 text-text-primary">
+                <LockIcon className="h-4 w-4 text-accent-link" />
+                No reveal key provided
+              </p>
               <p className="mt-2">
                 Ask the receipt&apos;s owner to share the full URL — it
                 includes a fragment like{" "}
@@ -270,14 +273,16 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
             </>
           )}
           {state.status === "decrypting" && (
-            <p className="text-text-primary">
-              🔓 Decrypting receipt locally…
+            <p className="flex items-center gap-2 text-text-primary">
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent-link border-t-transparent" />
+              Decrypting receipt locally...
             </p>
           )}
           {state.status === "error" && (
             <>
-              <p className="text-accent-unverified">
-                ⚠ Decryption failed
+              <p className="flex items-center gap-2 text-accent-unverified">
+                <AlertIcon className="h-4 w-4" />
+                Decryption failed
               </p>
               <p className="mt-2">{state.message}</p>
               <p className="mt-2 text-text-secondary">
@@ -289,5 +294,44 @@ export function EncryptedReveal({ initialProof }: EncryptedRevealProps) {
         </div>
       </div>
     </section>
+  );
+}
+
+function LockIcon({ className }: { className: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M16 11V7a4 4 0 0 0-8 0v4" />
+      <path d="M5 11h14v10H5z" />
+    </svg>
+  );
+}
+
+function AlertIcon({ className }: { className: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+      <path d="M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 21h15.8a2 2 0 0 0 1.7-3.4L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+    </svg>
   );
 }
