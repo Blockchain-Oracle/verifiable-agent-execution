@@ -25,9 +25,19 @@
   }
 }
 
-/* Marquee ticker animation — used by VerificationTicker. Linear,
-   infinite loop, 24s wrap-around. The track holds 2x the content
-   so the wrap is seamless. */
+/* Staggered card entrance — used by the Capture/Anchor/Reveal stat
+   cards on the landing page. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes ticker {
   from {
     transform: translateX(0%);
@@ -92,6 +102,9 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-\[ticker_24s_linear_infinite\],
   .animate-\[ticker_12s_linear_infinite\] {
+    animation: none !important;
+  }
+  .animate-\[fade-up_0\.45s_ease-out_both\] {
     animation: none !important;
   }
   .animate-pulse,

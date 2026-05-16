@@ -7,12 +7,9 @@
  * skeleton flash. Client-side polling kicks in for new mints.
  */
 
-import Link from "next/link";
-
 import { FeedTable } from "@/components/FeedTable";
 import { TopBar } from "@/components/TopBar";
 import {
-  DEMO_TOKEN_ID,
   chainscanHost,
   chainscanLinkLabel,
   loadEnv,
@@ -77,26 +74,20 @@ function Hero({
           </p>
         </div>
         <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href={`/verify/${DEMO_TOKEN_ID}`}
-              className="group inline-flex items-center gap-2 rounded-md bg-accent-link px-5 py-2.5 font-sans text-sm font-semibold text-white shadow-[0_0_28px_rgba(229,38,58,0.30)] transition-all hover:bg-accent-link/90 hover:shadow-[0_0_36px_rgba(229,38,58,0.40)] hover:translate-y-[-1px] focus:outline-none focus:ring-2 focus:ring-accent-link/60"
-            >
-              Verify the demo session
-              <ArrowIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </Link>
-          </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              ["Capture", "OpenClaw tool calls"],
-              ["Anchor", "0G AgenticID receipt"],
-              ["Reveal", "Client-side decrypt"],
-            ].map(([label, value]) => (
+            {(
+              [
+                ["Capture", "OpenClaw tool calls"],
+                ["Anchor", "0G AgenticID receipt"],
+                ["Reveal", "Client-side decrypt"],
+              ] as const
+            ).map(([label, value], i) => (
               <div
                 key={label}
-                className="rounded-md border border-border/60 bg-surface/50 px-4 py-3"
+                className="group rounded-md border border-border/60 bg-surface/50 px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent-link/40 hover:bg-surface/80 animate-[fade-up_0.45s_ease-out_both]"
+                style={{ animationDelay: `${i * 0.12}s` }}
               >
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-secondary">
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-secondary transition-colors group-hover:text-accent-link">
                   {label}
                 </p>
                 <p className="mt-1 text-sm font-medium text-text-primary">{value}</p>
@@ -170,24 +161,6 @@ function Hero({
   );
 }
 
-function ArrowIcon({ className }: { className: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M5 12h14" />
-      <path d="m13 6 6 6-6 6" />
-    </svg>
-  );
-}
 
 function Footer({
   chainId,
