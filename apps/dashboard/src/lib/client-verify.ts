@@ -28,7 +28,9 @@ const VERIFIER_ABI = [
   "function verifyTEESignature(bytes32 hash, bytes calldata signature) external view returns (bool)",
 ] as const;
 
-export type ClientEntryStatus = "verified" | "unverified" | "unsigned";
+// "error" is distinct from "unverified": unverified = bad signature;
+// error = transport failure (RPC down, wrong network, timeout).
+export type ClientEntryStatus = "verified" | "unverified" | "unsigned" | "error";
 
 export interface ClientVerifyResult {
   seq: number;
@@ -122,12 +124,18 @@ export async function verifyEntryClient(
       durationMs: Date.now() - start,
     };
   } catch (cause) {
+    // Transport failure — NOT a cryptographic failure. The contract
+    // returned false would arrive as ok=false above (no throw). This
+    // catch fires only when the RPC call itself fails (outage, timeout,
+    // wrong network, provider misconfiguration). Map to "error" so
+    // SessionView can show "verifier unreachable" instead of the same
+    // red badge it uses for a genuinely bad signature.
     const reason =
       (cause as { reason?: string } | null)?.reason ??
       (cause instanceof Error ? cause.message : String(cause));
     return {
       seq: entry.seq,
-      verified: "unverified",
+      verified: "error",
       reason,
       durationMs: Date.now() - start,
     };

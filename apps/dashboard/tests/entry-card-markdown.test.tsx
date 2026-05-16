@@ -3,111 +3,88 @@
 //   1. Tool-result content that LOOKS like markdown (WebSearch results
 //      with [text](URL) citations, lists, bold) gets rendered as HTML
 //      with anchor tags + lists + bold, not as a wall of `*` characters.
-//   2. JSON-like content (the existing decoded entry params/result) keeps
-//      rendering as a monospace block — react-markdown would mangle it.
+//   2. JSON-like content keeps rendering as a highlighted code block —
+//      react-markdown would mangle it.
 //   3. Long values (URLs, sessionKeys, paths) wrap inside the card
-//      instead of triggering horizontal scroll. We test this by
-//      checking the rendered classes — `whitespace-pre-wrap` and
-//      `break-words` are both required; the legacy `overflow-x-auto`
-//      MUST be absent on the plain path.
+//      instead of triggering horizontal scroll. react-syntax-highlighter
+//      applies white-space:pre-wrap + word-break:break-all via its
+//      theme inline styles (not Tailwind classes).
+//   4. Plain strings without markdown signals stay in a monospace block.
 //
-// Renders via react-dom/server's renderToStaticMarkup (same pattern as
-// recovery-badge.test.tsx — no jsdom needed for pure JSX).
+// Renders ContentBlock directly (exported from EntryCard) with open={true}
+// so we test the content-rendering logic independently of the collapse
+// toggle. This avoids the jsdom + user-event dependency that the old
+// EntryCard-level tests would have needed after we switched to
+// collapsed-by-default in v0.3.x.
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { EntryCard } from "@/components/EntryCard";
+import { ContentBlock } from "@/components/EntryCard";
 
-const VALID_HASH = `0x${"a".repeat(64)}`;
+const noop = () => {};
 
-function makeEntryProps(overrides: {
-  params?: unknown;
-  result?: unknown;
-  tool?: string;
-}) {
-  return {
-    seq: 0,
-    ts: 1700000000000,
-    type: "tool_call",
-    tool: overrides.tool ?? "WebSearch",
-    inputHash: "a".repeat(64),
-    outputHash: "b".repeat(64),
-    hasTeeSignature: true,
-    params: overrides.params,
-    result: overrides.result,
-    status: { state: "pending" as const },
-  };
+function renderBlock(value: unknown) {
+  return renderToStaticMarkup(
+    createElement(ContentBlock, {
+      label: "Result",
+      value,
+      fallbackHash: "a".repeat(64),
+      open: true,
+      onToggle: noop,
+    }),
+  );
 }
 
-describe("EntryCard — markdown rendering (v0.3.7 Tier 1.5)", () => {
-  it("renders a tool_result string as markdown when it has structural signals", () => {
-    // Realistic WebSearch result content: header + bullets + link.
+describe("ContentBlock — rendering (v0.3.7 Tier 1.5)", () => {
+  it("renders a markdown string as HTML when it has structural signals", () => {
     const markdownResult =
       "## SOL price\n\n- Current: $93.42\n- 24h: +1.8%\n\nSource: [coingecko.com](https://www.coingecko.com/en/coins/solana)";
-    const html = renderToStaticMarkup(
-      createElement(EntryCard, makeEntryProps({ result: markdownResult })),
-    );
+    const html = renderBlock(markdownResult);
     // The h2 + bullets + anchor tag should be in the output.
     expect(html).toMatch(/<h2[^>]*>SOL price<\/h2>/);
     expect(html).toMatch(/<ul[^>]*>/);
     expect(html).toMatch(
       /<a [^>]*href="https:\/\/www\.coingecko\.com\/en\/coins\/solana"/,
     );
-    // The raw `## ` and `[]()` syntax should NOT appear as literal text
-    // in the rendered output.
+    // The raw `## ` and `[]()` syntax should NOT appear as literal text.
     expect(html).not.toContain("## SOL price");
     expect(html).not.toContain("[coingecko.com]");
   });
 
-  it("renders JSON-shaped content as a plain monospace block (NOT markdown)", () => {
-    // The existing params/result decoded JSON shape — `{...}` first
-    // char rules out markdown rendering even though it has `:` and
-    // similar punctuation a markdown parser might choke on.
+  it("renders JSON-shaped content as a syntax-highlighted code block (NOT markdown)", () => {
     const jsonResult = { rate: 2380.42, ethOut: 0.42 };
-    const html = renderToStaticMarkup(
-      createElement(EntryCard, makeEntryProps({ result: jsonResult })),
-    );
-    // Should appear inside a `<pre>` (the plain path), NOT inside a
-    // `<div class="markdown-body">`. React escapes quote characters
-    // to `&quot;` in static markup — match on `rate` + `2380.42` (the
-    // values) which are quote-agnostic.
+    const html = renderBlock(jsonResult);
+    // react-syntax-highlighter wraps in <pre><code>...</code></pre>.
+    // The values appear inside span tokens — [\s\S]*? crosses them.
     expect(html).toMatch(/<pre[^>]*>[\s\S]*?rate[\s\S]*?2380\.42[\s\S]*?<\/pre>/);
+    // Must NOT be in a markdown-body div.
     expect(html).not.toMatch(/<div class="markdown-body[^"]*">[\s\S]*?rate/);
   });
 
-  it("plain string without markdown signals also stays in the monospace pre block", () => {
-    // A bare text response (no headers, no bullets, no links) is too
-    // ambiguous to commit to markdown — falls through to the safe
-    // monospace path.
-    const html = renderToStaticMarkup(
-      createElement(
-        EntryCard,
-        makeEntryProps({ result: "Operation completed successfully." }),
-      ),
-    );
-    expect(html).toMatch(/<pre[^>]*>Operation completed successfully\.<\/pre>/);
+  it("plain string without markdown signals stays in the monospace block", () => {
+    const html = renderBlock("Operation completed successfully.");
+    // SyntaxHighlighter renders <pre ...><code ...>text</code></pre>
+    expect(html).toMatch(/<pre[^>]*>[\s\S]*?Operation completed successfully\.[\s\S]*?<\/pre>/);
   });
 
-  it("plain path uses whitespace-pre-wrap + break-words (no horizontal scroll)", () => {
-    // Abu's 2026-05-15 critique: "i had to scroll horizonally to the
-    // left which dosent make sense". The fix flipped `overflow-x-auto`
-    // to wrap-inside-card. Long URLs in a JSON dump exercise this.
+  it("plain path uses pre-wrap + break-all (no horizontal scroll)", () => {
     const longUrlContent = {
       url: "https://example.com/" + "a".repeat(500),
     };
-    const html = renderToStaticMarkup(
-      createElement(EntryCard, makeEntryProps({ result: longUrlContent })),
-    );
-    // The `<pre>` element must carry both classes for wrap-inside.
-    expect(html).toMatch(/<pre[^>]*whitespace-pre-wrap[^>]*break-words/);
-    // And must NOT carry the legacy overflow-x-auto on the plain path.
-    // (We only check the FIRST pre in the markup so a nested
-    // markdown-body pre wouldn't false-positive — but we're in the
-    // plain path here so there shouldn't be a markdown body anyway.)
-    const firstPreMatch = html.match(/<pre [^>]+>/);
-    expect(firstPreMatch).not.toBeNull();
-    expect(firstPreMatch![0]).not.toContain("overflow-x-auto");
+    const html = renderBlock(longUrlContent);
+    // react-syntax-highlighter applies the agentscanTheme inline styles:
+    //   white-space: pre-wrap  (wraps long lines)
+    //   word-break: break-all  (breaks within words so nothing overflows)
+    // These are inline style props, not Tailwind class names.
+    expect(html).toMatch(/white-space:\s*pre-wrap/);
+    expect(html).toMatch(/word-break:\s*break-all/);
+    // Overflow must not be auto on the pre (we use hidden to match the
+    // wrap-inside-card intent; overflowX:"hidden" is set in agentscanTheme).
+    // A simple sanity check: the pre element's style should not say auto.
+    const preMatch = html.match(/<pre [^>]+>/);
+    expect(preMatch).not.toBeNull();
+    expect(preMatch![0]).not.toContain("overflow-x: auto");
   });
 });

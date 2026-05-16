@@ -133,9 +133,11 @@ export function SessionView({
         }
         setStatuses((s) => {
           const next = [...s];
+          // "unverified" = bad signature; "error" = RPC/transport failure.
+          // Both carry a reason string; only "unverified" counts as a proof failure.
           next[i] =
-            result.verified === "unverified"
-              ? { state: "unverified", reason: result.reason }
+            result.verified === "unverified" || result.verified === "error"
+              ? { state: result.verified, reason: result.reason }
               : { state: result.verified };
           return next;
         });
@@ -486,11 +488,13 @@ function ChainNode({ status }: { status: EntryStatus }) {
       ? "border-accent-verify bg-accent-verify"
       : status.state === "unverified"
         ? "border-accent-unverified bg-accent-unverified"
-        : status.state === "verifying"
-          ? "border-text-primary bg-bg animate-pulse"
-          : status.state === "unsigned"
-            ? "border-accent-mock bg-bg"
-            : "border-border bg-bg";
+        : status.state === "error"
+          ? "border-accent-mock bg-accent-mock"
+          : status.state === "verifying"
+            ? "border-text-primary bg-bg animate-pulse"
+            : status.state === "unsigned"
+              ? "border-accent-mock bg-bg"
+              : "border-border bg-bg";
   return (
     <span
       aria-hidden="true"

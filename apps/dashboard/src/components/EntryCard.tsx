@@ -41,7 +41,7 @@ import { Mono } from "./Mono";
 // Dashboard-palette Prism theme — matches bg-surface + brand accent colors
 const agentscanTheme: Record<string, React.CSSProperties> = {
   'code[class*="language-"]': { color: "#A3A6B1", background: "none", fontSize: "0.75rem", fontFamily: "var(--font-mono, monospace)" },
-  'pre[class*="language-"]': { color: "#A3A6B1", background: "#15171A", margin: 0, padding: "0.75rem 1rem", borderRadius: "0.25rem", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" },
+  'pre[class*="language-"]': { color: "#A3A6B1", background: "#15171A", margin: 0, padding: "0.75rem 1rem", borderRadius: "0.25rem", overflowX: "hidden", whiteSpace: "pre-wrap", wordBreak: "break-all" },
   "property": { color: "#10B981" },        // keys — accent-verify green
   "string": { color: "#F5F5F5" },          // string values — text-primary
   "number": { color: "#F59E0B" },          // numbers — accent-mock amber
@@ -58,6 +58,7 @@ export type EntryStatus =
   | { state: "verifying" }
   | { state: "verified" }
   | { state: "unverified"; reason?: string }
+  | { state: "error"; reason?: string }
   | { state: "unsigned" };
 
 interface EntryProps {
@@ -280,7 +281,7 @@ function looksLikeMarkdown(s: string): boolean {
   );
 }
 
-function ContentBlock({
+export function ContentBlock({
   label,
   value,
   fallbackHash,
@@ -410,6 +411,15 @@ function EntryBadge({ status }: { status: EntryStatus }) {
           title={status.reason}
         >
           ✗ Unverified
+        </span>
+      );
+    case "error":
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border border-accent-mock/40 bg-accent-mock/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-accent-mock"
+          title={status.reason ?? "Verifier unreachable"}
+        >
+          ⚠ RPC error
         </span>
       );
     case "unsigned":

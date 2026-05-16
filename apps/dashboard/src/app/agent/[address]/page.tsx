@@ -29,11 +29,12 @@ export default async function AgentPage({
   const { address } = await params;
   if (!ADDRESS_RE.test(address)) notFound();
 
-  let rows: FeedRow[];
+  let rows: FeedRow[] = [];
+  let fetchError: string | null = null;
   try {
     rows = await fetchTokensForAgent(address);
-  } catch {
-    rows = [];
+  } catch (e) {
+    fetchError = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -67,19 +68,36 @@ export default async function AgentPage({
             </a>
           </div>
         </header>
-        <section className="mt-10">
-          <FeedTable initialRows={rows} />
-        </section>
-        {rows.length === 0 && (
-          <p className="mt-6 font-sans text-sm text-text-secondary">
-            No anchored sessions found for this address. If this agent has been
-            running with the verifiable-execution plugin, sessions appear here
-            within ~30 seconds of each session_end. If not, install the plugin:{" "}
-            <Link href="/" className="text-link hover:underline">
-              ← back to landing
-            </Link>
-            .
-          </p>
+        {fetchError !== null ? (
+          <div className="mt-10 rounded-md border border-accent-unverified/30 bg-accent-unverified/5 p-6">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent-unverified">
+              Feed unavailable
+            </p>
+            <p className="mt-2 font-sans text-sm text-text-secondary">
+              Could not fetch sessions for this address. This is likely a
+              temporary RPC or indexer failure — try refreshing in a moment.
+            </p>
+            <p className="mt-3 font-mono text-xs text-text-secondary/60">
+              {fetchError}
+            </p>
+          </div>
+        ) : (
+          <>
+            <section className="mt-10">
+              <FeedTable initialRows={rows} />
+            </section>
+            {rows.length === 0 && (
+              <p className="mt-6 font-sans text-sm text-text-secondary">
+                No anchored sessions found for this address. If this agent has been
+                running with the verifiable-execution plugin, sessions appear here
+                within ~30 seconds of each session_end. If not, install the plugin:{" "}
+                <Link href="/" className="text-link hover:underline">
+                  ← back to landing
+                </Link>
+                .
+              </p>
+            )}
+          </>
         )}
       </main>
     </div>
