@@ -1,24 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 48" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 356 58" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Scan for OpenClaw</title>
+  <desc id="desc">A red OpenClaw-inspired verifier mark beside the Agent Scan for OpenClaw wordmark.</desc>
   <defs>
-    <linearGradient id="hex-grad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#10B981"/>
-      <stop offset="1" stop-color="#059669"/>
+    <linearGradient id="red-mark" x1="13" y1="7" x2="47" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF4D4D"/>
+      <stop offset="1" stop-color="#B91C1C"/>
+    </linearGradient>
+    <linearGradient id="red-hot" x1="20" y1="16" x2="42" y2="49" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF6B6B"/>
+      <stop offset="1" stop-color="#EF2B2B"/>
     </linearGradient>
   </defs>
-  <!-- Hex filled with green gradient -->
-  <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
-           fill="url(#hex-grad)" opacity="0.15"/>
-  <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
-           stroke="url(#hex-grad)" stroke-width="2" fill="none" stroke-linejoin="round"/>
-  <!-- White checkmark inside -->
-  <path d="M14 24 L21 31 L36 15"
-        stroke="#FFFFFF" stroke-width="3"
-        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <!-- Wordmark -->
-  <text x="60" y="32"
-        font-family="Geist, 'Geist Sans', ui-sans-serif, system-ui, sans-serif"
-        font-weight="700"
-        font-size="22"
-        letter-spacing="2.4"
-        fill="#F5F5F5">AGENTSCAN</text>
+  <g>
+    <rect x="2" y="2" width="54" height="54" rx="13" fill="#090E15" stroke="#202A36" stroke-width="2"/>
+    <path d="M20 12.5C12.1 15.2 7 22.3 7 30.9c0 7.9 4.5 14.4 11.2 17.7-1.8-4.3-1.6-8.4.7-12 2.5-4 6.5-6.1 11.1-6.5-5.2-2-8.4-7.7-10-17.6Z" fill="url(#red-mark)"/>
+    <path d="M38 12.5c7.9 2.7 13 9.8 13 18.4 0 7.9-4.5 14.4-11.2 17.7 1.8-4.3 1.6-8.4-.7-12-2.5-4-6.5-6.1-11.1-6.5 5.2-2 8.4-7.7 10-17.6Z" fill="url(#red-mark)"/>
+    <path d="M24.3 16.7c-1.9-4.2-5.4-6.8-9.6-7.2" stroke="#FF4D4D" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M33.7 16.7c1.9-4.2 5.4-6.8 9.6-7.2" stroke="#FF4D4D" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M17.2 36.2h23.6" stroke="#FF4D4D" stroke-width="3.4" stroke-linecap="round"/>
+    <path d="M21 44.2 29 47.9l8-3.7v4.9L29 53l-8-3.9v-4.9Z" fill="url(#red-mark)"/>
+    <path d="M22.2 38.4 29 41.4l6.8-3v4.3L29 46l-6.8-3.3v-4.3Z" fill="url(#red-hot)"/>
+    <circle cx="29" cy="32.8" r="10.8" fill="url(#red-hot)" stroke="#090E15" stroke-width="3"/>
+    <path d="m24.3 32.8 3.3 3.5 6.9-7.4" stroke="#090E15" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="72" y="27" fill="#F3F7FA" font-family="Geist, 'Geist Sans', Inter, ui-sans-serif, system-ui, sans-serif" font-size="23" font-weight="750">AGENT</text>
+  <text x="171" y="27" fill="#FF4D4D" font-family="Geist, 'Geist Sans', Inter, ui-sans-serif, system-ui, sans-serif" font-size="23" font-weight="750">SCAN</text>
+  <text x="73" y="45" fill="#9AA8B5" font-family="'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.5" font-weight="600">FOR OPENCLAW</text>
 </svg>

@@ -1,6 +1,8 @@
-# AGENTSCAN — Verifiable Agent Execution
+# Agent Scan for OpenClaw
 
-> **Etherscan for AI agents.** Every agent run becomes a cryptographically signed, on-chain-anchored receipt. Share a URL, verify any run cold.
+![Agent Scan for OpenClaw demo](./assets/agent-scan-openclaw-demo.gif)
+
+> Verifiable receipts for OpenClaw agents. Every run becomes a cryptographically signed, on-chain anchored receipt that can be shared and verified from a URL.
 
 Live at **[agentscan.online](https://agentscan.online)**. Docs at **[docs.agentscan.online](https://docs.agentscan.online)**.
 
@@ -8,12 +10,12 @@ Live at **[agentscan.online](https://agentscan.online)**. Docs at **[docs.agents
 
 ## What you get
 
-Install the AGENTSCAN plugin once in your OpenClaw config. From that moment forward, every agent reply produces a receipt:
+Install the Agent Scan plugin once in your OpenClaw config. From that moment forward, every agent reply produces a receipt:
 
-- 📝 **Full audit trail** — every tool call (web search, file read, MCP call, anything Claude Code or your agent invokes) is hashed, signed, and recorded
-- 🔒 **Encrypted by default** — the receipt is stored encrypted on 0G Storage. The key stays on your machine. You decide who sees the content with a `/agentscan_share` command in the chat
-- ⛓ **On-chain anchor** — the receipt's root hash is minted as an ERC-7857 iNFT on 0G Chain. Tamper-proof, wallet-free verification for anyone
-- 🌐 **Cold-verifiable** — paste the URL into any browser. No login, no wallet, no setup. Five live reads flip green checkmarks per row
+- **Full audit trail** - every tool call, web search, file read, MCP call, and Claude Code action is hashed, signed, and recorded.
+- **Encrypted by default** - receipts are stored encrypted on 0G Storage. The key stays on your machine, and `/agentscan_share` controls who can reveal the content.
+- **On-chain anchor** - the receipt root hash is minted as an ERC-7857 iNFT on 0G Chain for tamper-evident verification.
+- **Cold-verifiable** - paste the URL into any browser. No login, wallet, or setup required.
 
 **Example receipt:** [agentscan.online/verify/112](https://agentscan.online/verify/112) → see a real agent's 4 web searches + LLM response, end-to-end verifiable.
 

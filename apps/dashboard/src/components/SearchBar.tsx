@@ -40,7 +40,7 @@ export function SearchBar() {
 
   return (
     <form onSubmit={submit} className="relative w-full">
-      <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 transition-colors focus-within:border-text-secondary">
+      <div className="flex items-center gap-2 rounded-md border border-border/80 bg-surface/85 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors focus-within:border-accent-link/70">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           fill="none"

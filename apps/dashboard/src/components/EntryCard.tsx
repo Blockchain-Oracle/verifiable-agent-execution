@@ -27,6 +27,7 @@
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighterBase } from "react-syntax-highlighter";
 import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
@@ -40,17 +41,25 @@ import { Mono } from "./Mono";
 
 // Dashboard-palette Prism theme — matches bg-surface + brand accent colors
 const agentscanTheme: Record<string, React.CSSProperties> = {
-  'code[class*="language-"]': { color: "#A3A6B1", background: "none", fontSize: "0.75rem", fontFamily: "var(--font-mono, monospace)" },
-  'pre[class*="language-"]': { color: "#A3A6B1", background: "#15171A", margin: 0, padding: "0.75rem 1rem", borderRadius: "0.25rem", overflowX: "hidden", whiteSpace: "pre-wrap", wordBreak: "break-all" },
-  "property": { color: "#10B981" },        // keys — accent-verify green
-  "string": { color: "#F5F5F5" },          // string values — text-primary
-  "number": { color: "#F59E0B" },          // numbers — accent-mock amber
-  "boolean": { color: "#3B82F6" },         // booleans — link blue
-  "null": { color: "#EF4444" },            // null — accent-unverified red
-  "punctuation": { color: "#363A45" },     // brackets/commas — border color
-  "comment": { color: "#4B5563", fontStyle: "italic" },
-  "keyword": { color: "#10B981" },
-  "operator": { color: "#A3A6B1" },
+  'code[class*="language-"]': { color: "#9AA8B5", background: "none", fontSize: "0.75rem", fontFamily: "var(--font-mono, monospace)" },
+  'pre[class*="language-"]': { color: "#9AA8B5", background: "#0B0F14", margin: 0, padding: "0.75rem 1rem", borderRadius: "0.375rem", overflowX: "hidden", whiteSpace: "pre-wrap", wordBreak: "break-all" },
+  "property": { color: "#36D399" },
+  "string": { color: "#F3F7FA" },
+  "number": { color: "#F5B84B" },
+  "boolean": { color: "#57B8FF" },
+  "null": { color: "#FF5A6A" },
+  "punctuation": { color: "#263241" },
+  "comment": { color: "#64748B", fontStyle: "italic" },
+  "keyword": { color: "#36D399" },
+  "operator": { color: "#9AA8B5" },
+};
+
+const markdownComponents: Components = {
+  a: ({ href, children, node: _node, ...props }) => (
+    <a href={href} target="_blank" rel="noreferrer" {...props}>
+      {children}
+    </a>
+  ),
 };
 
 export type EntryStatus =
@@ -134,7 +143,7 @@ function entryDisplay(props: EntryProps): {
     case "prompt_build":
       return {
         title: "Prompt assembled",
-        subtitle: "agent → LLM",
+        subtitle: "agent to LLM",
         inputLabel: "Session ref",
         outputLabel: "Prompt + system + history",
       };
@@ -142,7 +151,7 @@ function entryDisplay(props: EntryProps): {
     case "llm_text":
       return {
         title: "LLM response",
-        subtitle: "LLM → agent",
+        subtitle: "LLM to agent",
         inputLabel: "Run context",
         outputLabel: "Response content",
       };
@@ -163,7 +172,7 @@ function entryDisplay(props: EntryProps): {
     default:
       return {
         title: `Tool: ${tool}`,
-        subtitle: "agent → tool",
+        subtitle: "agent to tool",
         inputLabel: "Params",
         outputLabel: "Result",
       };
@@ -176,8 +185,8 @@ export function EntryCard(props: EntryProps) {
   const display = entryDisplay(props);
 
   return (
-    <article className="group min-w-0 overflow-hidden rounded-md border border-border bg-surface transition-colors hover:border-border/80">
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/60 px-4 py-3 sm:px-5">
+    <article className="group min-w-0 overflow-hidden rounded-md border border-border/80 bg-surface/95 shadow-[0_16px_44px_rgba(0,0,0,0.2)] transition-colors hover:border-accent-link/35">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/70 px-4 py-3.5 sm:px-5">
         <div className="flex min-w-0 items-baseline gap-3 sm:gap-4">
           <span className="font-mono text-[11px] tabular-nums text-text-secondary">
             #{props.seq.toString().padStart(3, "0")}
@@ -192,7 +201,7 @@ export function EntryCard(props: EntryProps) {
           )}
           {display.kind === "skill" && (
             <span className="hidden items-center gap-1 rounded border border-accent-verify/40 bg-accent-verify/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent-verify sm:inline-flex">
-              ✦ skill
+              Skill
             </span>
           )}
         </div>
@@ -224,7 +233,7 @@ export function EntryCard(props: EntryProps) {
         />
       </div>
 
-      <footer className="grid grid-cols-1 gap-y-1 border-t border-border/60 bg-bg/40 px-4 py-3 font-mono text-[11px] text-text-secondary sm:px-5 md:grid-cols-2 md:gap-x-8">
+      <footer className="grid grid-cols-1 gap-y-1 border-t border-border/60 bg-bg/55 px-4 py-3 font-mono text-[11px] text-text-secondary sm:px-5 md:grid-cols-2 md:gap-x-8">
         <div className="flex justify-between gap-4">
           <span className="uppercase tracking-wider">inputHash</span>
           <Mono truncate={20} copy>
@@ -271,14 +280,83 @@ function looksLikeMarkdown(s: string): boolean {
   if (trimmed.length === 0) return false;
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) return false;
   // Strong signals: ATX headers, fenced code, links/images, bulleted
-  // list items, markdown tables. Any one is sufficient.
+  // list items, numbered lists, bold spans, blockquotes, markdown
+  // tables. Any one is sufficient. The bold-only path matters for
+  // decrypted agent answers where the model returns prose with
+  // `**section labels**` but no heading.
   return (
     /^#{1,6}\s/m.test(s) ||
     /```/.test(s) ||
     /\[[^\]]+\]\([^)]+\)/.test(s) ||
     /^\s{0,3}[-*+]\s/m.test(s) ||
+    /^\s{0,3}\d+\.\s/m.test(s) ||
+    /^\s{0,3}>\s/m.test(s) ||
+    /(\*\*|__)(?=\S)([\s\S]*?\S)\1/.test(s) ||
     /^\|.+\|.+\|/m.test(s)
   );
+}
+
+type DisplayContent =
+  | { kind: "markdown"; value: string }
+  | { kind: "code"; value: string; language: "bash" | "json" };
+
+function resolveDisplayContent(value: unknown): DisplayContent | null {
+  if (value === undefined || value === null) return null;
+  const markdown = extractMarkdownCandidate(value);
+  if (markdown !== null) {
+    return { kind: "markdown", value: markdown };
+  }
+  return {
+    kind: "code",
+    value: typeof value === "string" ? value : safeStringify(value),
+    language: typeof value === "object" ? "json" : "bash",
+  };
+}
+
+function extractMarkdownCandidate(value: unknown): string | null {
+  if (typeof value === "string") {
+    return looksLikeMarkdown(value) ? value : null;
+  }
+  if (Array.isArray(value)) {
+    const textBlocks = value.flatMap((item) => extractTextBlocks(item));
+    const joined = textBlocks.join("\n\n").trim();
+    return joined.length > 0 && looksLikeMarkdown(joined) ? joined : null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+
+  const record = value as Record<string, unknown>;
+  const preferredKeys = [
+    "markdown",
+    "content",
+    "text",
+    "result",
+    "output",
+    "message",
+    "answer",
+    "body",
+  ];
+
+  for (const key of preferredKeys) {
+    if (!(key in record)) continue;
+    const direct = extractMarkdownCandidate(record[key]);
+    if (direct !== null) return direct;
+  }
+
+  return null;
+}
+
+function extractTextBlocks(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap((item) => extractTextBlocks(item));
+  if (typeof value !== "object" || value === null) return [];
+
+  const record = value as Record<string, unknown>;
+  const text = record.text;
+  if (typeof text === "string") return [text];
+  const content = record.content;
+  if (typeof content === "string") return [content];
+  if (Array.isArray(content)) return content.flatMap((item) => extractTextBlocks(item));
+  return [];
 }
 
 export function ContentBlock({
@@ -295,17 +373,7 @@ export function ContentBlock({
   onToggle: () => void;
 }) {
   const isPresent = value !== undefined && value !== null;
-  const stringValue = isPresent
-    ? typeof value === "string"
-      ? value
-      : safeStringify(value)
-    : null;
-  // Markdown-render only when the value is a STRING (not stringified
-  // JSON) AND has structural markdown signals. Otherwise fall back to
-  // the existing monospace presentation. The conservative gate keeps
-  // hash strings / JSON / plain prose rendering correctly.
-  const renderAsMarkdown =
-    typeof value === "string" && looksLikeMarkdown(value);
+  const content = resolveDisplayContent(value);
 
   return (
     <div>
@@ -319,27 +387,30 @@ export function ContentBlock({
           {label}
           {!isPresent && (
             <span className="font-sans text-[10px] normal-case tracking-normal text-text-secondary">
-              (redacted — sha256 only)
+              (redacted, sha256 only)
             </span>
           )}
         </span>
       </button>
-      {open && renderAsMarkdown && stringValue !== null && (
-        <div className="markdown-body mt-2 break-words rounded border border-border/40 bg-bg px-4 py-3 text-sm leading-relaxed text-text-primary">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {stringValue}
+      {open && content?.kind === "markdown" && (
+        <div className="markdown-body mt-2 break-words rounded-md border border-border/50 bg-bg/75 px-4 py-3 text-sm leading-relaxed text-text-primary">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={markdownComponents}
+          >
+            {content.value}
           </ReactMarkdown>
         </div>
       )}
-      {open && !renderAsMarkdown && stringValue !== null && (
-        <div className="mt-2 overflow-hidden rounded border border-border/40">
+      {open && content?.kind === "code" && (
+        <div className="mt-2 overflow-hidden rounded-md border border-border/50">
           <SyntaxHighlighter
-            language={typeof value === "object" ? "json" : "bash"}
+            language={content.language}
             style={agentscanTheme}
             wrapLines
             wrapLongLines
           >
-            {stringValue}
+            {content.value}
           </SyntaxHighlighter>
         </div>
       )}
@@ -410,7 +481,8 @@ function EntryBadge({ status }: { status: EntryStatus }) {
           className="inline-flex items-center gap-1.5 rounded-full border border-accent-unverified/40 bg-accent-unverified/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-accent-unverified"
           title={status.reason}
         >
-          ✗ Unverified
+          <BadgeIcon path="M6 18 18 6M6 6l12 12" />
+          Unverified
         </span>
       );
     case "error":
@@ -419,7 +491,8 @@ function EntryBadge({ status }: { status: EntryStatus }) {
           className="inline-flex items-center gap-1.5 rounded-full border border-accent-mock/40 bg-accent-mock/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-accent-mock"
           title={status.reason ?? "Verifier unreachable"}
         >
-          ⚠ RPC error
+          <BadgeIcon path="M12 8v4m0 4h.01M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 21h15.8a2 2 0 0 0 1.7-3.4L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+          RPC error
         </span>
       );
     case "unsigned":
@@ -429,6 +502,24 @@ function EntryBadge({ status }: { status: EntryStatus }) {
         </span>
       );
   }
+}
+
+function BadgeIcon({ path }: { path: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-2.5 w-2.5"
+      aria-hidden="true"
+    >
+      <path d={path} />
+    </svg>
+  );
 }
 
 function formatTime(ts: number): string {

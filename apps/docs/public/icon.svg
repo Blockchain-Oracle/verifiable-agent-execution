@@ -1,15 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Scan icon</title>
+  <desc id="desc">A red OpenClaw-inspired verifier mark for Agent Scan.</desc>
   <defs>
-    <linearGradient id="hex-grad-icon" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#10B981"/>
-      <stop offset="1" stop-color="#059669"/>
+    <linearGradient id="red-mark" x1="13" y1="10" x2="51" y2="55" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF4D4D"/>
+      <stop offset="1" stop-color="#B91C1C"/>
+    </linearGradient>
+    <linearGradient id="red-hot" x1="20" y1="18" x2="44" y2="49" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF6B6B"/>
+      <stop offset="1" stop-color="#EF2B2B"/>
     </linearGradient>
   </defs>
-  <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
-           fill="url(#hex-grad-icon)" opacity="0.15"/>
-  <polygon points="24,2 43,12 43,36 24,46 5,36 5,12"
-           stroke="url(#hex-grad-icon)" stroke-width="2" fill="none" stroke-linejoin="round"/>
-  <path d="M14 24 L21 31 L36 15"
-        stroke="#FFFFFF" stroke-width="3"
-        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <rect x="5" y="5" width="54" height="54" rx="13" fill="#090E15" stroke="#202A36" stroke-width="2"/>
+  <path d="M23 15.5C15.1 18.2 10 25.3 10 33.9c0 7.9 4.5 14.4 11.2 17.7-1.8-4.3-1.6-8.4.7-12 2.5-4 6.5-6.1 11.1-6.5-5.2-2-8.4-7.7-10-17.6Z" fill="url(#red-mark)"/>
+  <path d="M41 15.5c7.9 2.7 13 9.8 13 18.4 0 7.9-4.5 14.4-11.2 17.7 1.8-4.3 1.6-8.4-.7-12-2.5-4-6.5-6.1-11.1-6.5 5.2-2 8.4-7.7 10-17.6Z" fill="url(#red-mark)"/>
+  <path d="M27.3 19.7c-1.9-4.2-5.4-6.8-9.6-7.2" stroke="#FF4D4D" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M36.7 19.7c1.9-4.2 5.4-6.8 9.6-7.2" stroke="#FF4D4D" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M20.2 39.2h23.6" stroke="#FF4D4D" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M24 47.2 32 50.9l8-3.7v4.9L32 56l-8-3.9v-4.9Z" fill="url(#red-mark)"/>
+  <path d="M25.2 41.4 32 44.4l6.8-3v4.3L32 49l-6.8-3.3v-4.3Z" fill="url(#red-hot)"/>
+  <circle cx="32" cy="35.8" r="10.8" fill="url(#red-hot)" stroke="#090E15" stroke-width="3"/>
+  <path d="m27.3 35.8 3.3 3.5 6.9-7.4" stroke="#090E15" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
