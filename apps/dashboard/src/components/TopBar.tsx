@@ -46,12 +46,12 @@ export function TopBar() {
         </div>
         <NetworkChip badge={badge} isMainnet={isMainnet} />
         <a
-          href="https://github.com/Blockchain-Oracle/agentscan"
+          href="https://docs.agentscan.online"
           target="_blank"
           rel="noreferrer"
           className="hidden rounded-md border border-border/70 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.12em] text-text-secondary transition-colors hover:border-accent-link/50 hover:text-text-primary md:block"
         >
-          GitHub
+          Docs
         </a>
       </div>
     </header>
