@@ -1,6 +1,6 @@
-# Agent Scan for OpenClaw
+# AGENTSCAN for OpenClaw
 
-![Agent Scan for OpenClaw demo](./assets/agent-scan-openclaw-demo.gif)
+![AGENTSCAN for OpenClaw demo](./assets/agent-scan-openclaw-demo.gif)
 
 > Verifiable receipts for OpenClaw agents. Every run becomes a cryptographically signed, on-chain anchored receipt that can be shared and verified from a URL.
 
