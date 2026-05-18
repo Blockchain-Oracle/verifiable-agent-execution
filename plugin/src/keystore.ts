@@ -2,11 +2,37 @@
  * keystore.ts — per-tokenId encryption key persistence + last-receipt pointer.
  *
  * Layout under `~/.openclaw/verifiable-execution/`:
- *   wallet.json                          — the plugin's signing key (existing)
- *   keystore/<tokenId>.key               — raw 32-byte symmetric key per receipt (mode 0600)
- *   keystore/pending/<sessionKey>.key    — pre-mint key (crash recovery — see ordering below)
- *   keystore/last-receipt.json           — {tokenId, sessionKey, mintedAt} pointer for `/share`
- *                                          with no args ("share my most recent receipt")
+ *   wallet.json                                      — signing key (shared across chains)
+ *   keystore/<chainId>/<tokenId>.key                 — v0.4.0: chainId-namespaced AES key per receipt
+ *   keystore/<chainId>/pending/<sessionKey>.key      — v0.4.0: chainId-namespaced pre-mint key
+ *   keystore/<chainId>/last-receipt.json             — v0.4.0: chainId-namespaced {tokenId, sessionKey, mintedAt} pointer
+ *
+ * Pre-v0.4.0 layout was UN-namespaced (keystore/<tokenId>.key etc).
+ * Still readable as a fallback when chainId === 16602 (Galileo testnet) —
+ * those are the only legacy files that could exist (mainnet went live
+ * 2026-05-11, post-v0.4.0 layout decision). Writes ALWAYS go to the
+ * namespaced path; legacy files are read-only and age out naturally.
+ *
+ *   Codex BLOCK-2 fix (v0.4.0): tokenIds are chain-scoped on the
+ *   AgenticID contract — without namespacing, a mainnet mint at
+ *   tokenId N OVERWRITES the testnet key at the same tokenId, and
+ *   /share emits the wrong dashboard URL for the chain. The namespaced
+ *   layout below prevents both. The chainId-less constructor still
+ *   works (legacy unprefixed paths) for tests and any caller that
+ *   hasn't migrated.
+ *
+ * KNOWN LIMITATION — single-chain keystore (v0.4.0):
+ *   TokenIds are chain-scoped on AgenticID contracts but this keystore
+ *   is chain-agnostic. If an operator mints on testnet (tokenId 0) and
+ *   later switches to mainnet via /agentscan_network mainnet, a
+ *   subsequent mainnet mint that also produces tokenId 0 will OVERWRITE
+ *   the testnet key file. The on-chain receipt and its encrypted blob
+ *   stay verifiable by anyone with the URL — only the local /share
+ *   ability for the testnet receipt is lost. Operators should pick one
+ *   network and stay there. Chain-namespaced layout is tracked for
+ *   v0.4.1; see /agentscan_network handler reply for the user-facing
+ *   warning. (Codex BLOCK-2 on v0.4.0, deferred — high refactor cost,
+ *   small bite radius, recoverable failure mode.)
  *
  * Crash-recovery ordering (CRITICAL — derived from research agent 2's risk #8):
  *
@@ -113,18 +139,63 @@ export interface PendingMetadataInput {
   runId?: string;
 }
 
+/**
+ * Chain ID currently used as the LEGACY fallback target. Galileo (testnet)
+ * is the only network where pre-v0.4.0 keys could have been minted —
+ * mainnet went live 2026-05-11, well after the v0.4.0 layout decision.
+ * If a caller passes chainId=16602 and a key isn't at the new namespaced
+ * path, we look in the unprefixed legacy location too.
+ */
+const LEGACY_FALLBACK_CHAIN_ID = 16602;
+
 export class Keystore {
   private readonly root: string;
+  /** v0.4.0: chainId-namespaced when constructor was passed a chainId; legacy unprefixed otherwise. */
   private readonly committedDir: string;
   private readonly pendingDir: string;
   private readonly lastReceiptPath: string;
+  /** Set when the namespaced layout is in effect (constructor received chainId). */
+  private readonly chainId: number | null;
+  /** Legacy (unprefixed) committed dir — read-only fallback for testnet v0.3.x receipts. Null when chainId not set. */
+  private readonly legacyCommittedDir: string | null;
+  private readonly legacyLastReceiptPath: string | null;
 
-  constructor(opts?: { root?: string }) {
+  constructor(opts?: { root?: string; chainId?: number }) {
     this.root = opts?.root ?? DEFAULT_ROOT;
-    this.committedDir = join(this.root, "keystore");
-    this.pendingDir = join(this.committedDir, "pending");
-    this.lastReceiptPath = join(this.committedDir, "last-receipt.json");
+    const keystoreRoot = join(this.root, "keystore");
+    // v0.4.0: when chainId is supplied, namespace every path under it.
+    // When omitted, keep the legacy unprefixed layout so existing tests
+    // and any caller that hasn't migrated keeps working.
+    if (typeof opts?.chainId === "number" && Number.isInteger(opts.chainId)) {
+      this.chainId = opts.chainId;
+      this.committedDir = join(keystoreRoot, String(opts.chainId));
+      this.pendingDir = join(this.committedDir, "pending");
+      this.lastReceiptPath = join(this.committedDir, "last-receipt.json");
+      // Legacy fallback paths — only consulted on reads when chainId matches
+      // LEGACY_FALLBACK_CHAIN_ID. mainnet operators never hit these.
+      this.legacyCommittedDir = keystoreRoot;
+      this.legacyLastReceiptPath = join(keystoreRoot, "last-receipt.json");
+    } else {
+      this.chainId = null;
+      this.committedDir = keystoreRoot;
+      this.pendingDir = join(this.committedDir, "pending");
+      this.lastReceiptPath = join(this.committedDir, "last-receipt.json");
+      this.legacyCommittedDir = null;
+      this.legacyLastReceiptPath = null;
+    }
     this.ensureDirs();
+  }
+
+  /**
+   * True when this keystore is allowed to read from the legacy
+   * unprefixed location as a fallback. Only when the namespaced
+   * layout is active AND chainId matches the legacy testnet.
+   */
+  private legacyFallbackEnabled(): boolean {
+    return (
+      this.chainId === LEGACY_FALLBACK_CHAIN_ID &&
+      this.legacyCommittedDir !== null
+    );
   }
 
   /** Idempotent — creates the keystore dirs with restrictive permissions. */
@@ -297,15 +368,33 @@ export class Keystore {
     // validates on write). Return null instead of throwing so
     // callers like /share don't crash on user-supplied junk.
     if (!/^[0-9]+$/.test(tokenId)) return null;
+    // Primary: namespaced (or legacy unprefixed when chainId omitted).
     const path = join(this.committedDir, tokenId + ".key");
-    if (!existsSync(path)) return null;
-    const buf = readFileSync(path);
-    if (buf.length !== 32) {
-      throw new Error(
-        `Corrupt key file at ${path}: expected 32 bytes, got ${buf.length}`,
-      );
+    if (existsSync(path)) {
+      const buf = readFileSync(path);
+      if (buf.length !== 32) {
+        throw new Error(
+          `Corrupt key file at ${path}: expected 32 bytes, got ${buf.length}`,
+        );
+      }
+      return buf;
     }
-    return buf;
+    // Fallback: pre-v0.4.0 unprefixed location, but only for testnet.
+    // Mainnet operators NEVER read from the unprefixed dir — those keys
+    // (if any) belong to a different chain's tokenId space.
+    if (this.legacyFallbackEnabled() && this.legacyCommittedDir) {
+      const legacyPath = join(this.legacyCommittedDir, tokenId + ".key");
+      if (existsSync(legacyPath)) {
+        const buf = readFileSync(legacyPath);
+        if (buf.length !== 32) {
+          throw new Error(
+            `Corrupt legacy key file at ${legacyPath}: expected 32 bytes, got ${buf.length}`,
+          );
+        }
+        return buf;
+      }
+    }
+    return null;
   }
 
   /**
@@ -317,30 +406,37 @@ export class Keystore {
    * footnote) treats missing runId as "unknown run."
    */
   getLast(): LastReceiptPointer | null {
-    if (!existsSync(this.lastReceiptPath)) return null;
-    try {
-      const raw = readFileSync(this.lastReceiptPath, "utf8");
-      const parsed = JSON.parse(raw) as Partial<LastReceiptPointer>;
-      if (
-        typeof parsed.tokenId !== "string" ||
-        typeof parsed.sessionKey !== "string" ||
-        typeof parsed.mintedAt !== "number"
-      ) {
+    const tryRead = (path: string): LastReceiptPointer | null => {
+      if (!existsSync(path)) return null;
+      try {
+        const raw = readFileSync(path, "utf8");
+        const parsed = JSON.parse(raw) as Partial<LastReceiptPointer>;
+        if (
+          typeof parsed.tokenId !== "string" ||
+          typeof parsed.sessionKey !== "string" ||
+          typeof parsed.mintedAt !== "number"
+        ) {
+          return null;
+        }
+        return {
+          tokenId: parsed.tokenId,
+          sessionKey: parsed.sessionKey,
+          mintedAt: parsed.mintedAt,
+          ...(typeof parsed.runId === "string" ? { runId: parsed.runId } : {}),
+        };
+      } catch {
+        // Pointer corrupt or unreadable — treat as missing.
         return null;
       }
-      const pointer: LastReceiptPointer = {
-        tokenId: parsed.tokenId,
-        sessionKey: parsed.sessionKey,
-        mintedAt: parsed.mintedAt,
-        ...(typeof parsed.runId === "string" ? { runId: parsed.runId } : {}),
-      };
-      return pointer;
-    } catch {
-      // Pointer corrupt or unreadable — treat as missing rather than
-      // crash the share handler. Operator can manually grep for the
-      // most recent token via `ls -t keystore/`.
-      return null;
+    };
+    // Primary: namespaced (or legacy unprefixed when chainId omitted).
+    const primary = tryRead(this.lastReceiptPath);
+    if (primary !== null) return primary;
+    // Fallback: pre-v0.4.0 unprefixed pointer, only for testnet.
+    if (this.legacyFallbackEnabled() && this.legacyLastReceiptPath) {
+      return tryRead(this.legacyLastReceiptPath);
     }
+    return null;
   }
 
   /**
@@ -353,16 +449,24 @@ export class Keystore {
    * directly as tokenIds.
    */
   list(): string[] {
-    if (!existsSync(this.committedDir)) return [];
-    return readdirSync(this.committedDir)
-      .filter((f) => f.endsWith(".key"))
-      .map((f) => f.slice(0, -4))
-      // Defensive filter: ignore stray files that don't match the
-      // tokenId shape (e.g. leftover .tmp files from atomicWriteBytes
-      // crashes, or legacy base64url-encoded names from a pre-r18
-      // install — operators with such legacy files can `ls keystore/`
-      // manually).
-      .filter((name) => /^[0-9]+$/.test(name));
+    const collected = new Set<string>();
+    const harvest = (dir: string): void => {
+      if (!existsSync(dir)) return;
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith(".key")) continue;
+        const name = f.slice(0, -4);
+        // Defensive filter: ignore stray files that don't match the
+        // tokenId shape (.tmp leftovers, legacy base64url names).
+        if (/^[0-9]+$/.test(name)) collected.add(name);
+      }
+    };
+    harvest(this.committedDir);
+    // Legacy fallback: surface pre-v0.4.0 testnet tokens too so /agentscan_tokens
+    // doesn't lose them from the listing. Mainnet skips this.
+    if (this.legacyFallbackEnabled() && this.legacyCommittedDir) {
+      harvest(this.legacyCommittedDir);
+    }
+    return [...collected];
   }
 
   /**

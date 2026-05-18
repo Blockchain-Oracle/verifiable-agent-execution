@@ -70,6 +70,12 @@ import {
 } from "./crypto.js";
 import { sha256Hex } from "./hash.js";
 import { Keystore } from "./keystore.js";
+import {
+  NETWORK_PRESETS,
+  chainIdToNetwork,
+  savePersistedNetwork,
+  type NetworkName,
+} from "./network-config.js";
 import { SessionManager } from "./SessionManager.js";
 import { handleShareCommand } from "./share-command.js";
 import {
@@ -422,7 +428,14 @@ function buildPluginState(config: VerifiableExecutionConfig): PluginState {
   // v0.3.0: keystore is a sibling to wallet.json under
   // ~/.openclaw/verifiable-execution/. Default constructor uses that
   // path; tests inject a temp dir.
-  const keystore = new Keystore();
+  // v0.4.0 (Codex BLOCK-2): pass config.chainId so keystore paths are
+  // namespaced under <chainId>/. Prevents tokenId collision across
+  // testnet/mainnet (e.g. mainnet tokenId 0 overwriting testnet 0.key)
+  // and ensures /share emits the dashboard URL for the chain that
+  // actually minted the receipt. Legacy unprefixed paths stay readable
+  // when chainId === 16602 so v0.3.x testnet operators don't lose
+  // their existing keys after upgrading.
+  const keystore = new Keystore({ chainId: config.chainId });
   // The storageSigner (already provider-connected) doubles as our
   // entry-signing key. agentId is the wallet's address, so signatures
   // recover to the agentId field on each entry — that's how the
@@ -1765,6 +1778,32 @@ export default {
       return;
     }
 
+    // v0.4.0 (Codex BLOCK-1): surface persisted-network override loudly.
+    // If /agentscan_network forced network fields, operators need to see
+    // which pluginConfig values were ignored — silent overrides are
+    // hostile to debugging.
+    if (resolution.networkOverride) {
+      const { network, overriddenFields } = resolution.networkOverride;
+      structuredLog(
+        "INFO",
+        "register",
+        `Persisted /agentscan_network=${network} active — network-axis defaults sourced from preset`,
+        {
+          network,
+          chainId: resolution.config.chainId,
+          // Empty array = persisted choice matches OpenClaw config (no conflict).
+          // Non-empty = pluginConfig had these fields but the slash command outranks them.
+          overriddenPluginConfigFields: overriddenFields,
+        },
+      );
+    }
+    // v0.4.0 (Codex BLOCK-3): if the persisted-network file was present
+    // but unreadable, warn so the operator notices instead of silently
+    // landing on Galileo defaults.
+    if (resolution.corruptNetworkWarning) {
+      structuredLog("WARN", "register", resolution.corruptNetworkWarning, {});
+    }
+
     let state: PluginState;
     try {
       state = buildPluginState(resolution.config);
@@ -2044,6 +2083,100 @@ export default {
                 faucetLine +
                 `\n\nThis is the address that signs every receipt and pays gas for each mint. ` +
                 `Browse this agent's full receipt feed:\n${allReceiptsUrl()}`,
+            };
+          },
+        });
+
+        // v0.4.0: /agentscan_network — show current network OR persist a
+        // mainnet/testnet toggle for the next plugin load. The actual
+        // chain client is built once at register time (buildPluginState),
+        // so a live runtime swap isn't safe — the handler explicitly
+        // tells the user to restart the gateway for the change to apply.
+        // Persistence lives at ~/.agentscan/network.json; resolveConfig()
+        // routes through that on the next load.
+        reg.call(api, {
+          name: "agentscan_network",
+          nativeNames: { default: "agentscan_network" },
+          description:
+            "Show the current 0G network, or switch with `/agentscan_network mainnet|testnet` (gateway restart required).",
+          acceptsArgs: true,
+          handler: (ctx) => {
+            const rawArg = typeof ctx.args === "string" ? ctx.args : "";
+            const arg = rawArg.trim().toLowerCase();
+
+            if (arg === "mainnet" || arg === "testnet") {
+              const target = arg as NetworkName;
+              const preset = NETWORK_PRESETS[target];
+              try {
+                savePersistedNetwork(target);
+              } catch (cause) {
+                return {
+                  text:
+                    `❌ Failed to persist network choice: ${cause instanceof Error ? cause.message : String(cause)}\n` +
+                    `Check that ~/.agentscan/ is writable.`,
+                };
+              }
+              const icon = target === "mainnet" ? "🟢" : "🟡";
+              const currentlyOnTarget =
+                chainIdToNetwork(state.config.chainId) === target;
+              const restartLine = currentlyOnTarget
+                ? `✅ Already running on ${target.toUpperCase()} — no restart needed. ` +
+                  `Future sessions will continue to use this network.`
+                : `⚠️  Restart the gateway (or your Claude Code session) for the change to take effect.\n\n` +
+                  `Receipts already minted on the previous network still exist on that chain — their /share URLs ` +
+                  `now resolve to the ${target === "mainnet" ? "TESTNET" : "MAINNET"} dashboard you just left. ` +
+                  `v0.4.0 keeps a separate keystore per chain, so switching back later restores access to those receipts.`;
+              return {
+                text:
+                  `${icon} Network preference saved: ${target.toUpperCase()}\n\n` +
+                  `RPC:        ${preset.rpcUrl}\n` +
+                  `AgenticID:  \`${preset.agenticIdAddress}\`\n` +
+                  `Verifier:   \`${preset.verifierAddress}\`\n` +
+                  `Dashboard:  ${preset.verifyUrlBase}\n` +
+                  `Explorer:   ${preset.explorerUrl}\n` +
+                  (preset.faucetUrl ? `Faucet:     ${preset.faucetUrl}\n` : ``) +
+                  `\n${restartLine}`,
+              };
+            }
+
+            if (arg !== "") {
+              return {
+                text:
+                  `❌ Unknown network: \`${arg}\`.\n` +
+                  `Use \`/agentscan_network mainnet\` or \`/agentscan_network testnet\`.`,
+              };
+            }
+
+            // No args — show current.
+            const currentNet = chainIdToNetwork(state.config.chainId);
+            const icon =
+              currentNet === "mainnet" ? "🟢" : currentNet === "testnet" ? "🟡" : "⚪";
+            const label =
+              currentNet === "unknown"
+                ? `chainId ${state.config.chainId} (custom)`
+                : currentNet.toUpperCase();
+            const preset =
+              currentNet === "mainnet"
+                ? NETWORK_PRESETS.mainnet
+                : currentNet === "testnet"
+                  ? NETWORK_PRESETS.testnet
+                  : null;
+            const explorerLine = preset
+              ? `Explorer:   ${preset.explorerUrl}\n`
+              : ``;
+            const faucetLine =
+              preset?.faucetUrl ? `Faucet:     ${preset.faucetUrl}\n` : ``;
+            return {
+              text:
+                `${icon} Active network: ${label}\n\n` +
+                `RPC:        ${state.config.rpcUrl}\n` +
+                `AgenticID:  \`${state.config.agenticIdAddress}\`\n` +
+                `Verifier:   \`${state.config.verifierAddress}\`\n` +
+                `Dashboard:  ${state.config.verifyUrlBase}\n` +
+                explorerLine +
+                faucetLine +
+                `\nSwitch with \`/agentscan_network mainnet\` or \`/agentscan_network testnet\`. ` +
+                `Restart required for the change to apply.`,
             };
           },
         });

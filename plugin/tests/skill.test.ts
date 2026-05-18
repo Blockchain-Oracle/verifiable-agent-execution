@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Wallet, keccak256, recoverAddress, toUtf8Bytes } from "ethers";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   SessionLogger,
@@ -174,11 +174,12 @@ describe("register() — happy path with full config", () => {
 
     plugin.register(api);
 
-    // All three commands registered (was 2 in v0.3.7; /wallet added
-    // v0.3.8 per Abu's 2026-05-15 docs-feedback: "telling them to
-    // run [jq .address] on a terminal" was bad UX. Now they type
-    // /wallet in chat).
-    expect(registerCommandSpy).toHaveBeenCalledTimes(3);
+    // Four commands registered as of v0.4.0:
+    //  /agentscan_share   — get share URL for last/specific receipt
+    //  /agentscan_tokens  — get URL listing all receipts for this agent
+    //  /agentscan_wallet  — show the signing wallet address (v0.3.8)
+    //  /agentscan_network — show/switch testnet|mainnet (v0.4.0)
+    expect(registerCommandSpy).toHaveBeenCalledTimes(4);
     const names = registerCommandSpy.mock.calls.map(
       (call) => (call[0] as { name: string }).name,
     );
@@ -187,6 +188,7 @@ describe("register() — happy path with full config", () => {
         "agentscan_share",
         "agentscan_tokens",
         "agentscan_wallet",
+        "agentscan_network",
       ]),
     );
 
@@ -251,6 +253,114 @@ describe("register() — happy path with full config", () => {
     });
     expect(reply.text).toContain("See all your receipts");
     expect(reply.text).toMatch(/\/agent\/0x[0-9a-fA-F]{40}/);
+  });
+
+  // v0.4.0 — /agentscan_network handler behaviour. Three branches:
+  //   1. no arg → reports the current network (icon + label + URLs)
+  //   2. valid arg ("mainnet" | "testnet") → persists choice and tells
+  //      user to restart (unless already on that network)
+  //   3. unknown arg → returns an error message without persisting
+  //
+  // Persistence writes to ~/.agentscan/network.json — we override $HOME
+  // to a tmpdir per-test so we never touch the operator's real file.
+  describe("v0.4.0: /agentscan_network slash command", () => {
+    let originalHome: string | undefined;
+    let tmpHome: string;
+
+    beforeEach(async () => {
+      const { mkdtempSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      originalHome = process.env.HOME;
+      tmpHome = mkdtempSync(join(tmpdir(), "agentscan-skill-test-"));
+      process.env.HOME = tmpHome;
+    });
+
+    afterEach(async () => {
+      const { existsSync, rmSync } = await import("node:fs");
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (existsSync(tmpHome)) rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    function getNetworkHandler() {
+      const registerCommandSpy = vi.fn();
+      const onSpy = vi.fn();
+      const api = {
+        id: plugin.id,
+        name: plugin.name,
+        pluginConfig: FULL_CONFIG,
+        on: onSpy,
+        registerCommand: registerCommandSpy,
+      } as unknown as Parameters<typeof plugin.register>[0];
+      plugin.register(api);
+      const cmd = registerCommandSpy.mock.calls.find(
+        (call) => (call[0] as { name: string }).name === "agentscan_network",
+      )?.[0] as
+        | { handler: (ctx: { args?: string }) => { text: string } }
+        | undefined;
+      if (!cmd) throw new Error("agentscan_network command not registered");
+      return cmd.handler;
+    }
+
+    it("with no arg, shows the current network (testnet via FULL_CONFIG chainId 16602)", () => {
+      const reply = getNetworkHandler()({});
+      // chainId 16602 → labelled TESTNET via chainIdToNetwork().
+      expect(reply.text).toContain("TESTNET");
+      // The handler displays the ACTIVE state.config values (which can
+      // be operator-overridden), not the preset constants. FULL_CONFIG
+      // overrides the URLs/addresses to test fixtures — assert those.
+      expect(reply.text).toContain("https://evmrpc-testnet.0g.ai");
+      expect(reply.text).toContain(VALID_AGENTICID_ADDRESS);
+      expect(reply.text).toContain("https://verify.example.com");
+      // Explorer/faucet come from the preset (no per-field override
+      // for those) — testnet should surface both.
+      expect(reply.text).toContain("https://chainscan-galileo.0g.ai");
+      expect(reply.text).toContain("https://faucet.0g.ai");
+    });
+
+    it("with arg 'mainnet', persists to ~/.agentscan/network.json and tells user to restart", async () => {
+      const { existsSync, readFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const reply = getNetworkHandler()({ args: "mainnet" });
+      expect(reply.text).toContain("MAINNET");
+      expect(reply.text).toContain("Restart");
+      expect(reply.text).toContain("0xC6f7fB1511a7483C6e14258c70529e37ec698937");
+      const path = join(tmpHome, ".agentscan", "network.json");
+      expect(existsSync(path)).toBe(true);
+      const persisted = JSON.parse(readFileSync(path, "utf8")) as { network: string };
+      expect(persisted.network).toBe("mainnet");
+    });
+
+    it("with arg 'testnet', persists testnet and indicates no restart needed (already on testnet)", () => {
+      const reply = getNetworkHandler()({ args: "testnet" });
+      expect(reply.text).toContain("TESTNET");
+      // FULL_CONFIG chainId is 16602 → already on testnet → no restart copy
+      expect(reply.text).toContain("Already running on TESTNET");
+      expect(reply.text).not.toContain("Restart the gateway");
+    });
+
+    it("accepts arg with surrounding whitespace and mixed case", () => {
+      const reply = getNetworkHandler()({ args: "  MainNet  " });
+      expect(reply.text).toContain("MAINNET");
+      expect(reply.text).toContain("0xC6f7fB1511a7483C6e14258c70529e37ec698937");
+    });
+
+    it("with unknown arg, returns an error WITHOUT persisting", async () => {
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const reply = getNetworkHandler()({ args: "polygon" });
+      expect(reply.text).toContain("Unknown network");
+      expect(reply.text).toContain("polygon");
+      expect(existsSync(join(tmpHome, ".agentscan", "network.json"))).toBe(false);
+    });
+
+    it("with non-string args (channel passed nothing), shows the current network", () => {
+      // PluginCommandContext can deliver args as undefined when the
+      // channel didn't tokenize a payload. Handler must not crash.
+      const reply = getNetworkHandler()({});
+      expect(reply.text).toContain("Active network");
+    });
   });
 
   it("hook handlers are functions (the test fixtures, not undefined)", () => {
