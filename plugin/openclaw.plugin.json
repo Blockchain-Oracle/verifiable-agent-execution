@@ -26,7 +26,7 @@
       },
       "chainId": {
         "type": "number",
-        "description": "EVM chainId. Defaults to 16602 (Galileo testnet). Set 16661 for Aristotle mainnet. Pair with the matching agenticIdAddress, verifierAddress, rpcUrl, indexerUrl, and verifyUrlBase — there's no auto-switch (silent network swap is worse than a one-time edit)."
+        "description": "EVM chainId. Defaults to 16602 (Galileo testnet). Set 16661 for Aristotle mainnet. Pair with the matching agenticIdAddress, verifierAddress, rpcUrl, indexerUrl, and verifyUrlBase. v0.4.0: the /agentscan_network slash command writes a persisted choice to ~/.agentscan/network.json that FORCES the network-axis fields to the matching preset on next plugin load — it outranks any value set here. Use chainId here only if you want a fixed default the slash command can still override."
       },
       "agentId": {
         "type": "string",

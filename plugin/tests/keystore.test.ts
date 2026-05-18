@@ -438,3 +438,113 @@ describe("Keystore — list + remove", () => {
     expect(() => ks.remove("does-not-exist")).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// v0.4.0 — chainId-namespaced layout (Codex BLOCK-2 fix).
+// Without namespacing, switching networks via /agentscan_network would let
+// mainnet tokenId N overwrite the testnet key at the same tokenId. These
+// tests pin the new layout AND the read-only legacy fallback for testnet.
+// ---------------------------------------------------------------------------
+
+describe("Keystore — chainId namespacing (v0.4.0)", () => {
+  let nsRoot: string;
+  beforeEach(() => {
+    nsRoot = mkdtempSync(join(tmpdir(), "ve-keystore-ns-"));
+  });
+  afterEach(() => {
+    rmSync(nsRoot, { recursive: true, force: true });
+  });
+
+  it("writes keys under keystore/<chainId>/ when chainId is supplied", () => {
+    const ksN = new Keystore({ root: nsRoot, chainId: 16661 });
+    ksN.put("42", generateKey());
+    expect(existsSync(join(nsRoot, "keystore", "16661", "42.key"))).toBe(true);
+    // Legacy unprefixed path stays empty.
+    expect(existsSync(join(nsRoot, "keystore", "42.key"))).toBe(false);
+  });
+
+  it("isolates testnet and mainnet — same tokenId on different chains does not collide", () => {
+    const testnet = new Keystore({ root: nsRoot, chainId: 16602 });
+    const mainnet = new Keystore({ root: nsRoot, chainId: 16661 });
+    const tnKey = Buffer.alloc(32, 0xaa);
+    const mnKey = Buffer.alloc(32, 0xbb);
+    testnet.put("0", tnKey);
+    mainnet.put("0", mnKey);
+    expect(testnet.get("0")?.equals(tnKey)).toBe(true);
+    expect(mainnet.get("0")?.equals(mnKey)).toBe(true);
+  });
+
+  it("testnet keystore falls back to legacy unprefixed path when namespaced key is missing", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(join(nsRoot, "keystore"), { recursive: true });
+    const legacyKey = Buffer.alloc(32, 0xcc);
+    writeFileSync(join(nsRoot, "keystore", "5.key"), legacyKey, { mode: 0o600 });
+    const testnet = new Keystore({ root: nsRoot, chainId: 16602 });
+    expect(testnet.get("5")?.equals(legacyKey)).toBe(true);
+  });
+
+  it("mainnet keystore does NOT fall back to legacy unprefixed (cross-chain isolation)", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(join(nsRoot, "keystore"), { recursive: true });
+    writeFileSync(join(nsRoot, "keystore", "5.key"), Buffer.alloc(32, 0xdd), {
+      mode: 0o600,
+    });
+    const mainnet = new Keystore({ root: nsRoot, chainId: 16661 });
+    expect(mainnet.get("5")).toBeNull();
+  });
+
+  it("getLast() on testnet falls back to legacy pointer when namespaced is empty", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(join(nsRoot, "keystore"), { recursive: true });
+    writeFileSync(
+      join(nsRoot, "keystore", "last-receipt.json"),
+      JSON.stringify({ tokenId: "9", sessionKey: "ses_legacy", mintedAt: 1700000000 }),
+    );
+    const testnet = new Keystore({ root: nsRoot, chainId: 16602 });
+    expect(testnet.getLast()?.tokenId).toBe("9");
+
+    // A new namespaced mint TAKES OVER as the most-recent pointer.
+    testnet.put("11", generateKey());
+    expect(testnet.getLast()?.tokenId).toBe("11");
+  });
+
+  it("getLast() on mainnet ignores the legacy unprefixed pointer", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(join(nsRoot, "keystore"), { recursive: true });
+    writeFileSync(
+      join(nsRoot, "keystore", "last-receipt.json"),
+      JSON.stringify({ tokenId: "9", sessionKey: "ses_legacy", mintedAt: 1700000000 }),
+    );
+    const mainnet = new Keystore({ root: nsRoot, chainId: 16661 });
+    expect(mainnet.getLast()).toBeNull();
+  });
+
+  it("list() on testnet merges namespaced + legacy unprefixed tokenIds (de-duped)", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(join(nsRoot, "keystore"), { recursive: true });
+    writeFileSync(join(nsRoot, "keystore", "1.key"), Buffer.alloc(32, 0x01));
+    writeFileSync(join(nsRoot, "keystore", "2.key"), Buffer.alloc(32, 0x02));
+    const testnet = new Keystore({ root: nsRoot, chainId: 16602 });
+    testnet.put("3", generateKey());
+    testnet.put("2", generateKey()); // collides with legacy 2.key but takes namespaced precedence
+    expect(testnet.list().sort()).toEqual(["1", "2", "3"]);
+  });
+
+  it("list() on mainnet only sees namespaced tokenIds (NOT legacy unprefixed)", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(join(nsRoot, "keystore"), { recursive: true });
+    writeFileSync(join(nsRoot, "keystore", "1.key"), Buffer.alloc(32, 0x01));
+    const mainnet = new Keystore({ root: nsRoot, chainId: 16661 });
+    mainnet.put("99", generateKey());
+    expect(mainnet.list()).toEqual(["99"]);
+  });
+
+  it("chainId-less constructor preserves pre-v0.4.0 behavior exactly", () => {
+    const legacy = new Keystore({ root: nsRoot });
+    legacy.put("7", Buffer.alloc(32, 0x77));
+    expect(existsSync(join(nsRoot, "keystore", "7.key"))).toBe(true);
+    expect(legacy.get("7")?.equals(Buffer.alloc(32, 0x77))).toBe(true);
+    // No namespaced dir created when chainId omitted.
+    expect(existsSync(join(nsRoot, "keystore", "16602"))).toBe(false);
+  });
+});

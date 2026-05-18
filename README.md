@@ -88,6 +88,18 @@ For per-flag configuration, mainnet setup, troubleshooting, and the full API →
 
 Mainnet has no faucet — fund the wallet via a CEX withdrawal to native 0G chain. Everything else stays the same.
 
+### Switching networks (v0.4.0+)
+
+The plugin defaults to Galileo testnet on a fresh install. Switch with a slash command — no config edit, no reinstall:
+
+```
+/agentscan_network mainnet     # persist choice + tell you to restart
+/agentscan_network testnet     # switch back
+/agentscan_network             # no arg → show the current network + contract addresses
+```
+
+The choice persists to `~/.agentscan/network.json` and outranks any `chainId` / `rpcUrl` in your OpenClaw plugin config — restart the gateway for it to take effect. Each network has its own keystore (`keystore/<chainId>/<tokenId>.key`), so receipts minted on testnet remain `/share`-able after you switch and switch back. Pre-v0.4.0 testnet keys keep working via the legacy unprefixed fallback.
+
 ---
 
 ## Verify a receipt without installing anything
